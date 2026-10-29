@@ -3,17 +3,10 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// iOS 与 watchOS 的 WebKit 后端共享同一套脚本文本编码和返回值投影，
-// 避免两个条件编译实现各自维护边界行为。
+// 浏览器工具共享脚本文本编码和返回值投影。
 // ============================================================================
 
 import Foundation
-
-/// watchOS 的动态 WebKit bridge 通过 Objective-C 回调返回未标注并发安全性的值；
-/// 值只在主 Actor 内解包和读取，不会跨线程保留原始对象。
-struct BrowserAgentUncheckedJavaScriptResult: @unchecked Sendable {
-    let value: Any?
-}
 
 func browserAgentJavaScriptLiteral(_ text: String) throws -> String {
     let data = try JSONEncoder().encode(text)

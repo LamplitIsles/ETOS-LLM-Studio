@@ -3,11 +3,11 @@ import Testing
 @testable import ETOSCore
 
 struct ChatQuickActionCatalogTests {
-    @Test("共享目录保持已发布的十五个数据库标识及顺序")
+    @Test("共享目录保持当前快捷功能的标识及顺序")
     func preservesStoredIdentifiers() {
         #expect(ChatQuickAction.allCases.map(\.rawValue) == [
-            "temporaryChat", "contextCompression", "settings", "toolCenter", "dailyPulse", "usageAnalytics", "memory", "mcp",
-            "agentSkills", "shortcuts", "roleplay", "worldbook", "extendedFeatures", "browser", "localTerminal"
+            "temporaryChat", "settings", "toolCenter", "dailyPulse", "usageAnalytics", "mcp",
+            "agentSkills", "shortcuts", "roleplay", "extendedFeatures", "browser", "localTerminal"
         ])
         guard case .text(let raw) = AppConfigKey.chatQuickActionIDs.defaultValue else {
             Issue.record("默认快捷功能配置应为文本"); return
@@ -27,7 +27,6 @@ struct ChatQuickActionCatalogTests {
     func temporaryModeSymbolsRemainCompatible() {
         #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: false) == "eye")
         #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: true) == "eye.slash")
-        #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: true, memoryMode: .isolated) == "eye.slash.fill")
-        #expect(ChatQuickAction.browser.systemImage(isTemporaryChatEnabled: true, memoryMode: .isolated) == "safari")
+        #expect(ChatQuickAction.browser.systemImage(isTemporaryChatEnabled: true) == "safari")
     }
 }

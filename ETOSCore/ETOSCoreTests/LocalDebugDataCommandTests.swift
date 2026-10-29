@@ -53,51 +53,7 @@ struct LocalDebugDataCommandTests {
         #expect(result["status"] as? String == "ok")
     }
 
-    @Test("捕获保存失败保留请求，重复点击不重复写入且之后可以重试或忽略")
-    func captureFailureCanBeRetried() async {
-        let attempts = DebugInsertionAttempts()
-        let server = LocalDebugServer { _, _ in
-            #expect(!Thread.isMainThread)
-            attempts.record()
-            throw SessionInsertionError.storageUnavailable
-        }
-        _ = await server.handleOpenAICapture(["request": ["messages": [["role": "user", "content": "保留内容"]]]])
-        let capturedID = server.pendingOpenAIRequest?.id
-        server.resolvePendingOpenAIRequest(save: true)
-        server.resolvePendingOpenAIRequest(save: true)
-        await server.waitForPendingOperations()
-        #expect(attempts.count == 1)
-        #expect(server.errorMessage != nil && server.resolvingOpenAIRequestIDs.isEmpty)
-        #expect(server.pendingOpenAIRequest?.id == capturedID && server.pendingOpenAIQueueCount == 1)
 
-        let retry = await server.handleOpenAIQueueResolve(["save": true])
-        #expect(retry["status"] as? String == "error" && attempts.count == 2)
-        #expect(server.pendingOpenAIRequest?.id == capturedID)
-        let ignored = await server.handleOpenAIQueueResolve(["save": false])
-        #expect(ignored["status"] as? String == "ok")
-        #expect(server.pendingOpenAIRequests.isEmpty && server.pendingOpenAIRequest == nil)
-    }
-
-    @Test("创建会话的写入错误作为命令错误返回，不发布成功结果")
-    func sessionCreationFailureIsReported() async {
-        let attempts = DebugInsertionAttempts()
-        let server = LocalDebugServer { session, messages in
-            #expect(!Thread.isMainThread)
-            #expect(session.name == "新名称" && session.topicPrompt == "主题" && messages.isEmpty)
-            attempts.record()
-            throw SessionInsertionError.storageUnavailable
-        }
-        let response = await server.handleSessionCreate(["name": " 新名称 ", "topic_prompt": "主题"])
-        #expect(response["status"] as? String == "error" && attempts.count == 1)
-        #expect(response["session"] == nil && response["message"] as? String != nil)
-    }
 }
 
 private struct DebugDateFixture: Codable { let date: Date }
-
-private final class DebugInsertionAttempts: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = 0
-    var count: Int { lock.withLock { value } }
-    func record() { lock.withLock { value += 1 } }
-}

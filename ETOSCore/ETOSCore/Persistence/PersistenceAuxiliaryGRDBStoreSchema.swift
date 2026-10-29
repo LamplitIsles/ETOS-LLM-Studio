@@ -162,99 +162,6 @@ extension PersistenceAuxiliaryGRDBStore {
                 try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_provider_model_override_model ON provider_model_override_parameters(model_id)")
 
                 try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS worldbooks (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        name TEXT NOT NULL,
-                        description TEXT NOT NULL,
-                        is_enabled INTEGER NOT NULL,
-                        created_at REAL NOT NULL,
-                        updated_at REAL NOT NULL,
-                        scan_depth INTEGER NOT NULL,
-                        max_recursion_depth INTEGER NOT NULL,
-                        max_injected_entries INTEGER NOT NULL,
-                        max_injected_characters INTEGER NOT NULL,
-                        fallback_position TEXT NOT NULL,
-                        source_file_name TEXT
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_worldbooks_updated_at ON worldbooks(updated_at DESC)")
-
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS worldbook_metadata (
-                        worldbook_id TEXT NOT NULL REFERENCES worldbooks(id) ON DELETE CASCADE,
-                        meta_key TEXT NOT NULL,
-                        value_type TEXT NOT NULL,
-                        string_value TEXT,
-                        number_value REAL,
-                        bool_value INTEGER,
-                        json_value_text TEXT,
-                        PRIMARY KEY(worldbook_id, meta_key)
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_worldbook_metadata_worldbook ON worldbook_metadata(worldbook_id)")
-
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS worldbook_entries (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        worldbook_id TEXT NOT NULL REFERENCES worldbooks(id) ON DELETE CASCADE,
-                        uid INTEGER,
-                        comment TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        selective_logic TEXT NOT NULL CHECK(selective_logic IN ('AND_ANY', 'NOT_ALL', 'NOT_ANY', 'AND_ALL')),
-                        is_enabled INTEGER NOT NULL,
-                        constant_flag INTEGER NOT NULL,
-                        position TEXT NOT NULL,
-                        outlet_name TEXT,
-                        entry_order INTEGER NOT NULL,
-                        depth INTEGER,
-                        scan_depth INTEGER,
-                        case_sensitive INTEGER NOT NULL,
-                        match_whole_words INTEGER NOT NULL,
-                        use_regex INTEGER NOT NULL,
-                        use_probability INTEGER NOT NULL,
-                        probability REAL NOT NULL,
-                        group_name TEXT,
-                        group_override INTEGER NOT NULL,
-                        group_weight REAL NOT NULL,
-                        use_group_scoring INTEGER NOT NULL,
-                        role TEXT NOT NULL CHECK(role IN ('SYSTEM', 'USER', 'ASSISTANT')),
-                        sticky INTEGER,
-                        cooldown INTEGER,
-                        delay INTEGER,
-                        exclude_recursion INTEGER NOT NULL,
-                        prevent_recursion INTEGER NOT NULL,
-                        delay_until_recursion INTEGER NOT NULL,
-                        sort_index INTEGER NOT NULL
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_worldbook_entries_worldbook_sort ON worldbook_entries(worldbook_id, sort_index ASC)")
-
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS worldbook_entry_keys (
-                        entry_id TEXT NOT NULL REFERENCES worldbook_entries(id) ON DELETE CASCADE,
-                        key_value TEXT NOT NULL,
-                        key_kind TEXT NOT NULL,
-                        sort_index INTEGER NOT NULL,
-                        PRIMARY KEY(entry_id, key_kind, sort_index)
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_worldbook_entry_keys_entry ON worldbook_entry_keys(entry_id, key_kind, sort_index ASC)")
-
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS worldbook_entry_metadata (
-                        entry_id TEXT NOT NULL REFERENCES worldbook_entries(id) ON DELETE CASCADE,
-                        meta_key TEXT NOT NULL,
-                        value_type TEXT NOT NULL,
-                        string_value TEXT,
-                        number_value REAL,
-                        bool_value INTEGER,
-                        json_value_text TEXT,
-                        PRIMARY KEY(entry_id, meta_key)
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_worldbook_entry_metadata_entry ON worldbook_entry_metadata(entry_id)")
-
-                try db.execute(sql: """
                     CREATE TABLE IF NOT EXISTS shortcut_tools (
                         id TEXT PRIMARY KEY NOT NULL,
                         name TEXT NOT NULL,
@@ -438,29 +345,6 @@ extension PersistenceAuxiliaryGRDBStore {
             }
 
             registerEnumCheckConstraintMigration(on: &migrator)
-
-            migrator.registerMigration("v6_create_global_system_prompt_tables") { db in
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS global_system_prompt_entries (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        title TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        updated_at REAL NOT NULL,
-                        sort_index INTEGER NOT NULL
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_global_system_prompt_entries_sort ON global_system_prompt_entries(sort_index ASC, updated_at DESC)")
-
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS global_system_prompt_selection (
-                        singleton_id TEXT PRIMARY KEY NOT NULL CHECK(singleton_id = 'current'),
-                        selected_entry_id TEXT,
-                        active_system_prompt TEXT NOT NULL,
-                        updated_at REAL NOT NULL,
-                        FOREIGN KEY(selected_entry_id) REFERENCES global_system_prompt_entries(id) ON DELETE SET NULL
-                    )
-                """)
-            }
 
             migrator.registerMigration("v7_add_provider_model_capability_shape") { db in
                 func tableHasColumn(_ tableName: String, columnName: String) throws -> Bool {
@@ -957,9 +841,6 @@ extension PersistenceAuxiliaryGRDBStore {
         }
 
         if supportsConfigRelationalSchema {
-            migrator.registerMigration("v22_add_provider_model_prompt") { db in
-                try db.execute(sql: "ALTER TABLE provider_models ADD COLUMN prompt TEXT NOT NULL DEFAULT ''")
-            }
             migrator.registerMigration("v23_add_provider_multi_key_configuration") { db in
                 try db.execute(sql: "ALTER TABLE providers ADD COLUMN multi_key_enabled BOOLEAN NOT NULL DEFAULT 0")
                 try db.execute(sql: "ALTER TABLE providers ADD COLUMN maximum_key_retries INTEGER NOT NULL DEFAULT 3")
@@ -978,123 +859,8 @@ extension PersistenceAuxiliaryGRDBStore {
             }
         }
 
-        if supportsMemoryRelationalSchema {
-            migrator.registerMigration("v2_create_memory_domain_tables") { db in
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS memory_items (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        content TEXT NOT NULL,
-                        embedding_data BLOB NOT NULL,
-                        created_at REAL NOT NULL,
-                        updated_at REAL,
-                        is_archived INTEGER NOT NULL
-                    )
-                """)
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_memory_items_created_at ON memory_items(created_at DESC)")
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_memory_items_updated_at ON memory_items(updated_at DESC)")
-
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS conversation_user_profile (
-                        singleton_key INTEGER PRIMARY KEY NOT NULL CHECK(singleton_key = 1),
-                        content TEXT NOT NULL,
-                        updated_at REAL NOT NULL,
-                        source_session_id TEXT,
-                        needs_llm_dedup INTEGER NOT NULL DEFAULT 0
-                    )
-                """)
-            }
-
-            migrator.registerMigration("v3_add_conversation_profile_dedup_flag") { db in
-                let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(conversation_user_profile)")
-                let hasFlag = columns.contains { row in
-                    let name: String = row["name"]
-                    return name == "needs_llm_dedup"
-                }
-                if !hasFlag {
-                    try db.execute(sql: "ALTER TABLE conversation_user_profile ADD COLUMN needs_llm_dedup INTEGER NOT NULL DEFAULT 0")
-                }
-            }
-
-            migrator.registerMigration("v4_add_structured_memory_metadata") { db in
-                let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(memory_items)")
-                let names = Set(columns.map { row -> String in row["name"] })
-                let additions: [(name: String, definition: String)] = [
-                    ("kind", "TEXT NOT NULL DEFAULT 'semantic'"),
-                    ("source", "TEXT NOT NULL DEFAULT 'manual'"),
-                    ("importance", "REAL NOT NULL DEFAULT 0.5"),
-                    ("confidence", "REAL NOT NULL DEFAULT 1.0"),
-                    ("entities_json", "TEXT NOT NULL DEFAULT '[]'"),
-                    ("valid_from", "REAL"),
-                    ("valid_until", "REAL"),
-                    ("source_session_id", "TEXT"),
-                    ("access_count", "INTEGER NOT NULL DEFAULT 0"),
-                    ("last_accessed_at", "REAL")
-                ]
-                for addition in additions where !names.contains(addition.name) {
-                    try db.execute(sql: "ALTER TABLE memory_items ADD COLUMN \(addition.name) \(addition.definition)")
-                }
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_memory_items_kind ON memory_items(kind, is_archived)")
-                try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_memory_items_validity ON memory_items(valid_from, valid_until)")
-            }
-
-            migrator.registerMigration("v5_add_structured_conversation_profile") { db in
-                let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(conversation_user_profile)")
-                let names = Set(columns.map { row -> String in row["name"] })
-                if !names.contains("facts_json") {
-                    try db.execute(sql: "ALTER TABLE conversation_user_profile ADD COLUMN facts_json TEXT NOT NULL DEFAULT '[]'")
-                }
-                if !names.contains("schema_version") {
-                    try db.execute(sql: "ALTER TABLE conversation_user_profile ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1")
-                }
-            }
-
-            migrator.registerMigration("v6_add_memory_governance") { db in
-                try Self.createMemoryGovernanceTables(db)
-            }
-        }
         try migrator.migrate(self.dbPool)
         self.logger.info("辅助存储已启用，数据库路径: \(self.databaseURL.path)")
     }
 
-    private static func createMemoryGovernanceTables(_ db: Database) throws {
-        try db.execute(sql: """
-            CREATE TABLE IF NOT EXISTS memory_mutation_history (
-                id TEXT PRIMARY KEY NOT NULL,
-                memory_id TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                origin TEXT NOT NULL,
-                source_session_id TEXT,
-                source_message_id TEXT,
-                source_tool_name TEXT,
-                source_shortcut_name TEXT,
-                transfer_receipt_id TEXT,
-                before_digest TEXT,
-                after_digest TEXT,
-                before_snapshot_json BLOB,
-                after_snapshot_json BLOB,
-                created_at REAL NOT NULL
-            )
-        """)
-        try db.execute(sql: """
-            CREATE INDEX IF NOT EXISTS idx_memory_mutation_history_memory
-            ON memory_mutation_history(memory_id, created_at DESC)
-        """)
-        try db.execute(sql: """
-            CREATE TABLE IF NOT EXISTS memory_transfer_receipts (
-                id TEXT PRIMARY KEY NOT NULL,
-                kind TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                payload_sha256 TEXT NOT NULL,
-                added_count INTEGER NOT NULL,
-                updated_count INTEGER NOT NULL,
-                conflict_count INTEGER NOT NULL,
-                archived_count INTEGER NOT NULL,
-                created_at REAL NOT NULL
-            )
-        """)
-        try db.execute(sql: """
-            CREATE INDEX IF NOT EXISTS idx_memory_transfer_receipts_created
-            ON memory_transfer_receipts(created_at DESC)
-        """)
-    }
 }

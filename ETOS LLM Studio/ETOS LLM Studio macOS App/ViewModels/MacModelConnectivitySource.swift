@@ -19,7 +19,6 @@ struct MacModelConnectivitySource: Identifiable {
     }
 
     func candidates() -> [RunnableModel] {
-        guard !LocalModelProviderBridge.isLocalProvider(provider) else { return [] }
         let models = model.map { [$0] } ?? provider.models.filter { $0.isActivated && $0.kind.supportsConnectivityTest }
         // 草稿控制的签名可能不同，固定默认状态避免读取时修剪已保存的聊天选择。
         return models.map { RunnableModel(provider: provider, model: $0, requestBodyControlState: $0.defaultRequestBodyControlState) }

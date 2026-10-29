@@ -12,7 +12,7 @@ struct MCPLocalStdioConfigurationJSONTests {
 
         #expect(configuration.command == "uvx")
         #expect(configuration.arguments == ["mcp-server-git"])
-        #expect(configuration.workingDirectory == "/home/etos")
+        #expect(configuration.workingDirectory == "")
     }
 
     @Test("常见别名与环境变量可以导入")

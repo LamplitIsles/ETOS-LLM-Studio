@@ -13,7 +13,7 @@ extension PersistenceGRDBStore {
     static func createLocalAgentRuntimeTables(_ db: Database) throws {
         try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS local_agent_session_modes (
-                session_id TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                session_id TEXT PRIMARY KEY NOT NULL,
                 mode TEXT NOT NULL CHECK(mode IN ('chat', 'agent')),
                 updated_at REAL NOT NULL
             )
@@ -21,7 +21,7 @@ extension PersistenceGRDBStore {
 
         try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS browser_agent_session_preferences (
-                session_id TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                session_id TEXT PRIMARY KEY NOT NULL,
                 data_profile TEXT NOT NULL CHECK(data_profile IN ('session_isolated', 'persistent_shared')),
                 updated_at REAL NOT NULL
             )
@@ -46,7 +46,7 @@ extension PersistenceGRDBStore {
         try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS local_agent_workspaces (
                 id TEXT PRIMARY KEY NOT NULL,
-                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                session_id TEXT,
                 profile_id TEXT,
                 guest_path TEXT NOT NULL UNIQUE,
                 host_relative_path TEXT NOT NULL UNIQUE,
@@ -59,7 +59,7 @@ extension PersistenceGRDBStore {
         try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS local_agent_runs (
                 run_id TEXT PRIMARY KEY NOT NULL,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                session_id TEXT NOT NULL,
                 root_run_id TEXT,
                 parent_run_id TEXT,
                 mode TEXT NOT NULL CHECK(mode IN ('chat', 'agent')),
@@ -77,7 +77,7 @@ extension PersistenceGRDBStore {
                 id TEXT PRIMARY KEY NOT NULL,
                 request_id INTEGER NOT NULL UNIQUE,
                 kind TEXT NOT NULL CHECK(kind IN ('run', 'shell', 'terminal', 'local_mcp', 'browser', 'recipe')),
-                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                session_id TEXT,
                 run_id TEXT,
                 root_run_id TEXT,
                 parent_run_id TEXT,
@@ -120,7 +120,7 @@ extension PersistenceGRDBStore {
         try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS local_linux_audit (
                 id TEXT PRIMARY KEY NOT NULL,
-                session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                session_id TEXT,
                 run_id TEXT,
                 job_id TEXT REFERENCES local_linux_jobs(id) ON DELETE SET NULL,
                 action TEXT NOT NULL,

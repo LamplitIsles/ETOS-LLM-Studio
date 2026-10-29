@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 从世界书 [initvar] 与开场白 <initvar> 构建会话级原生 MVU 初始状态。
+// 从开场白 <initvar> 构建会话级原生 MVU 初始状态。
 // ============================================================================
 
 import Foundation
@@ -17,66 +17,29 @@ struct RoleplayMVUInitializationResult: Hashable, Sendable {
 enum RoleplayMVUInitializer {
     static func initialize(
         greeting: String,
-        worldbooks: [Worldbook],
-        primaryWorldbookID: UUID?,
         existingVariables: [String: JSONValue],
         macroContext: RoleplayMacroContext
     ) -> RoleplayMVUInitializationResult {
-        let enabledWorldbooks = worldbooks.filter(\.isEnabled)
         let greetingPayloads = taggedContents(named: "initvar", in: greeting)
         var failures: [String] = []
         var loadedSourceCount = 0
-        var initializedLorebooks: [String: [JSONValue]] = [:]
         var statData: [String: JSONValue] = [:]
 
-        if greetingPayloads.isEmpty {
-            for worldbook in enabledWorldbooks {
-                let loaded = loadInitvarEntries(
-                    from: worldbook,
-                    macroContext: macroContext,
-                    failures: &failures
-                )
-                RoleplayMVUData.merge(loaded.variables, into: &statData)
-                initializedLorebooks[worldbook.name] = loaded.entryIdentifiers
-                loadedSourceCount += loaded.loadedCount
-            }
-        } else {
-            for payload in greetingPayloads {
-                let failureCount = failures.count
-                mergePayload(
-                    payload,
-                    sourceName: NSLocalizedString("开场白 <initvar>", comment: "Roleplay greeting initvar source"),
-                    macroContext: macroContext,
-                    into: &statData,
-                    failures: &failures
-                )
-                if failures.count == failureCount { loadedSourceCount += 1 }
-            }
-            for worldbook in enabledWorldbooks {
-                if worldbook.id == primaryWorldbookID {
-                    initializedLorebooks[worldbook.name] = []
-                    continue
-                }
-                let loaded = loadInitvarEntries(
-                    from: worldbook,
-                    macroContext: macroContext,
-                    failures: &failures
-                )
-                var additionalVariables = loaded.variables
-                RoleplayMVUData.merge(statData, into: &additionalVariables)
-                statData = additionalVariables
-                initializedLorebooks[worldbook.name] = loaded.entryIdentifiers
-                loadedSourceCount += loaded.loadedCount
-            }
+        for payload in greetingPayloads {
+            let failureCount = failures.count
+            mergePayload(
+                payload,
+                sourceName: NSLocalizedString("开场白 <initvar>", comment: "Roleplay greeting initvar source"),
+                macroContext: macroContext,
+                into: &statData,
+                failures: &failures
+            )
+            if failures.count == failureCount { loadedSourceCount += 1 }
         }
 
         let existing = RoleplayMVUData(variables: existingVariables)
         RoleplayMVUData.merge(existing.statData, into: &statData)
-        initializedLorebooks.merge(existing.initializedLorebooks) { loaded, stored in
-            stored.isEmpty ? loaded : stored
-        }
         var data = RoleplayMVUData(
-            initializedLorebooks: initializedLorebooks,
             statData: statData,
             displayData: statData,
             extra: existing.extra
@@ -99,49 +62,6 @@ enum RoleplayMVUInitializer {
             guard match.numberOfRanges > 1, match.range(at: 1).location != NSNotFound else { return nil }
             return unwrapCodeFence(value.substring(with: match.range(at: 1)))
         }
-    }
-
-    private struct LoadedWorldbook {
-        var variables: [String: JSONValue]
-        var entryIdentifiers: [JSONValue]
-        var loadedCount: Int
-    }
-
-    private static func loadInitvarEntries(
-        from worldbook: Worldbook,
-        macroContext: RoleplayMacroContext,
-        failures: inout [String]
-    ) -> LoadedWorldbook {
-        var variables: [String: JSONValue] = [:]
-        var identifiers: [JSONValue] = []
-        var loadedCount = 0
-        for entry in worldbook.entries where entry.comment.range(
-            of: #"\[initvar\]"#,
-            options: [.regularExpression, .caseInsensitive]
-        ) != nil {
-            let payload = taggedContents(named: "initvar", in: entry.content).first
-                ?? unwrapCodeFence(entry.content)
-            let failureCount = failures.count
-            mergePayload(
-                payload,
-                sourceName: String(
-                    format: NSLocalizedString("世界书“%@”条目“%@”", comment: "Roleplay worldbook initvar source"),
-                    worldbook.name,
-                    entry.comment
-                ),
-                macroContext: macroContext,
-                into: &variables,
-                failures: &failures
-            )
-            guard failures.count == failureCount else { continue }
-            identifiers.append(entry.uid.map(JSONValue.int) ?? .string(entry.id.uuidString))
-            loadedCount += 1
-        }
-        return LoadedWorldbook(
-            variables: variables,
-            entryIdentifiers: identifiers,
-            loadedCount: loadedCount
-        )
     }
 
     private static func mergePayload(

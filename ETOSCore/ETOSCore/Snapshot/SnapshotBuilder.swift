@@ -177,7 +177,7 @@ private extension SnapshotBuilder {
         var fileName: String {
             switch self {
             case .chat:
-                return "chat-store.sqlite"
+                return "runtime-store.sqlite"
             case .auxiliary(let kind, _):
                 return kind.rawValue
             }
@@ -209,14 +209,9 @@ private extension SnapshotBuilder {
         guard let configStore = Persistence.activeAuxiliaryStore(kind: .config) else {
             throw SnapshotError.auxiliaryStoreUnavailable(NSLocalizedString("配置数据库", comment: ""))
         }
-        guard let memoryStore = Persistence.activeAuxiliaryStore(kind: .memory) else {
-            throw SnapshotError.auxiliaryStoreUnavailable(NSLocalizedString("记忆数据库", comment: ""))
-        }
-
         let sources: [SourceDatabase] = [
             .chat(chatStore),
-            .auxiliary(.config, configStore),
-            .auxiliary(.memory, memoryStore)
+            .auxiliary(.config, configStore)
         ]
 
         var items: [DatabaseItem] = []
@@ -258,15 +253,6 @@ private extension SnapshotBuilder {
 
         for directory in directories {
             items.append(contentsOf: try collectRegularFiles(in: directory))
-        }
-
-        let vectorStoreURL = MemoryStoragePaths.vectorStoreDirectory()
-            .appendingPathComponent("\(MemoryStoragePaths.vectorStoreName).sqlite", isDirectory: false)
-        if let vectorItem = try makeFileItem(
-            fileURL: vectorStoreURL,
-            relativePath: "Memory/\(vectorStoreURL.lastPathComponent)"
-        ) {
-            items.append(vectorItem)
         }
 
         return items.sorted { $0.relativePath < $1.relativePath }
@@ -332,7 +318,6 @@ private extension SnapshotBuilder {
         switch kind {
         case .database:
             return [
-                "memory_vectors.sqlite",
                 "Backgrounds/",
                 "AudioFiles/",
                 "ImageFiles/",

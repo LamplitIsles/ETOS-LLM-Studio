@@ -93,11 +93,11 @@ final class SystemEntrySnapshotPublisher {
     }
 
     private func publish() async {
+        let sessions = Array(ChatService.shared.chatSessionsSubject.value.filter { !$0.isTemporary }.prefix(20))
         let runningIDs = ChatService.shared.runningSessionIDsSubject.value
         let dailyPulseTitle = DailyPulseManager.shared.todayRun?.headline
         let replyRuns = replyRunTracker.recentSnapshots
         let result = await Task.detached(priority: .utility) {
-            let sessions = Array(Persistence.loadChatSessions().prefix(20))
             var agentSessionIDs: Set<UUID> = []
             let agentRuns = sessions.compactMap { session -> ETOSRunSnapshot? in
                 guard Persistence.localAgentMode(sessionID: session.id) == .agent else {
@@ -121,7 +121,6 @@ final class SystemEntrySnapshotPublisher {
             .sorted { $0.updatedAt > $1.updatedAt }
             let snapshot = ETOSWidgetSnapshot(
                 recentRuns: Array(runs.prefix(5)),
-                recentSessions: sessions.prefix(10).map { ETOSSessionSummary(id: $0.id, name: $0.name) },
                 dailyPulseTitle: dailyPulseTitle
             )
             if let layout = ETOSSharedStorageLayout.resolve() {

@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 检查、解密并安装 .elsbackup 三处分库快照。
+// 检查、解密并安装 .elsbackup 数据库快照。
 // ============================================================================
 
 import Foundation
@@ -74,12 +74,9 @@ public enum SnapshotRestoreService {
         if manifest.backupKind == .full {
             try validateRestorableFiles(from: archive, manifest: manifest)
         }
-        try MemoryManager.withCurrentInstancePausedForSnapshotRestore {
-            try Persistence.installSnapshotDatabases(databaseURLs)
-            try MemoryStoragePaths.clearCachesAfterDatabaseRestore()
-            if manifest.backupKind == .full {
-                try restoreFiles(from: archive, manifest: manifest)
-            }
+        try Persistence.installSnapshotDatabases(databaseURLs)
+        if manifest.backupKind == .full {
+            try restoreFiles(from: archive, manifest: manifest)
         }
         NotificationCenter.default.post(name: .snapshotRestoreDidFinish, object: nil)
     }
@@ -109,9 +106,8 @@ private extension SnapshotRestoreService {
     }
 
     static let databaseArchivePaths: [(archivePath: String, fileName: String)] = [
-        ("Databases/chat-store.sqlite", "chat-store.sqlite"),
-        ("Databases/config-store.sqlite", "config-store.sqlite"),
-        ("Databases/memory-store.sqlite", "memory-store.sqlite")
+        ("Databases/runtime-store.sqlite", "runtime-store.sqlite"),
+        ("Databases/config-store.sqlite", "config-store.sqlite")
     ]
 
     static func makeReadableSnapshotURL(_ sourceURL: URL, in workingDirectory: URL) throws -> URL {
@@ -184,20 +180,15 @@ private extension SnapshotRestoreService {
             extractedURLs[item.fileName] = destinationURL
         }
 
-        guard let chatStoreURL = extractedURLs["chat-store.sqlite"] else {
-            throw RestoreError.missingDatabase("chat-store.sqlite")
+        guard let chatStoreURL = extractedURLs["runtime-store.sqlite"] else {
+            throw RestoreError.missingDatabase("runtime-store.sqlite")
         }
         guard let configStoreURL = extractedURLs["config-store.sqlite"] else {
             throw RestoreError.missingDatabase("config-store.sqlite")
         }
-        guard let memoryStoreURL = extractedURLs["memory-store.sqlite"] else {
-            throw RestoreError.missingDatabase("memory-store.sqlite")
-        }
-
         return SnapshotRestoreDatabaseURLs(
             chatStoreURL: chatStoreURL,
-            configStoreURL: configStoreURL,
-            memoryStoreURL: memoryStoreURL
+            configStoreURL: configStoreURL
         )
     }
 
@@ -271,11 +262,6 @@ private extension SnapshotRestoreService {
             rootURL = SkillStore.skillsDirectory
         case "FontFiles":
             rootURL = Persistence.getFontDirectory()
-        case "Memory":
-            guard relativePath == "Memory/memory_vectors.sqlite" else {
-                throw RestoreError.unsafeFilePath(relativePath)
-            }
-            rootURL = MemoryStoragePaths.rootDirectory()
         default:
             throw RestoreError.unsafeFilePath(relativePath)
         }

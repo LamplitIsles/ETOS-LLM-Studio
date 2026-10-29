@@ -10,8 +10,6 @@
 import Foundation
 
 public enum ToolCatalogBuiltInToolKind: String, CaseIterable, Identifiable, Sendable {
-    case memoryWrite
-    case memorySearch
     case widgetCard
     case askUserInput
     case getSystemTime
@@ -21,10 +19,6 @@ public enum ToolCatalogBuiltInToolKind: String, CaseIterable, Identifiable, Send
 
 public enum ToolCatalogBuiltInToolStatusReason: String, Equatable, Sendable {
     case enabled
-    case memoryDisabled
-    case memoryWriteDisabled
-    case activeRetrievalDisabled
-    case zeroTopK
     case isolatedBySession
     case widgetDisabled
     case askUserInputDisabled
@@ -36,7 +30,6 @@ public struct ToolCatalogBuiltInToolState: Identifiable, Equatable, Sendable {
     public let isConfiguredEnabled: Bool
     public let isAvailableInCurrentSession: Bool
     public let statusReason: ToolCatalogBuiltInToolStatusReason
-    public let memoryTopK: Int
 
     public var id: ToolCatalogBuiltInToolKind { kind }
 
@@ -44,21 +37,18 @@ public struct ToolCatalogBuiltInToolState: Identifiable, Equatable, Sendable {
         kind: ToolCatalogBuiltInToolKind,
         isConfiguredEnabled: Bool,
         isAvailableInCurrentSession: Bool,
-        statusReason: ToolCatalogBuiltInToolStatusReason,
-        memoryTopK: Int = 0
+        statusReason: ToolCatalogBuiltInToolStatusReason
     ) {
         self.kind = kind
         self.isConfiguredEnabled = isConfiguredEnabled
         self.isAvailableInCurrentSession = isAvailableInCurrentSession
         self.statusReason = statusReason
-        self.memoryTopK = memoryTopK
     }
 }
 
 public enum AppToolCatalogCategory: String, Hashable, Codable, Sendable {
     case interaction
     case conversation
-    case memory
     case file
     case database
     case custom
@@ -72,45 +62,11 @@ public enum AppToolCatalogCategory: String, Hashable, Codable, Sendable {
 
 public enum ToolCatalogSupport {
     public static func builtInToolStates(
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool,
-        memoryTopK: Int,
         enableWidgetTool: Bool,
         enableAskUserInputTool: Bool,
         enableGetSystemTimeTool: Bool,
-        isMemoryIsolated: Bool,
         isToolIsolated: Bool
     ) -> [ToolCatalogBuiltInToolState] {
-        let memoryWriteConfiguredEnabled = enableMemory && enableMemoryWrite
-        let memoryWriteAvailable = memoryWriteConfiguredEnabled && !isMemoryIsolated && !isToolIsolated
-        let memoryWriteReason: ToolCatalogBuiltInToolStatusReason
-        if memoryWriteConfiguredEnabled && (isMemoryIsolated || isToolIsolated) {
-            memoryWriteReason = .isolatedBySession
-        } else if !enableMemory {
-            memoryWriteReason = .memoryDisabled
-        } else if !enableMemoryWrite {
-            memoryWriteReason = .memoryWriteDisabled
-        } else {
-            memoryWriteReason = .enabled
-        }
-
-        let resolvedTopK = max(0, memoryTopK)
-        let memorySearchConfiguredEnabled = enableMemory && enableMemoryActiveRetrieval && resolvedTopK > 0
-        let memorySearchAvailable = memorySearchConfiguredEnabled && !isMemoryIsolated && !isToolIsolated
-        let memorySearchReason: ToolCatalogBuiltInToolStatusReason
-        if memorySearchConfiguredEnabled && (isMemoryIsolated || isToolIsolated) {
-            memorySearchReason = .isolatedBySession
-        } else if !enableMemory {
-            memorySearchReason = .memoryDisabled
-        } else if !enableMemoryActiveRetrieval {
-            memorySearchReason = .activeRetrievalDisabled
-        } else if resolvedTopK <= 0 {
-            memorySearchReason = .zeroTopK
-        } else {
-            memorySearchReason = .enabled
-        }
-
         let widgetReason: ToolCatalogBuiltInToolStatusReason = isToolIsolated && enableWidgetTool
             ? .isolatedBySession
             : (enableWidgetTool ? .enabled : .widgetDisabled)
@@ -122,19 +78,6 @@ public enum ToolCatalogSupport {
             : (enableGetSystemTimeTool ? .enabled : .getSystemTimeDisabled)
 
         return [
-            ToolCatalogBuiltInToolState(
-                kind: .memoryWrite,
-                isConfiguredEnabled: memoryWriteConfiguredEnabled,
-                isAvailableInCurrentSession: memoryWriteAvailable,
-                statusReason: memoryWriteReason
-            ),
-            ToolCatalogBuiltInToolState(
-                kind: .memorySearch,
-                isConfiguredEnabled: memorySearchConfiguredEnabled,
-                isAvailableInCurrentSession: memorySearchAvailable,
-                statusReason: memorySearchReason,
-                memoryTopK: resolvedTopK
-            ),
             ToolCatalogBuiltInToolState(
                 kind: .widgetCard,
                 isConfiguredEnabled: enableWidgetTool,
@@ -168,8 +111,6 @@ public enum ToolCatalogSupport {
         switch kind {
         case .echoText, .fillUserInput, .submitFeedbackTicket:
             return .interaction
-        case .editMemory, .listMemories:
-            return .memory
         case .listSandboxDirectory, .readSandboxFile, .writeSandboxFile, .searchSandboxFiles,
              .readSandboxFileChunk, .moveSandboxItem, .copySandboxItem, .createSandboxDirectory,
              .batchEditSandboxFile, .undoSandboxMutation, .diffSandboxFile, .editSandboxFile,
@@ -177,7 +118,7 @@ public enum ToolCatalogSupport {
             return .file
         case .listSQLiteTables, .querySQLite, .mutateSQLite:
             return .database
-        case .executeJSCJavaScript, .createCustomJSCJSTool, .executeWebKitJavaScript, .createCustomWebKitJSTool:
+        case .executeJSCJavaScript, .createCustomJSCJSTool:
             return .custom
         case .showWidget, .askUserInput, .getSystemTime:
             return .interaction

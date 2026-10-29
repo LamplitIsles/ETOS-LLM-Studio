@@ -42,7 +42,7 @@ final class MacDataImportOperations {
     }
 
     func perform<Value>(_ operation: @escaping @MainActor () async throws -> Value) async throws -> Value {
-        guard pending == nil else { throw MacMemoryWriteError.busy }
+        guard pending == nil else { throw MacWorkspaceWriteError.busy }
         // 导入与存储清理由工作区持有，关页或退出不得取消一半的写入。
         let task = Task { @MainActor in try await operation() }
         pending = Task { _ = await task.result }

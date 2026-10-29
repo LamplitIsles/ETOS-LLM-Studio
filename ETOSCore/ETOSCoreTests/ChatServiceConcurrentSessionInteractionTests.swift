@@ -17,7 +17,7 @@ struct ChatServiceConcurrentSessionInteractionTests {
     @MainActor
     @Test("删除正在生成的消息只取消匹配请求")
     func testCancellingRequestBeforeDeletingMatchesLoadingMessage() async {
-        let service = ChatService(memoryManager: MemoryManager())
+        let service = ChatService()
         let session = service.createSavedSession(name: "删除流式消息")
         let loadingMessageID = UUID()
         let requestTask = Task<Void, Error> {
@@ -48,7 +48,7 @@ struct ChatServiceConcurrentSessionInteractionTests {
     @MainActor
     @Test("切回后台运行会话时优先使用运行期消息快照")
     func testActivatingRunningBackgroundSessionUsesRuntimeMessageSnapshot() {
-        let service = ChatService(memoryManager: MemoryManager())
+        let service = ChatService()
         let sessionA = service.createSavedSession(name: "后台工具会话")
         let sessionB = service.createSavedSession(name: "当前会话")
         defer {
@@ -68,7 +68,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
             responseAttemptID: UUID(),
             responseAttemptIndex: 0
         )
-        Persistence.saveMessages([staleAssistant], for: sessionA.id)
 
         var resolvedCall = toolCall
         resolvedCall.result = "OK"
@@ -139,7 +138,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": ConcurrentSessionMockAdapter()],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -157,12 +155,8 @@ struct ChatServiceConcurrentSessionInteractionTests {
                 content: "A",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: false,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -177,12 +171,8 @@ struct ChatServiceConcurrentSessionInteractionTests {
                 content: "B",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: false,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -212,8 +202,8 @@ struct ChatServiceConcurrentSessionInteractionTests {
 
         #expect(service.runningSessionIDsSubject.value.isEmpty)
 
-        let sessionAMessages = Persistence.loadMessages(for: sessionA.id)
-        let sessionBMessages = Persistence.loadMessages(for: sessionB.id)
+        let sessionAMessages = service.messagesSnapshot(for: sessionA.id)
+        let sessionBMessages = service.messagesSnapshot(for: sessionB.id)
 
         let assistantRepliesA = sessionAMessages
             .filter { $0.role == .assistant }
@@ -258,7 +248,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": StreamingFailureMockAdapter()],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -274,16 +263,12 @@ struct ChatServiceConcurrentSessionInteractionTests {
             content: "partial",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: true,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
-        let storedMessages = Persistence.loadMessages(for: testSession.id)
+        let storedMessages = service.messagesSnapshot(for: testSession.id)
         let assistantMessage = storedMessages.first { $0.role == .assistant }
         let errorMessage = storedMessages.first { $0.role == .error }
         #expect(storedMessages.count == 3)
@@ -330,7 +315,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
                     requiresExplicitStreamingTermination: true
                 )
             ],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -346,16 +330,12 @@ struct ChatServiceConcurrentSessionInteractionTests {
             content: "unexpected-eof",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: true,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
-        let storedMessages = Persistence.loadMessages(for: testSession.id)
+        let storedMessages = service.messagesSnapshot(for: testSession.id)
         #expect(storedMessages.map(\.role) == [.user, .assistant, .error])
         #expect(storedMessages.first(where: { $0.role == .assistant })?.content == "第一段回复")
         #expect(
@@ -405,7 +385,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": StreamingTrailingProxyErrorMockAdapter()],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -421,16 +400,12 @@ struct ChatServiceConcurrentSessionInteractionTests {
             content: "proxy-timeout",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: true,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
-        let storedMessages = Persistence.loadMessages(for: testSession.id)
+        let storedMessages = service.messagesSnapshot(for: testSession.id)
         let assistantMessage = storedMessages.first { $0.role == .assistant }
         #expect(storedMessages.count == 3)
         #expect(storedMessages.map(\.role) == [.user, .assistant, .error])
@@ -473,7 +448,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": StreamingFailureMockAdapter()],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -490,12 +464,8 @@ struct ChatServiceConcurrentSessionInteractionTests {
                 content: "edit-me",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: true,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -518,9 +488,6 @@ struct ChatServiceConcurrentSessionInteractionTests {
         #expect(runtimeMessages.first(where: { $0.id == userMessage.id })?.content == "已编辑的用户消息")
         #expect(runtimeMessages.last(where: { $0.role == .assistant })?.content == "第一段第二段")
 
-        let storedMessages = Persistence.loadMessages(for: testSession.id)
-        #expect(storedMessages.first(where: { $0.id == userMessage.id })?.content == "已编辑的用户消息")
-        #expect(storedMessages.last(where: { $0.role == .assistant })?.content == "第一段第二段")
     }
 
     @MainActor

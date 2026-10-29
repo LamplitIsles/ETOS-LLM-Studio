@@ -91,28 +91,6 @@ struct LocalDebugCommandQueueTests {
         #expect(server.canContinueDebugCommand)
     }
 
-    @Test("捕获与忽略按顺序处理，不因后台解析而把忽略命令提前执行")
-    func capturedRequestCanBeResolvedByFollowingCommand() async {
-        let server = LocalDebugServer()
-        server.handleReceivedMessage(Data(#"{"command":"openai_capture","request_id":"capture","request":{"model":"fixture","messages":[{"role":"user","content":"内容"}]}}"#.utf8))
-        server.handleReceivedMessage(Data(#"{"command":"openai_queue_resolve","request_id":"ignore","save":false}"#.utf8))
-        await server.waitForPendingOperations()
-        #expect(server.pendingOpenAIRequests.isEmpty)
-        #expect(server.pendingOpenAIRequest == nil && server.pendingOpenAIQueueCount == 0)
-        #expect(!server.isProcessingCommand)
-    }
-
-    @Test("清空捕获队列立即清除摘要，不能由旧发布任务复活")
-    func disconnectClearsPendingPresentationSynchronously() async {
-        let server = LocalDebugServer()
-        let request: [String: Any] = ["request": ["messages": [["role": "user", "content": "内容"]]]]
-        _ = await server.handleOpenAICapture(request)
-        #expect(server.pendingOpenAIQueueCount == 1)
-        server.disconnect()
-        await server.waitForPendingOperations()
-        #expect(server.pendingOpenAIRequest == nil && server.pendingOpenAIQueueCount == 0)
-    }
-
     @Test("后台 JSON 往返保留请求标识与布尔空值，非对象输入不会成为命令")
     func backgroundJSONBoundaryPreservesValues() async throws {
         let result = try await Task.detached {

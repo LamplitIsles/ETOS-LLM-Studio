@@ -2,8 +2,7 @@
 // SkillScriptExecution.swift
 // ETOS LLM Studio
 //
-// Skill 读取与执行严格分离：只有 scripts/ 内、与 Run 冻结摘要一致的文件才会
-// 进入只读 Linux 挂载；命令始终使用 argv，不经过宿主或 guest shell 拼接。
+// 技能快照和本机进程使用的冻结文件包。
 // ============================================================================
 
 import CryptoKit
@@ -171,15 +170,6 @@ public actor SkillExecutionPackageStore {
     }
 }
 
-public struct ResolvedSkillScript: Equatable, Sendable {
-    public let skillDirectory: URL
-    public let guestScriptPath: String
-    public let executable: String
-    public let argumentsPrefix: [String]
-    public let requiredInterpreter: String?
-    public let snapshot: SkillScriptSnapshot
-}
-
 public enum SkillScriptResolver {
     static func requiresExecutablePermission(relativePath: String, data: Data) -> Bool {
         guard let normalized = SkillResourcePolicy.normalizeRelativePath(relativePath),
@@ -188,98 +178,7 @@ public enum SkillScriptResolver {
               normalized != "scripts/" else {
             return false
         }
-        return shebangInterpreter(in: data) != nil || isAArch64ELF(data)
-    }
-
-    public static func resolve(
-        skillName: String,
-        relativePath: String,
-        frozenSnapshot: SkillRunSnapshot
-    ) throws -> ResolvedSkillScript {
-        guard frozenSnapshot.skillName == skillName,
-              let normalized = SkillResourcePolicy.normalizeRelativePath(relativePath),
-              normalized == relativePath,
-              normalized.hasPrefix("scripts/"),
-              normalized != "scripts/",
-              let frozenScript = frozenSnapshot.scripts.first(where: { $0.relativePath == normalized }),
-              let skillDirectory = SkillStore.resolveSkillDir(skillName: skillName),
-              let fileURL = SkillStore.resolveSkillFile(skillName: skillName, relativePath: normalized) else {
-            throw SkillExecutionError.invalidScriptPath
-        }
-
-        let canonicalRoot = SkillStore.skillsDirectory.resolvingSymlinksInPath().standardizedFileURL
-        let canonicalSkill = skillDirectory.resolvingSymlinksInPath().standardizedFileURL
-        let canonicalScripts = canonicalSkill.appendingPathComponent("scripts", isDirectory: true).standardizedFileURL
-        let values = try fileURL.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
-        guard SkillRunSnapshotBuilder.isDescendant(canonicalSkill, of: canonicalRoot),
-              values.isSymbolicLink != true,
-              values.isRegularFile == true else {
-            throw SkillExecutionError.invalidScriptPath
-        }
-        let canonicalFile = fileURL.resolvingSymlinksInPath().standardizedFileURL
-        guard SkillRunSnapshotBuilder.isDescendant(canonicalFile, of: canonicalScripts) else {
-            throw SkillExecutionError.invalidScriptPath
-        }
-
-        let data = try Data(contentsOf: fileURL)
-        guard data.count == frozenScript.size,
-              SkillRunSnapshotBuilder.sha256(data) == frozenScript.sha256 else {
-            throw SkillExecutionError.skillChanged
-        }
-        let currentMetadata = SkillStore.listSkills().first { $0.name == skillName }
-        guard let currentMetadata,
-              try SkillRunSnapshotBuilder.build(skill: currentMetadata).versionDigest == frozenSnapshot.versionDigest else {
-            throw SkillExecutionError.skillChanged
-        }
-
-        let guestPath = "/mnt/etos/skills/\(skillName)/\(normalized)"
-        if frozenScript.isExecutable, let interpreter = shebangInterpreter(in: data) {
-            return ResolvedSkillScript(
-                skillDirectory: canonicalSkill,
-                guestScriptPath: guestPath,
-                executable: guestPath,
-                argumentsPrefix: [],
-                requiredInterpreter: interpreter,
-                snapshot: frozenScript
-            )
-        }
-
-        switch fileURL.pathExtension.lowercased() {
-        case "sh":
-            return interpreted("/bin/sh", guestPath: guestPath, directory: canonicalSkill, snapshot: frozenScript)
-        case "py":
-            return interpreted("python3", guestPath: guestPath, directory: canonicalSkill, snapshot: frozenScript)
-        case "js", "mjs":
-            return interpreted("node", guestPath: guestPath, directory: canonicalSkill, snapshot: frozenScript)
-        default:
-            guard frozenScript.isExecutable, isAArch64ELF(data) else {
-                throw SkillExecutionError.unsupportedScript
-            }
-            return ResolvedSkillScript(
-                skillDirectory: canonicalSkill,
-                guestScriptPath: guestPath,
-                executable: guestPath,
-                argumentsPrefix: [],
-                requiredInterpreter: nil,
-                snapshot: frozenScript
-            )
-        }
-    }
-
-    private static func interpreted(
-        _ interpreter: String,
-        guestPath: String,
-        directory: URL,
-        snapshot: SkillScriptSnapshot
-    ) -> ResolvedSkillScript {
-        ResolvedSkillScript(
-            skillDirectory: directory,
-            guestScriptPath: guestPath,
-            executable: interpreter,
-            argumentsPrefix: [guestPath],
-            requiredInterpreter: interpreter,
-            snapshot: snapshot
-        )
+        return shebangInterpreter(in: data) != nil
     }
 
     static func shebangInterpreter(in data: Data) -> String? {
@@ -299,15 +198,4 @@ public enum SkillScriptResolver {
         return first
     }
 
-    static func isAArch64ELF(_ data: Data) -> Bool {
-        guard data.count >= 20,
-              data[0] == 0x7f,
-              data[1] == 0x45,
-              data[2] == 0x4c,
-              data[3] == 0x46,
-              data[4] == 1 || data[4] == 2,
-              data[5] == 1 else { return false }
-        let machine = UInt16(data[18]) | UInt16(data[19]) << 8
-        return machine == 183
-    }
 }

@@ -13,87 +13,26 @@ import Foundation
 @Suite("工具中心辅助测试")
 struct ToolCatalogSupportTests {
 
-    @Test("同时屏蔽记忆与工具会影响全部内置工具")
+    @Test("工具隔离会影响内置工具")
     func testBuiltInToolStatesReflectIsolation() {
         let states = ToolCatalogSupport.builtInToolStates(
-            enableMemory: true,
-            enableMemoryWrite: true,
-            enableMemoryActiveRetrieval: true,
-            memoryTopK: 5,
             enableWidgetTool: true,
             enableAskUserInputTool: true,
             enableGetSystemTimeTool: true,
-            isMemoryIsolated: true,
             isToolIsolated: true
         )
 
-        let memoryWrite = states.first(where: { $0.kind == .memoryWrite })
-        let memorySearch = states.first(where: { $0.kind == .memorySearch })
-
-        #expect(memoryWrite?.isConfiguredEnabled == true)
-        #expect(memoryWrite?.isAvailableInCurrentSession == false)
-        #expect(memoryWrite?.statusReason == .isolatedBySession)
-        #expect(memorySearch?.isConfiguredEnabled == true)
-        #expect(memorySearch?.isAvailableInCurrentSession == false)
-        #expect(memorySearch?.statusReason == .isolatedBySession)
         #expect(states.first(where: { $0.kind == .widgetCard })?.isAvailableInCurrentSession == false)
         #expect(states.first(where: { $0.kind == .askUserInput })?.isAvailableInCurrentSession == false)
         #expect(states.first(where: { $0.kind == .getSystemTime })?.isAvailableInCurrentSession == false)
     }
 
-    @Test("记忆隔离不会屏蔽非记忆工具")
-    func testMemoryIsolationKeepsOtherToolsAvailable() {
-        let states = ToolCatalogSupport.builtInToolStates(
-            enableMemory: true,
-            enableMemoryWrite: true,
-            enableMemoryActiveRetrieval: true,
-            memoryTopK: 5,
-            enableWidgetTool: true,
-            enableAskUserInputTool: true,
-            enableGetSystemTimeTool: true,
-            isMemoryIsolated: true,
-            isToolIsolated: false
-        )
-
-        #expect(states.first(where: { $0.kind == .memoryWrite })?.isAvailableInCurrentSession == false)
-        #expect(states.first(where: { $0.kind == .memorySearch })?.isAvailableInCurrentSession == false)
-        #expect(states.first(where: { $0.kind == .widgetCard })?.isAvailableInCurrentSession == true)
-        #expect(states.first(where: { $0.kind == .askUserInput })?.isAvailableInCurrentSession == true)
-        #expect(states.first(where: { $0.kind == .getSystemTime })?.isAvailableInCurrentSession == true)
-    }
-
-    @Test("Top K 为零时主动检索不会视为启用")
-    func testBuiltInToolStatesReflectZeroTopK() {
-        let states = ToolCatalogSupport.builtInToolStates(
-            enableMemory: true,
-            enableMemoryWrite: true,
-            enableMemoryActiveRetrieval: true,
-            memoryTopK: 0,
-            enableWidgetTool: true,
-            enableAskUserInputTool: true,
-            enableGetSystemTimeTool: true,
-            isMemoryIsolated: false,
-            isToolIsolated: false
-        )
-
-        let memorySearch = states.first(where: { $0.kind == .memorySearch })
-
-        #expect(memorySearch?.isConfiguredEnabled == false)
-        #expect(memorySearch?.isAvailableInCurrentSession == false)
-        #expect(memorySearch?.statusReason == .zeroTopK)
-    }
-
     @Test("网页卡片工具关闭时应标记为未启用")
     func testBuiltInToolStatesReflectWidgetDisabled() {
         let states = ToolCatalogSupport.builtInToolStates(
-            enableMemory: true,
-            enableMemoryWrite: true,
-            enableMemoryActiveRetrieval: true,
-            memoryTopK: 3,
             enableWidgetTool: false,
             enableAskUserInputTool: true,
             enableGetSystemTimeTool: true,
-            isMemoryIsolated: false,
             isToolIsolated: false
         )
 
@@ -106,14 +45,9 @@ struct ToolCatalogSupportTests {
     @Test("询问用户选项工具关闭时应标记为未启用")
     func testBuiltInToolStatesReflectAskUserInputDisabled() {
         let states = ToolCatalogSupport.builtInToolStates(
-            enableMemory: true,
-            enableMemoryWrite: true,
-            enableMemoryActiveRetrieval: true,
-            memoryTopK: 3,
             enableWidgetTool: true,
             enableAskUserInputTool: false,
             enableGetSystemTimeTool: true,
-            isMemoryIsolated: false,
             isToolIsolated: false
         )
 
@@ -126,14 +60,9 @@ struct ToolCatalogSupportTests {
     @Test("获取系统时间工具关闭时应标记为未启用")
     func testBuiltInToolStatesReflectGetSystemTimeDisabled() {
         let states = ToolCatalogSupport.builtInToolStates(
-            enableMemory: true,
-            enableMemoryWrite: true,
-            enableMemoryActiveRetrieval: true,
-            memoryTopK: 3,
             enableWidgetTool: true,
             enableAskUserInputTool: true,
             enableGetSystemTimeTool: false,
-            isMemoryIsolated: false,
             isToolIsolated: false
         )
 
@@ -146,12 +75,10 @@ struct ToolCatalogSupportTests {
     @Test("拓展工具会按用途归入不同分类")
     func testAppToolCategoryMapping() {
         #expect(ToolCatalogSupport.appToolCategory(for: .listSandboxDirectory) == .file)
-        #expect(ToolCatalogSupport.appToolCategory(for: .editMemory) == .memory)
         #expect(ToolCatalogSupport.appToolCategory(for: .querySQLite) == .database)
         #expect(ToolCatalogSupport.appToolCategory(for: .submitFeedbackTicket) == .interaction)
         #expect(ToolCatalogSupport.appToolCategory(for: .fillUserInput) == .interaction)
         #expect(ToolCatalogSupport.appToolCategory(for: .executeJSCJavaScript) == .custom)
-        #expect(ToolCatalogSupport.appToolCategory(for: .createCustomWebKitJSTool) == .custom)
     }
 
     @Test("Schema 摘要会提取字段与必填项")

@@ -124,7 +124,6 @@ public extension Persistence {
         do {
             guard let store = activeGRDBStore() else { return false }
             try store.saveSkillExecutionPolicy(record)
-            WatchDatabaseSyncService.markDatabaseChanged(.chat)
             return true
         } catch {
             logger.error("保存 Skill 执行策略失败：\(error.localizedDescription)")

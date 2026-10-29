@@ -173,14 +173,8 @@ extension DailyPulseManager {
             }.joined(separator: "\n\n")
         }()
 
-        let memoryBlock: String = {
-            guard !input.memories.isEmpty else { return NSLocalizedString("（无）", comment: "Daily Pulse prompt empty placeholder") }
-            return input.memories.map { "- \($0)" }.joined(separator: "\n")
-        }()
-
         let focus = input.focusText.isEmpty ? NSLocalizedString("（未填写）", comment: "Daily Pulse prompt empty focus placeholder") : input.focusText
         let curation = input.curationText.isEmpty ? NSLocalizedString("（无）", comment: "Daily Pulse prompt empty placeholder") : input.curationText
-        let globalSystemPrompt = input.globalSystemPrompt.isEmpty ? NSLocalizedString("（无）", comment: "Daily Pulse prompt empty placeholder") : input.globalSystemPrompt
         let logSummary = input.requestLogSummary.isEmpty ? NSLocalizedString("（无）", comment: "Daily Pulse prompt empty placeholder") : input.requestLogSummary
         let taskBlock: String = {
             guard !input.activeTasks.isEmpty else { return NSLocalizedString("（无）", comment: "Daily Pulse prompt empty placeholder") }
@@ -208,9 +202,7 @@ extension DailyPulseManager {
                 "candidate_cards_per_run": "\(candidateCardsPerDelivery)",
                 "focus": focus,
                 "curation": curation,
-                "global_prompt": globalSystemPrompt,
                 "sessions": sessionBlock,
-                "memory": memoryBlock,
                 "request_logs": logSummary,
                 "tasks": taskBlock,
                 "preference_profile": input.preferenceProfile.summaryText,

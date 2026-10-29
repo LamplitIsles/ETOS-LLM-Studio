@@ -339,7 +339,6 @@ struct BackupRestoreView: View {
                 diagnostics.record("writes.flush.begin")
                 await AppConfigStore.shared.flushPendingWrites()
                 await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
-                MemoryManager.flushCurrentInstancePersistenceWritesForSnapshot()
                 let snapshotURL = try SnapshotBuilder.buildSnapshot(kind: snapshotKind, diagnostics: diagnostics)
                 if let password {
                     diagnostics.record("encryption.begin", fileURL: snapshotURL)
@@ -393,7 +392,6 @@ struct BackupRestoreView: View {
                 diagnostics.record("writes.flush.begin")
                 await AppConfigStore.shared.flushPendingWrites()
                 await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
-                MemoryManager.flushCurrentInstancePersistenceWritesForSnapshot()
                 let fileURL = try SnapshotBuilder.buildSnapshot(kind: snapshotKind, diagnostics: diagnostics)
                 snapshotURL = fileURL
                 if let password {

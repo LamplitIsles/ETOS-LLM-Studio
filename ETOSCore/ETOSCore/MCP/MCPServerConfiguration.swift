@@ -183,15 +183,6 @@ extension MCPServerConfiguration {
 }
 
 public extension MCPServerConfiguration {
-    /// 移动端 stdio 属于 Linux Agent；Mac 的本机进程也可作为普通聊天 MCP。
-    var usesLocalLinuxStdio: Bool {
-        #if os(macOS)
-        false
-        #else
-        if case .localStdio = transport { true } else { false }
-        #endif
-    }
-
     var humanReadableEndpoint: String {
         switch transport {
         case .http(let endpoint, _, _):
@@ -263,8 +254,7 @@ public extension MCPServerConfiguration {
     }
 
     func makeSDKTransport(
-        urlSession: URLSession = NetworkSessionConfiguration.shared,
-        approvedLocalLinuxCommandRuleIDs: Set<UUID> = []
+        urlSession: URLSession = NetworkSessionConfiguration.shared
     ) -> MCPSDKTransportBundle {
         switch transport {
         case .http(let endpoint, let apiKey, let additionalHeaders):
@@ -307,20 +297,14 @@ public extension MCPServerConfiguration {
                     legacyTransport: legacyTransport
                 )
             )
+        #if os(macOS)
         case .localStdio(let configuration):
-            #if os(macOS)
             let transport = MCPMacStdioTransport(configuration: configuration)
-            #else
-            let transport = MCPLocalStdioTransport(
-                serverID: id,
-                configuration: configuration,
-                approvedCommandRuleIDs: approvedLocalLinuxCommandRuleIDs
-            )
-            #endif
             return MCPSDKTransportBundle(
                 transport: transport,
                 streamControl: MCPTransportControlBox(control: transport)
             )
+        #endif
         case .builtInSearch:
             let transport = MCPBuiltInSearchTransport()
             return MCPSDKTransportBundle(
@@ -468,8 +452,6 @@ extension MCPServerConfiguration.Transport {
         case cwd
         case environmentVariableIDs
         case inheritLocalLinuxEnvironment
-        case workspaceID
-        case mountIDs
         case startupTimeoutSeconds
         case launchPolicy
         case idlePolicy
@@ -506,9 +488,7 @@ extension MCPServerConfiguration.Transport {
                         Bool.self,
                         forKey: .inheritLocalLinuxEnvironment
                     ) ?? true,
-                    workingDirectory: try container.decodeIfPresent(String.self, forKey: .cwd) ?? "/home/etos",
-                    workspaceID: try container.decodeIfPresent(UUID.self, forKey: .workspaceID),
-                    mountIDs: try container.decodeIfPresent([UUID].self, forKey: .mountIDs) ?? [],
+                    workingDirectory: try container.decodeIfPresent(String.self, forKey: .cwd) ?? "",
                     startupTimeoutSeconds: try container.decodeIfPresent(
                         TimeInterval.self,
                         forKey: .startupTimeoutSeconds
@@ -585,12 +565,8 @@ extension MCPServerConfiguration.Transport {
             if !configuration.inheritLocalLinuxEnvironment {
                 try container.encode(false, forKey: .inheritLocalLinuxEnvironment)
             }
-            if configuration.workingDirectory != "/home/etos" {
+            if configuration.workingDirectory != "" {
                 try container.encode(configuration.workingDirectory, forKey: .cwd)
-            }
-            try container.encodeIfPresent(configuration.workspaceID, forKey: .workspaceID)
-            if !configuration.mountIDs.isEmpty {
-                try container.encode(configuration.mountIDs, forKey: .mountIDs)
             }
             if configuration.startupTimeoutSeconds != 30 {
                 try container.encode(configuration.startupTimeoutSeconds, forKey: .startupTimeoutSeconds)

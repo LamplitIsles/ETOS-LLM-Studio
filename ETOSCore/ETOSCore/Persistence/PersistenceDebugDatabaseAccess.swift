@@ -7,10 +7,7 @@ extension Persistence {
         let targets = snapshotRestoreTargetURLs()
         let files = [
             LocalDebugManagedDatabase(kind: .chat, url: targets.chatStoreURL),
-            LocalDebugManagedDatabase(kind: .config, url: targets.configStoreURL),
-            LocalDebugManagedDatabase(kind: .memory, url: targets.memoryStoreURL),
-            LocalDebugManagedDatabase(kind: .vectors, url: MemoryStoragePaths.vectorStoreDirectory()
-                .appendingPathComponent(MemoryStoragePaths.vectorStoreName + ".sqlite"))
+            LocalDebugManagedDatabase(kind: .config, url: targets.configStoreURL)
         ]
         // 只解析根目录的系统别名（如 /var），保留库路径内的链接供访问层拒绝。
         return files.map {
@@ -30,7 +27,6 @@ extension Persistence {
         guard !DatabaseEncryptionManager.shared.requiresManualUnlock else {
             throw DatabaseEncryptionManager.DatabaseEncryptionError.passphraseUnavailable
         }
-        if database.kind == .chat { flushPendingMessageWritesForSyncSnapshot() }
         // 向量索引保持现有明文格式；其他库沿用本机加密方式，不隐式降级为明文快照。
         let encrypted = database.kind == .vectors ? false : databaseEncryptionHasStoredPassphrase()
         let valid: Bool

@@ -57,17 +57,10 @@ struct RoleplayHTMLCardView: View {
             let prepared = await Task.detached(priority: .utility) {
                 let store = RoleplayStore.shared
                 let snapshot = store.variableSnapshot(sessionID: sessionID)
-                let worldbooks = ChatService.shared.loadWorldbooks()
                 let variables = snapshot.mergedVariables(messageID: messageID, versionIndex: versionIndex)
                 let binding = store.binding(sessionID: sessionID)
                 let character = binding?.characterIDs.first.flatMap(store.character(id:))
                 let persona = binding?.personaID.flatMap(store.persona(id:))
-                let primaryWorldbookName = character?.embeddedWorldbookID.flatMap { id in
-                    worldbooks.first(where: { $0.id == id })?.name
-                }
-                let additionalWorldbookNames = binding?.additionalWorldbookIDs.compactMap { id in
-                    worldbooks.first(where: { $0.id == id })?.name
-                } ?? []
                 return extraction.documents.enumerated().map { index, document in
                     PreparedRoleplayHTMLDocument(
                         id: document.id,
@@ -92,10 +85,7 @@ struct RoleplayHTMLCardView: View {
                             variableSnapshot: snapshot,
                             messageID: messageID,
                             messageVersionIndex: versionIndex,
-                            documentID: document.id,
-                            worldbooks: worldbooks,
-                            primaryWorldbookName: primaryWorldbookName,
-                            additionalWorldbookNames: additionalWorldbookNames
+                            documentID: document.id
                         )
                     )
                 }
@@ -157,10 +147,6 @@ struct RoleplaySessionScriptHost: View {
                 let characters = binding.characterIDs.compactMap(store.character(id:))
                 let persona = binding.personaID.flatMap(store.persona(id:))
                 let snapshot = store.variableSnapshot(sessionID: sessionID)
-                let worldbooks = ChatService.shared.loadWorldbooks()
-                let additionalWorldbookNames = binding.additionalWorldbookIDs.compactMap { id in
-                    worldbooks.first(where: { $0.id == id })?.name
-                }
                 let baseVariables = snapshot.mergedVariables(messageID: messageID, versionIndex: versionIndex)
                 return characters.flatMap { character in
                     character.helperScripts.filter(\.enabled).map { script in
@@ -189,11 +175,6 @@ struct RoleplaySessionScriptHost: View {
                                 variableSnapshot: snapshot,
                                 messageID: messageID,
                                 messageVersionIndex: versionIndex,
-                                worldbooks: worldbooks,
-                                primaryWorldbookName: character.embeddedWorldbookID.flatMap { id in
-                                    worldbooks.first(where: { $0.id == id })?.name
-                                },
-                                additionalWorldbookNames: additionalWorldbookNames,
                                 scriptID: script.id,
                                 scriptName: script.name,
                                 scriptInfo: script.info,

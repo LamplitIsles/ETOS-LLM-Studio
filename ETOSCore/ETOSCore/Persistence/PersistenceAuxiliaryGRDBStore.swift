@@ -18,14 +18,12 @@ final class PersistenceAuxiliaryGRDBStore {
     private static let incrementalVacuumBatchPages = 512
     let databaseURL: URL
     let supportsConfigRelationalSchema: Bool
-    let supportsMemoryRelationalSchema: Bool
     let dbPool: DatabasePool
 
     init(databaseURL: URL, loggerCategory: String, configuration: Configuration? = nil, schedulesMaintenance: Bool = true) throws {
         self.databaseURL = databaseURL
         self.logger = Logger(subsystem: "com.ETOS.LLM.Studio", category: loggerCategory)
         self.supportsConfigRelationalSchema = databaseURL.lastPathComponent == "config-store.sqlite"
-        self.supportsMemoryRelationalSchema = databaseURL.lastPathComponent == "memory-store.sqlite"
 
         let configuration = configuration ?? Persistence.makeDatabaseConfiguration(
             qos: .userInitiated,

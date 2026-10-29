@@ -286,8 +286,6 @@ final class MCPFailureNotificationCenter: NSObject, UNUserNotificationCenterDele
     ) {
 #if os(iOS)
         completionHandler([.banner, .list, .sound])
-#elseif os(watchOS)
-        completionHandler([.sound])
 #else
         completionHandler([.sound])
 #endif

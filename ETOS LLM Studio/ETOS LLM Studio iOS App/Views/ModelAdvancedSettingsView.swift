@@ -12,44 +12,29 @@ import ETOSCore
 
 enum ModelAdvancedSettingsDestination: Hashable {
     case conversation
-    case prompts
     case output
 
     var title: String {
         switch self {
         case .conversation:
             return NSLocalizedString("会话", comment: "Core conversation settings title")
-        case .prompts:
-            return NSLocalizedString("提示词", comment: "Core prompt settings title")
         case .output:
             return NSLocalizedString("输出", comment: "Core output settings title")
         }
     }
 }
 
-private enum ModelAdvancedSettingsFocusedField: Hashable {
-    case contextCompressionReminderThreshold
-}
-
 struct ModelAdvancedSettingsView: View {
     @EnvironmentObject private var viewModel: ChatViewModel
     @ObservedObject private var appConfig = AppConfigStore.shared
     @State private var editingMessageRegexRule: MessageRegexRule?
-    @State private var selectedGlobalPromptDraft: String = ""
-    @State private var topicPromptDraft: String = ""
-    @State private var enhancedPromptDraft: String = ""
-    @State private var contextCompressionReminderThresholdDraft: String = ""
-    @State private var isShowingPromptInjectionIntro = false
     @State private var isShowingSessionContextIntro = false
     @State private var isShowingGenerationOutputIntro = false
-    @FocusState private var focusedField: ModelAdvancedSettingsFocusedField?
 
     @Binding var aiTemperature: Double
     @Binding var aiTopP: Double
     @Binding var aiTemperatureEnabled: Bool
     @Binding var aiTopPEnabled: Bool
-    @Binding var globalSystemPromptEntries: [GlobalSystemPromptEntry]
-    @Binding var selectedGlobalSystemPromptEntryID: UUID?
     @Binding var maxChatHistory: Int
     @Binding var lazyLoadMessageCount: Int
     @Binding var enableStreaming: Bool
@@ -63,12 +48,6 @@ struct ModelAdvancedSettingsView: View {
     @Binding var enablePeriodicTimeLandmark: Bool
     @Binding var periodicTimeLandmarkIntervalMinutes: Int
 
-    let addGlobalSystemPromptEntry: () -> Void
-    let duplicateGlobalSystemPromptEntry: (UUID) async -> GlobalSystemPromptEntry?
-    let selectGlobalSystemPromptEntry: (UUID?) -> Void
-    let updateSelectedGlobalSystemPromptContent: (String) -> Void
-    let updateGlobalSystemPromptEntry: (UUID, String, String) -> Void
-    let deleteGlobalSystemPromptEntry: (UUID) -> Void
     let destination: ModelAdvancedSettingsDestination
 
     private let samplingParameterStep = 0.01
@@ -91,20 +70,8 @@ struct ModelAdvancedSettingsView: View {
         return formatter
     }
 
-    private var selectedGlobalPromptEntry: GlobalSystemPromptEntry? {
-        guard let selectedGlobalSystemPromptEntryID else { return nil }
-        return globalSystemPromptEntries.first(where: { $0.id == selectedGlobalSystemPromptEntryID })
-    }
-
-    private var selectedGlobalPromptContentBinding: Binding<String> {
-        Binding(
-            get: { selectedGlobalPromptDraft },
-            set: { selectedGlobalPromptDraft = $0 }
-        )
-    }
-
     var body: some View {
-        promptDraftObservationView
+        modelObservationView
             .guideSettingsPageContext(
                 id: guidePageID,
                 title: destination.title,
@@ -116,7 +83,6 @@ struct ModelAdvancedSettingsView: View {
     private var guidePageID: GuidePageID {
         switch destination {
         case .conversation: return "settings-conversation"
-        case .prompts: return "settings-prompts"
         case .output: return "settings-output"
         }
     }
@@ -125,8 +91,6 @@ struct ModelAdvancedSettingsView: View {
         switch destination {
         case .conversation:
             return conversationGuideSettings
-        case .prompts:
-            return promptGuideSettings
         case .output:
             return outputGuideSettings
         }
@@ -139,8 +103,6 @@ struct ModelAdvancedSettingsView: View {
             .integer("automatic_execution_budget", label: NSLocalizedString("自动执行预算", comment: "向导设置字段"), range: 1...10_000, get: { max(1, appConfig.conversationRuntimeExecutionBudget) }, set: { appConfig.conversationRuntimeExecutionBudget = max(1, $0) }),
             .integer("max_context_messages", label: NSLocalizedString("最大上下文消息数", comment: "向导设置字段"), range: 1...100_000, get: { maxChatHistory }, set: { maxChatHistory = $0 }),
             .bool("automatic_history_loading", label: NSLocalizedString("自动管理历史消息", comment: "向导设置字段"), get: { viewModel.automaticHistoryLoadingEnabled }, set: { viewModel.automaticHistoryLoadingEnabled = $0 }),
-            .bool("context_compression_reminder", label: NSLocalizedString("上下文压缩提醒", comment: "向导设置字段"), get: { appConfig.enableContextCompressionReminder }, set: { appConfig.enableContextCompressionReminder = $0 }),
-            .integer("context_compression_token_threshold", label: NSLocalizedString("上下文压缩提醒阈值", comment: "向导设置字段"), range: 1...10_000_000, get: { appConfig.contextCompressionReminderTokenThreshold }, set: { appConfig.contextCompressionReminderTokenThreshold = $0 }),
             .bool("use_video_analysis_model", label: NSLocalizedString("非原生视频使用解析模型", comment: "向导设置字段"), get: { appConfig.enableVideoAnalysisForNonNativeModels }, set: { appConfig.enableVideoAnalysisForNonNativeModels = $0 }),
             .string("video_analysis_model", label: NSLocalizedString("视频解析模型", comment: "向导设置字段"), allowedValues: viewModel.videoAnalysisModelOptions.map(\.id), get: { appConfig.videoAnalysisModelIdentifier }, set: { setVideoAnalysisModelIdentifier($0) }),
             .string("video_frame_mode", label: NSLocalizedString("视频处理方式", comment: "向导设置字段"), allowedValues: VideoFrameExtractionMode.allCases.map(\.rawValue), get: { VideoFrameExtractionMode.normalized(appConfig.videoFrameExtractionMode).rawValue }, set: { appConfig.videoFrameExtractionMode = $0 }),
@@ -149,30 +111,6 @@ struct ModelAdvancedSettingsView: View {
         ]
         if !viewModel.automaticHistoryLoadingEnabled {
             settings.append(.integer("initial_visible_messages", label: NSLocalizedString("初始显示消息数", comment: "向导设置字段"), range: 1...100_000, get: { lazyLoadMessageCount }, set: { lazyLoadMessageCount = $0 }))
-        }
-        return settings
-    }
-
-    private var promptGuideSettings: [GuidePageSetting] {
-        var settings: [GuidePageSetting] = [
-            .bool("model_picker_prompt_shortcut", label: NSLocalizedString("在模型选择器中显示提示词", comment: "向导设置字段"), get: { appConfig.modelPickerPromptShortcutEnabled }, set: { appConfig.modelPickerPromptShortcutEnabled = $0 }),
-            .readOnly("global_prompt_count", label: NSLocalizedString("全局提示词数量", comment: "向导设置字段"), value: { .int(globalSystemPromptEntries.count) }),
-            .readOnly("selected_global_prompt_id", label: NSLocalizedString("当前全局提示词 ID", comment: "向导设置字段"), value: { .string(selectedGlobalSystemPromptEntryID?.uuidString ?? "") }),
-            .bool("enhanced_prompt_uses_system_role", label: NSLocalizedString("增强提示词使用 System 角色", comment: "向导设置字段"), get: { appConfig.openAITailContextUsesSystemRole }, set: { appConfig.openAITailContextUsesSystemRole = $0 }),
-            .bool("include_system_time", label: NSLocalizedString("发送系统时间", comment: "向导设置字段"), get: { includeSystemTimeInPrompt }, set: { includeSystemTimeInPrompt = $0 }),
-            .string("system_time_position", label: NSLocalizedString("系统时间发送位置", comment: "向导设置字段"), allowedValues: SystemTimeInjectionPosition.allCases.map(\.rawValue), get: { systemTimeInjectionPosition.rawValue }, set: { if let value = SystemTimeInjectionPosition(rawValue: $0) { systemTimeInjectionPosition = value } }),
-            .bool("periodic_time_landmark", label: NSLocalizedString("周期性时间路标", comment: "向导设置字段"), get: { enablePeriodicTimeLandmark }, set: { enablePeriodicTimeLandmark = $0 }),
-            .integer("time_landmark_interval_minutes", label: NSLocalizedString("路标间隔分钟", comment: "向导设置字段"), range: 1...525_600, get: { periodicTimeLandmarkIntervalMinutes }, set: { periodicTimeLandmarkIntervalMinutes = $0 })
-        ]
-        if selectedGlobalPromptEntry != nil {
-            settings.append(.string("selected_global_prompt_content", label: NSLocalizedString("当前全局系统提示词", comment: "向导设置字段"), get: { selectedGlobalPromptEntry?.content ?? "" }, set: { value in
-                selectedGlobalPromptDraft = value
-                updateSelectedGlobalSystemPromptContent(value)
-            }))
-        }
-        if currentSession != nil {
-            settings.append(.string("current_topic_prompt", label: NSLocalizedString("当前话题提示词", comment: "向导设置字段"), get: { currentSession?.topicPrompt ?? "" }, set: { setTopicPromptFromGuide($0) }))
-            settings.append(.string("current_enhanced_prompt", label: NSLocalizedString("当前增强提示词", comment: "向导设置字段"), get: { currentSession?.enhancedPrompt ?? "" }, set: { setEnhancedPromptFromGuide($0) }))
         }
         return settings
     }
@@ -193,62 +131,14 @@ struct ModelAdvancedSettingsView: View {
         ]
     }
 
-    private func setTopicPromptFromGuide(_ value: String) {
-        guard var session = currentSession else { return }
-        topicPromptDraft = value
-        session.topicPrompt = value
-        currentSession = session
-        ChatService.shared.updateSession(session)
-    }
-
-    private func setEnhancedPromptFromGuide(_ value: String) {
-        guard var session = currentSession else { return }
-        enhancedPromptDraft = value
-        session.enhancedPrompt = value
-        currentSession = session
-        ChatService.shared.updateSession(session)
-    }
-
     private var configuredView: some View {
         settingsContent
             .navigationTitle(destination.title)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    if focusedField == .contextCompressionReminderThreshold {
-                        Spacer()
-                        Button(NSLocalizedString("完成", comment: "Finish numeric input action")) {
-                            commitContextCompressionReminderThresholdDraft()
-                            focusedField = nil
-                        }
-                    }
-                }
-            }
             .onAppear(perform: handleAppear)
     }
 
-    private var contextCompressionObservationView: some View {
-        configuredView
-            .onChange(of: focusedField) { oldValue, newValue in
-                if oldValue == .contextCompressionReminderThreshold,
-                   newValue != .contextCompressionReminderThreshold {
-                    commitContextCompressionReminderThresholdDraft()
-                }
-            }
-            .onChange(of: appConfig.contextCompressionReminderTokenThreshold) { _, _ in
-                if focusedField != .contextCompressionReminderThreshold {
-                    syncContextCompressionReminderThresholdDraft()
-                }
-            }
-            .onChange(of: appConfig.enableContextCompressionReminder) { _, isEnabled in
-                if !isEnabled {
-                    commitContextCompressionReminderThresholdDraft()
-                    focusedField = nil
-                }
-            }
-    }
-
     private var modelObservationView: some View {
-        contextCompressionObservationView
+        configuredView
             .onChange(of: appConfig.enableVideoAnalysisForNonNativeModels) { _, isEnabled in
                 if isEnabled {
                     syncVideoAnalysisModelSelection()
@@ -259,40 +149,9 @@ struct ModelAdvancedSettingsView: View {
             }
     }
 
-    private var promptDraftObservationView: some View {
-        modelObservationView
-            .onChange(of: selectedGlobalSystemPromptEntryID) { _, _ in
-                syncSelectedGlobalPromptDraft()
-            }
-            .onChange(of: selectedGlobalPromptEntry?.content ?? "") { _, _ in
-                syncSelectedGlobalPromptDraft()
-            }
-            .onChange(of: currentSession?.id) { _, _ in
-                syncSessionPromptDrafts()
-            }
-            .onChange(of: currentSession?.topicPrompt ?? "") { _, newValue in
-                if topicPromptDraft != newValue {
-                    topicPromptDraft = newValue
-                }
-            }
-            .onChange(of: currentSession?.enhancedPrompt ?? "") { _, newValue in
-                if enhancedPromptDraft != newValue {
-                    enhancedPromptDraft = newValue
-                }
-            }
-            .onDisappear(perform: handleDisappear)
-    }
-
     private func handleAppear() {
-        syncPromptDrafts()
-        syncContextCompressionReminderThresholdDraft()
         normalizeSamplingParametersIfNeeded()
         syncVideoAnalysisModelSelection()
-    }
-
-    private func handleDisappear() {
-        commitContextCompressionReminderThresholdDraft()
-        persistPromptDrafts()
     }
 
     @ViewBuilder
@@ -300,167 +159,8 @@ struct ModelAdvancedSettingsView: View {
         switch destination {
         case .conversation:
             conversationSettingsContent
-        case .prompts:
-            promptSettingsContent
         case .output:
             outputSettingsContent
-        }
-    }
-
-    private var promptSettingsContent: some View {
-        Form {
-            Section {
-                settingsIntroCard(
-                    title: NSLocalizedString("提示词", comment: "Core prompt settings title"),
-                    summary: promptInjectionIntroSummary,
-                    details: promptInjectionIntroDetails,
-                    isExpanded: $isShowingPromptInjectionIntro
-                )
-            }
-
-            PromptMacroHelpSection()
-
-            Section {
-                Toggle(
-                    NSLocalizedString("在模型选择器中显示提示词", comment: "Show prompt shortcut in model picker"),
-                    isOn: $appConfig.modelPickerPromptShortcutEnabled
-                )
-            } footer: {
-                Text(NSLocalizedString("开启后，可从模型选择器快速编辑系统、话题与增强提示词。", value: "When enabled, you can switch saved global prompts and edit system, topic, and enhanced prompts from the model picker.", comment: "模型选择器提示词快捷入口说明"))
-            }
-
-            Section {
-                FullscreenMultilineTextInput(
-                    identity: selectedGlobalPromptEntry?.id.uuidString ?? "global-system-prompt-none",
-                    placeholder: NSLocalizedString("自定义全局系统提示词", comment: ""),
-                    fullScreenTitle: NSLocalizedString("编辑提示词", comment: ""),
-                    text: selectedGlobalPromptContentBinding,
-                    lineLimit: 3...8,
-                    isEnabled: selectedGlobalPromptEntry != nil,
-                    onDebouncedSave: updateSelectedGlobalSystemPromptContent
-                )
-
-                NavigationLink {
-                    GlobalSystemPromptPickerView(
-                        entries: globalSystemPromptEntries,
-                        selectedEntryID: selectedGlobalSystemPromptEntryID,
-                        addGlobalSystemPromptEntry: addGlobalSystemPromptEntry,
-                        duplicateGlobalSystemPromptEntry: duplicateGlobalSystemPromptEntry,
-                        selectGlobalSystemPromptEntry: selectGlobalSystemPromptEntry,
-                        updateGlobalSystemPromptEntry: updateGlobalSystemPromptEntry,
-                        deleteGlobalSystemPromptEntry: deleteGlobalSystemPromptEntry
-                    )
-                } label: {
-                    MarqueeTitleSubtitleLabel(
-                        title: NSLocalizedString("提示词列表", comment: ""),
-                        subtitle: displayTitle(for: selectedGlobalPromptEntry)
-                    )
-                }
-            } header: {
-                Text(NSLocalizedString("全局系统提示词", comment: ""))
-            }
-
-            Section {
-                FullscreenMultilineTextInput(
-                    identity: currentSession?.id.uuidString ?? "topic-prompt-none",
-                    placeholder: NSLocalizedString("自定义话题提示词", comment: ""),
-                    fullScreenTitle: NSLocalizedString("编辑提示词", comment: ""),
-                    text: Binding(
-                        get: { topicPromptDraft },
-                        set: { topicPromptDraft = $0 }
-                    ),
-                    lineLimit: 2...6,
-                    isEnabled: currentSession != nil,
-                    onDebouncedSave: { newValue in
-                        guard var session = currentSession else { return }
-                        session.topicPrompt = newValue
-                        currentSession = session
-                        ChatService.shared.updateSession(session)
-                    }
-                )
-            } header: {
-                Text(NSLocalizedString("当前话题提示词", comment: ""))
-            } footer: {
-                Text(NSLocalizedString("仅对当前对话生效。", comment: ""))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                FullscreenMultilineTextInput(
-                    identity: currentSession?.id.uuidString ?? "enhanced-prompt-none",
-                    placeholder: NSLocalizedString("自定义增强提示词", comment: ""),
-                    fullScreenTitle: NSLocalizedString("编辑提示词", comment: ""),
-                    text: Binding(
-                        get: { enhancedPromptDraft },
-                        set: { enhancedPromptDraft = $0 }
-                    ),
-                    lineLimit: 2...6,
-                    isEnabled: currentSession != nil,
-                    onDebouncedSave: { newValue in
-                        guard var session = currentSession else { return }
-                        session.enhancedPrompt = newValue
-                        currentSession = session
-                        ChatService.shared.updateSession(session)
-                    }
-                )
-                Toggle(
-                    NSLocalizedString("使用 System 角色发送", comment: "OpenAI enhanced prompt role toggle"),
-                    isOn: $appConfig.openAITailContextUsesSystemRole
-                )
-            } header: {
-                Text(NSLocalizedString("增强提示词", comment: ""))
-            } footer: {
-                VStack(alignment: .leading) {
-                    Text(NSLocalizedString("该提示词会附加在您的最后一条消息末尾，以增强指令效果。", comment: ""))
-                    Text(NSLocalizedString("角色设置仅对 OpenAI 适配器生效。", comment: "OpenAI enhanced prompt role footer"))
-                }
-                .etFont(.footnote)
-                .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
-                    BuiltInPromptSettingsView(usesCategoryTabs: false)
-                } label: {
-                    Label(NSLocalizedString("提示词模板", comment: "Built-in prompt settings entry"), systemImage: "curlybraces")
-                }
-            } header: {
-                Text(NSLocalizedString("内置提示词", comment: "Built-in prompt settings section"))
-            }
-
-            Section {
-                Toggle(NSLocalizedString("发送系统时间", comment: ""), isOn: $includeSystemTimeInPrompt)
-                if includeSystemTimeInPrompt {
-                    Picker(NSLocalizedString("发送位置", comment: ""), selection: $systemTimeInjectionPosition) {
-                        ForEach(SystemTimeInjectionPosition.allCases) { position in
-                            Text(position.displayName).tag(position)
-                        }
-                    }
-                }
-                Toggle(NSLocalizedString("周期性时间路标", comment: ""), isOn: $enablePeriodicTimeLandmark)
-                LabeledContent(NSLocalizedString("路标时间（分钟）", comment: "")) {
-                    TextField(NSLocalizedString("分钟", comment: ""), value: $periodicTimeLandmarkIntervalMinutes, formatter: numberFormatter)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 80)
-                        .disabled(!enablePeriodicTimeLandmark)
-                }
-            } header: {
-                Text(NSLocalizedString("动态时间注入", comment: ""))
-            } footer: {
-                Text(NSLocalizedString(
-                    "提示词宏时间注入说明",
-                    value: "System time can be added at the beginning or end, or inserted anywhere using prompt macros. Changing time may reduce cache reuse from that position onward.",
-                    comment: "时间注入位置选择与缓存效果"
-                ))
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
-            .onChange(of: periodicTimeLandmarkIntervalMinutes) { _, newValue in
-                if newValue < 1 {
-                    periodicTimeLandmarkIntervalMinutes = 1
-                }
-            }
         }
     }
 
@@ -479,12 +179,11 @@ struct ModelAdvancedSettingsView: View {
                 NavigationLink {
                     SessionListView().environmentObject(viewModel)
                 } label: {
-                    Label(NSLocalizedString("历史会话管理", comment: ""), systemImage: "clock")
+                    Label(NSLocalizedString("会话管理", comment: ""), systemImage: "clock")
                 }
             }
 
             Section {
-                LaunchSessionSettingsRows()
                 Toggle(NSLocalizedString("自动生成话题标题", comment: ""), isOn: $enableAutoSessionNaming)
                 LabeledContent(NSLocalizedString("延迟发送（秒）", comment: "Send delay seconds setting title")) {
                     TextField(NSLocalizedString("秒", comment: "Seconds placeholder"), value: sendDelayBinding, formatter: sendDelayFormatter)
@@ -537,32 +236,7 @@ struct ModelAdvancedSettingsView: View {
                     }
                 }
 
-                Toggle(
-                    NSLocalizedString("上下文压缩提醒", comment: "Context compression reminder toggle"),
-                    isOn: $appConfig.enableContextCompressionReminder
-                )
 
-                if appConfig.enableContextCompressionReminder {
-                    LabeledContent(NSLocalizedString(
-                        "提醒阈值（Token）",
-                        comment: "Context compression reminder token threshold"
-                    )) {
-                        TextField(
-                            NSLocalizedString("Token", comment: "Token threshold field placeholder"),
-                            text: $contextCompressionReminderThresholdDraft
-                        )
-                        .keyboardType(.numberPad)
-                        .submitLabel(.done)
-                        .multilineTextAlignment(.trailing)
-                        .monospacedDigit()
-                        .frame(width: 100)
-                        .focused($focusedField, equals: .contextCompressionReminderThreshold)
-                        .onSubmit {
-                            commitContextCompressionReminderThresholdDraft()
-                            focusedField = nil
-                        }
-                    }
-                }
             }
 
             Section {
@@ -642,11 +316,7 @@ struct ModelAdvancedSettingsView: View {
                 ))
             }
         }
-        .background {
-            SettingsKeyboardDismissTapView {
-                focusedField = nil
-            }
-        }
+        .background { SettingsKeyboardDismissTapView() }
         .scrollDismissesKeyboard(.interactively)
     }
 
@@ -850,14 +520,6 @@ struct ModelAdvancedSettingsView: View {
         appConfig.videoAnalysisModelIdentifier = identifier
     }
 
-    private var promptInjectionIntroSummary: String {
-        NSLocalizedString("提示词设置简介", comment: "说明提示词能改变的回答习惯")
-    }
-
-    private var promptInjectionIntroDetails: String {
-        NSLocalizedString("提示词设置使用说明", comment: "用例、作用范围与时间提示的使用方法")
-    }
-
     private var sessionContextIntroSummary: String {
         NSLocalizedString("会话设置简介", comment: "说明会话、发送和历史消息设置的用途")
     }
@@ -865,20 +527,12 @@ struct ModelAdvancedSettingsView: View {
     private var sessionContextIntroDetails: String {
         introDetails([
             (
-                NSLocalizedString("启动会话", comment: "Launch session behavior setting"),
-                NSLocalizedString("离开时间未超过该期限时恢复上次会话；超过后打开新对话。", comment: "Recent session restore behavior explanation")
-            ),
-            (
                 NSLocalizedString("延迟发送（秒）", comment: "Send delay seconds setting title"),
                 NSLocalizedString("设置为 0 时立即发送；大于 0 时，点击发送后会等待对应秒数，期间可点停止取消。", comment: "Send delay setting footer")
             ),
             (
                 NSLocalizedString("自动管理历史消息", comment: "自动管理聊天历史窗口设置"),
                 NSLocalizedString("开启后会在接近边缘时自动加载并回收历史气泡。关闭后按设置显示最近消息，每次向上加载 5 条；回到底部时恢复初始范围。设为 0 时显示全部历史。", comment: "自动管理聊天历史窗口说明")
-            ),
-            (
-                NSLocalizedString("上下文压缩提醒", comment: "Context compression reminder toggle"),
-                NSLocalizedString("达到估算阈值后，系统会发送通知；点击通知会立即按默认参数创建续聊会话，原会话保持不变。Token 数为近似值，不会为了提醒读取附件或调用模型。", comment: "Context compression reminder settings explanation")
             ),
             (
                 NSLocalizedString("消息规则", comment: ""),
@@ -1028,61 +682,12 @@ struct ModelAdvancedSettingsView: View {
         }
     }
 
-    private func displayTitle(for entry: GlobalSystemPromptEntry?) -> String {
-        guard let entry else { return NSLocalizedString("未选择", comment: "") }
-        let trimmedTitle = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedTitle.isEmpty ? NSLocalizedString("未命名提示词", comment: "") : trimmedTitle
-    }
 
-    private func syncPromptDrafts() {
-        syncSelectedGlobalPromptDraft()
-        syncSessionPromptDrafts()
-    }
-
-    private func syncContextCompressionReminderThresholdDraft() {
-        contextCompressionReminderThresholdDraft = String(
-            appConfig.contextCompressionReminderTokenThreshold
-        )
-    }
-
-    private func commitContextCompressionReminderThresholdDraft() {
-        let resolvedThreshold = ContextCompressionReminderPolicy.resolvedTokenThreshold(
-            from: contextCompressionReminderThresholdDraft,
-            fallback: appConfig.contextCompressionReminderTokenThreshold
-        )
-        if appConfig.contextCompressionReminderTokenThreshold != resolvedThreshold {
-            appConfig.contextCompressionReminderTokenThreshold = resolvedThreshold
-        }
-        contextCompressionReminderThresholdDraft = String(resolvedThreshold)
-    }
-
-    private func syncSelectedGlobalPromptDraft() {
-        selectedGlobalPromptDraft = selectedGlobalPromptEntry?.content ?? ""
-    }
-
-    private func syncSessionPromptDrafts() {
-        topicPromptDraft = currentSession?.topicPrompt ?? ""
-        enhancedPromptDraft = currentSession?.enhancedPrompt ?? ""
-    }
-
-    private func persistPromptDrafts() {
-        if selectedGlobalSystemPromptEntryID != nil {
-            updateSelectedGlobalSystemPromptContent(selectedGlobalPromptDraft)
-        }
-        if var session = currentSession {
-            session.topicPrompt = topicPromptDraft
-            session.enhancedPrompt = enhancedPromptDraft
-            currentSession = session
-            ChatService.shared.updateSession(session)
-        }
-    }
 }
 
 private struct SettingsKeyboardDismissTapView: UIViewRepresentable {
-    let onTapOutsideTextInput: () -> Void
-
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTapOutsideTextInput: onTapOutsideTextInput)
+        Coordinator()
     }
 
     func makeUIView(context: Context) -> UIView {
@@ -1090,7 +695,6 @@ private struct SettingsKeyboardDismissTapView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onTapOutsideTextInput = onTapOutsideTextInput
         DispatchQueue.main.async { [weak uiView, weak coordinator = context.coordinator] in
             coordinator?.attach(to: uiView?.window)
         }
@@ -1101,7 +705,6 @@ private struct SettingsKeyboardDismissTapView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onTapOutsideTextInput: () -> Void
         private weak var window: UIWindow?
         private lazy var tapGesture: UITapGestureRecognizer = {
             let gesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
@@ -1109,10 +712,6 @@ private struct SettingsKeyboardDismissTapView: UIViewRepresentable {
             gesture.delegate = self
             return gesture
         }()
-
-        init(onTapOutsideTextInput: @escaping () -> Void) {
-            self.onTapOutsideTextInput = onTapOutsideTextInput
-        }
 
         func attach(to newWindow: UIWindow?) {
             guard window !== newWindow else { return }
@@ -1128,7 +727,6 @@ private struct SettingsKeyboardDismissTapView: UIViewRepresentable {
 
         @objc private func handleTap() {
             window?.endEditing(true)
-            onTapOutsideTextInput()
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -1145,213 +743,3 @@ private struct SettingsKeyboardDismissTapView: UIViewRepresentable {
 }
 
 // 设置页与模型选择器共用同一列表，保持切换、编辑和创建副本的行为一致。
-struct GlobalSystemPromptPickerView: View {
-    let entries: [GlobalSystemPromptEntry]
-    let selectedEntryID: UUID?
-    let addGlobalSystemPromptEntry: () -> Void
-    let duplicateGlobalSystemPromptEntry: (UUID) async -> GlobalSystemPromptEntry?
-    let selectGlobalSystemPromptEntry: (UUID?) -> Void
-    let updateGlobalSystemPromptEntry: (UUID, String, String) -> Void
-    let deleteGlobalSystemPromptEntry: (UUID) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var editingEntry: GlobalSystemPromptEntry?
-    @State private var duplicatingEntryID: UUID?
-
-    var body: some View {
-        List {
-            Section {
-                Button {
-                    addGlobalSystemPromptEntry()
-                } label: {
-                    Label(NSLocalizedString("新增提示词", comment: ""), systemImage: "plus")
-                }
-            }
-
-            Section {
-                ForEach(entries) { entry in
-                    Button {
-                        selectGlobalSystemPromptEntry(entry.id)
-                        dismiss()
-                    } label: {
-                        GlobalSystemPromptSelectionLabel(entry: entry, isSelected: selectedEntryID == entry.id)
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            deleteGlobalSystemPromptEntry(entry.id)
-                        } label: {
-                            Label(NSLocalizedString("删除", comment: ""), systemImage: "trash")
-                        }
-                    }
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button {
-                            editingEntry = entry
-                        } label: {
-                            Label(NSLocalizedString("更多", comment: ""), systemImage: "ellipsis.circle")
-                        }
-                        .tint(.blue)
-                        Button {
-                            duplicatingEntryID = entry.id
-                        } label: {
-                            Label(NSLocalizedString("global_prompt.duplicate", value: "Duplicate", comment: "创建全局提示词副本"), systemImage: "doc.on.doc")
-                        }
-                        .tint(.orange)
-                    }
-                    .contextMenu {
-                        Button {
-                            editingEntry = entry
-                        } label: {
-                            Label(NSLocalizedString("编辑", comment: ""), systemImage: "square.and.pencil")
-                        }
-                        Button {
-                            duplicatingEntryID = entry.id
-                        } label: {
-                            Label(NSLocalizedString("global_prompt.duplicate", value: "Duplicate", comment: "创建全局提示词副本"), systemImage: "doc.on.doc")
-                        }
-                        Button(role: .destructive) {
-                            deleteGlobalSystemPromptEntry(entry.id)
-                        } label: {
-                            Label(NSLocalizedString("删除", comment: ""), systemImage: "trash")
-                        }
-                    }
-                }
-            } header: {
-                Text(NSLocalizedString("全局系统提示词", comment: ""))
-            } footer: {
-                Text(NSLocalizedString("global_prompt.swipe_hint", value: "Swipe a prompt to edit it or create a copy.", comment: "全局提示词列表滑动操作提示"))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .navigationTitle(NSLocalizedString("全局提示词", comment: ""))
-        .disabled(duplicatingEntryID != nil)
-        .task(id: duplicatingEntryID) {
-            guard let id = duplicatingEntryID else { return }
-            let copy = await duplicateGlobalSystemPromptEntry(id)
-            guard !Task.isCancelled else { return }
-            duplicatingEntryID = nil
-            editingEntry = copy
-        }
-        .guideSettingsPageContext(
-            id: "settings-global-system-prompts",
-            title: NSLocalizedString("全局提示词", comment: "全局提示词列表向导上下文标题"),
-            documents: [GuideDocumentReference(id: "settings-core", title: "Core Settings")],
-            settings: guideSettings
-        )
-        .sheet(item: $editingEntry) { entry in
-            GlobalSystemPromptEditorView(entry: entry) { title, content in
-                updateGlobalSystemPromptEntry(entry.id, title, content)
-            }
-        }
-    }
-
-    private var guideSettings: [GuidePageSetting] {
-        var settings: [GuidePageSetting] = [
-            .readOnly(
-                "duplicate_requires_native_action",
-                label: NSLocalizedString("global_prompt.duplicate", value: "Duplicate", comment: "创建全局提示词副本"),
-                value: { .bool(true) }
-            ),
-            .readOnly(
-                "entries",
-                label: NSLocalizedString("全局系统提示词列表", comment: "全局提示词向导字段"),
-                value: {
-                    .array(entries.map { entry in
-                        .dictionary([
-                            "id": .string(entry.id.uuidString),
-                            "title": .string(entry.title),
-                            "content": .string(entry.content)
-                        ])
-                    })
-                }
-            )
-        ]
-        let entryIDs = entries.map { $0.id.uuidString }
-        if !entryIDs.isEmpty, duplicatingEntryID == nil {
-            settings.append(
-                .string(
-                    "selected_entry_id",
-                    label: NSLocalizedString("当前提示词", comment: "全局提示词向导字段"),
-                    allowedValues: entryIDs,
-                    allowsEmpty: false,
-                    get: { selectedEntryID?.uuidString ?? entryIDs[0] },
-                    set: { value in
-                        guard let id = UUID(uuidString: value) else { return }
-                        selectGlobalSystemPromptEntry(id)
-                    }
-                )
-            )
-        }
-        return settings
-    }
-
-}
-
-private struct GlobalSystemPromptEditorView: View {
-    let entry: GlobalSystemPromptEntry
-    let onSave: (String, String) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var title: String
-    @State private var contentDraft: String
-
-    init(entry: GlobalSystemPromptEntry, onSave: @escaping (String, String) -> Void) {
-        self.entry = entry
-        self.onSave = onSave
-        _title = State(initialValue: entry.title)
-        _contentDraft = State(initialValue: entry.content)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                PromptMacroHelpSection()
-
-                TextField(NSLocalizedString("提示词名称", comment: ""), text: $title)
-                FullscreenMultilineTextInput(
-                    identity: entry.id.uuidString,
-                    placeholder: NSLocalizedString("提示词内容", comment: ""),
-                    fullScreenTitle: NSLocalizedString("编辑提示词", comment: ""),
-                    text: Binding(
-                        get: { contentDraft },
-                        set: { contentDraft = $0 }
-                    ),
-                    lineLimit: 4...10,
-                    isEnabled: true,
-                    onDebouncedSave: { newValue in
-                        onSave(title, newValue)
-                    }
-                )
-            }
-            .navigationTitle(NSLocalizedString("编辑提示词", comment: ""))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(NSLocalizedString("取消", comment: "")) {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(NSLocalizedString("保存", comment: "")) {
-                        onSave(title, contentDraft)
-                        dismiss()
-                    }
-                }
-            }
-        }
-        .guideSettingsPageContext(
-            id: GuidePageID(rawValue: "settings-global-system-prompt-editor-\(entry.id.uuidString)"),
-            title: NSLocalizedString("编辑提示词", comment: "全局提示词编辑向导上下文标题"),
-            documents: [GuideDocumentReference(id: "settings-core", title: "Core Settings")],
-            settings: [
-                .string("title", label: NSLocalizedString("提示词名称", comment: "全局提示词向导字段"), get: { title }, set: { title = $0 }),
-                .string("content", label: NSLocalizedString("提示词内容", comment: "全局提示词向导字段"), get: { contentDraft }, set: { contentDraft = $0 }),
-                .readOnly(
-                    "save_required",
-                    label: NSLocalizedString("修改后需要保存", comment: "向导保存说明"),
-                    value: { .bool(true) }
-                )
-            ]
-        )
-    }
-}

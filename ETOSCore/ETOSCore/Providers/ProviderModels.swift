@@ -358,8 +358,6 @@ public struct Model: Codable, Identifiable, Hashable {
     public var rawRequestBodyJSON: String?
     public var requestBodyControls: [ModelRequestBodyControl]
     public var pricing: ModelPricing?
-    /// 仅在请求模板引用 model_prompt 时插入，不自动追加到系统提示词。
-    public var prompt: String
 
     public init(
         id: UUID = UUID(),
@@ -377,8 +375,7 @@ public struct Model: Codable, Identifiable, Hashable {
         requestBodyOverrideMode: RequestBodyOverrideMode = .keyValue,
         rawRequestBodyJSON: String? = nil,
         requestBodyControls: [ModelRequestBodyControl] = [],
-        pricing: ModelPricing? = nil,
-        prompt: String = ""
+        pricing: ModelPricing? = nil
     ) {
         let normalized = Self.normalizedCapabilityShape(
             kind: kind,
@@ -403,7 +400,6 @@ public struct Model: Codable, Identifiable, Hashable {
         self.requestBodyControls = requestBodyControls
         let normalizedPricing = pricing?.normalized
         self.pricing = normalizedPricing?.isEffectivelyEmpty == true ? nil : normalizedPricing
-        self.prompt = prompt
     }
 
     public init(
@@ -418,8 +414,7 @@ public struct Model: Codable, Identifiable, Hashable {
         requestBodyOverrideMode: RequestBodyOverrideMode = .keyValue,
         rawRequestBodyJSON: String? = nil,
         requestBodyControls: [ModelRequestBodyControl] = [],
-        pricing: ModelPricing? = nil,
-        prompt: String = ""
+        pricing: ModelPricing? = nil
     ) {
         self.init(
             id: id,
@@ -434,8 +429,7 @@ public struct Model: Codable, Identifiable, Hashable {
             requestBodyOverrideMode: requestBodyOverrideMode,
             rawRequestBodyJSON: rawRequestBodyJSON,
             requestBodyControls: requestBodyControls,
-            pricing: pricing,
-            prompt: prompt
+            pricing: pricing
         )
     }
 
@@ -446,7 +440,6 @@ public struct Model: Codable, Identifiable, Hashable {
         case rawRequestBodyJSON
         case requestBodyControls
         case pricing
-        case prompt
     }
 
     public init(from decoder: Decoder) throws {
@@ -487,7 +480,6 @@ public struct Model: Codable, Identifiable, Hashable {
         self.requestBodyControls = try container.decodeIfPresent([ModelRequestBodyControl].self, forKey: .requestBodyControls) ?? []
         let decodedPricing = try container.decodeIfPresent(ModelPricing.self, forKey: .pricing)?.normalized
         self.pricing = decodedPricing?.isEffectivelyEmpty == true ? nil : decodedPricing
-        self.prompt = try container.decodeIfPresent(String.self, forKey: .prompt) ?? ""
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -530,9 +522,6 @@ public struct Model: Codable, Identifiable, Hashable {
         }
         if let pricing = pricing?.normalized, !pricing.isEffectivelyEmpty {
             try container.encode(pricing, forKey: .pricing)
-        }
-        if !prompt.isEmpty {
-            try container.encode(prompt, forKey: .prompt)
         }
     }
 

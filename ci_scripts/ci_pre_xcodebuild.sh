@@ -4,11 +4,9 @@ set -eu
 # 仅在 Xcode Cloud 环境优先使用官方仓库路径，便于脚本在云端与本地都可运行。
 ROOT_PATH="${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
 IOS_PLIST_PATH="$ROOT_PATH/ETOS LLM Studio/Config/iOSInfo.plist"
-WATCH_PLIST_PATH="$ROOT_PATH/ETOS LLM Studio/ETOS LLM Studio Watch App/Info.plist"
 
 # 扩展只携带自身需要的翻译，新增文案必须先同步，不能带着缺失翻译发布。
 python3 "$ROOT_PATH/scripts/sync-extension-localizations.py" --check
-python3 "$ROOT_PATH/scripts/prepare-watch-localizations.py" --check
 
 # 云端构建写入完整 Commit，界面展示时再截为 7 位；源码向导必须依赖精确版本。
 if [ -n "${CI_COMMIT:-}" ]; then
@@ -45,21 +43,3 @@ write_commit_hash() {
 }
 
 write_commit_hash "$IOS_PLIST_PATH"
-write_commit_hash "$WATCH_PLIST_PATH"
-
-export CONFIGURATION="${CONFIGURATION:-Release}"
-
-echo "初始化 Git 子模块。"
-git -C "$ROOT_PATH" submodule update --init --recursive
-
-build_native_static_libraries() {
-    sdk_name="$1"
-    archs="$2"
-
-    echo "预构建原生静态库：$sdk_name / $archs / $CONFIGURATION"
-    SDK_NAME="$sdk_name" ARCHS="$archs" "$ROOT_PATH/scripts/build-native-static-libraries.sh"
-}
-
-# Xcode Cloud 只用于发布归档，预构建发布包实际会链接的设备 slice。
-build_native_static_libraries iphoneos arm64
-build_native_static_libraries watchos "arm64 arm64_32"

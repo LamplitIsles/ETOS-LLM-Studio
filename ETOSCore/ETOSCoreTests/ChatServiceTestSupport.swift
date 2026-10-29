@@ -15,10 +15,6 @@ final class MockAPIAdapter: APIAdapter {
     var receivedMessages: [ChatMessage]?
     var receivedTitleMessages: [ChatMessage]?
     var receivedReasoningSummaryMessages: [ChatMessage]?
-    var receivedConversationSummaryMessages: [ChatMessage]?
-    var receivedConversationProfileMessages: [ChatMessage]?
-    var receivedContextCompressionMessages: [ChatMessage]?
-    var contextCompressionRequestCount = 0
     var receivedTools: [InternalToolDefinition]?
     var receivedAudioAttachments: [UUID: AudioAttachment]?
     var receivedImageAttachments: [UUID: [ImageAttachment]]?
@@ -38,17 +34,6 @@ final class MockAPIAdapter: APIAdapter {
             receivedReasoningSummaryMessages = messages
             receivedReasoningSummaryModel = model
             return URLRequest(url: URL(string: "https://fake.url/reasoning-summary")!)
-        } else if messages.first?.content == ContextCompressionPromptBuilder.systemPrompt {
-            receivedContextCompressionMessages = messages
-            contextCompressionRequestCount += 1
-            return URLRequest(url: URL(string: "https://fake.url/chat")!)
-        } else if firstContent == BuiltInPromptStore.render(.conversationSummarySystem) {
-            receivedConversationSummaryMessages = messages
-            return URLRequest(url: URL(string: "https://fake.url/chat")!)
-        } else if firstContent == BuiltInPromptStore.render(.conversationProfileUpdateSystem) ||
-                    firstContent == BuiltInPromptStore.render(.conversationProfileDedupSystem) {
-            receivedConversationProfileMessages = messages
-            return URLRequest(url: URL(string: "https://fake.url/conversation-profile")!)
         } else if messages.first?.content.contains("为本次对话生成一个简短、精炼的标题") == true {
             receivedTitleMessages = messages
             receivedTitleModel = model

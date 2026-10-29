@@ -11,80 +11,7 @@ import os.log
 
 extension Persistence {
     private static func markConversationRuntimeChanged() {
-        WatchDatabaseSyncService.markDatabaseChanged(.chat)
         postCloudSyncLocalDataDidChange()
-    }
-
-    // MARK: - 消息
-
-    public static func appendConversationMessage(
-        _ message: ChatMessage,
-        to sessionID: UUID
-    ) throws -> ChatMessage {
-        guard let store = activeGRDBStore() else {
-            throw ConversationRuntimeError.persistenceUnavailable
-        }
-        let storedMessage = try store.appendConversationMessageAtomically(message, to: sessionID)
-        markConversationRuntimeChanged()
-        return storedMessage
-    }
-
-    public static func appendConversationMessages(
-        _ messages: [ChatMessage],
-        to sessionID: UUID
-    ) throws -> [ChatMessage] {
-        guard let store = activeGRDBStore() else {
-            throw ConversationRuntimeError.persistenceUnavailable
-        }
-        let storedMessages = try store.appendConversationMessagesAtomically(messages, to: sessionID)
-        markConversationRuntimeChanged()
-        return storedMessages
-    }
-
-    public static func upsertConversationMessage(
-        _ message: ChatMessage,
-        to sessionID: UUID,
-        afterMessageID: UUID? = nil
-    ) throws -> ChatMessage {
-        guard let store = activeGRDBStore() else {
-            throw ConversationRuntimeError.persistenceUnavailable
-        }
-        let storedMessage = try store.upsertConversationMessageAtomically(
-            message,
-            to: sessionID,
-            afterMessageID: afterMessageID
-        )
-        markConversationRuntimeChanged()
-        return storedMessage
-    }
-
-    public static func deleteConversationMessage(id messageID: UUID, from sessionID: UUID) throws -> Bool {
-        guard let store = activeGRDBStore() else {
-            throw ConversationRuntimeError.persistenceUnavailable
-        }
-        let deleted = try store.deleteConversationMessageAtomically(id: messageID, from: sessionID)
-        if deleted { markConversationRuntimeChanged() }
-        return deleted
-    }
-
-    /// 与会话快照写入共用队列，确保错误落盘先于紧接着的手动重试，不回发旧 UI 快照。
-    static func enqueueConversationMessageUpserts(
-        _ mutations: [(message: ChatMessage, afterMessageID: UUID?)],
-        for sessionID: UUID
-    ) {
-        guard let store = activeGRDBStore() else { return }
-        store.messageWriteQueue.async {
-            for mutation in mutations {
-                do {
-                    _ = try store.upsertConversationMessageAtomically(
-                        mutation.message, to: sessionID, afterMessageID: mutation.afterMessageID
-                    )
-                } catch {
-                    logger.error("保存错误回复失败：\(error.localizedDescription)")
-                }
-            }
-            markConversationRuntimeChanged()
-        }
     }
 
     // MARK: - 来源与授权
@@ -150,10 +77,6 @@ extension Persistence {
         )
     }
 
-    public static func loadLinkedConversationContacts(sourceSessionID: UUID) -> [LinkedConversationContact] {
-        (try? activeGRDBStore()?.loadLinkedConversationContacts(sourceSessionID: sourceSessionID)) ?? []
-    }
-
     // MARK: - Run
 
     @discardableResult
@@ -183,10 +106,6 @@ extension Persistence {
 
     public static func loadActiveConversationRuns() -> [ConversationRun] {
         (try? activeGRDBStore()?.loadActiveConversationRuns()) ?? []
-    }
-
-    public static func loadConversationRuntimeSessionStates() -> [ConversationRuntimeSessionState] {
-        (try? activeGRDBStore()?.loadConversationRuntimeSessionStates()) ?? []
     }
 
     @discardableResult
@@ -445,10 +364,6 @@ extension Persistence {
 
     @discardableResult
     public static func createConversationRuntimeBundle(
-        targetSession: ChatSession? = nil,
-        targetMessages: [ChatMessage] = [],
-        groupingFolder: SessionFolder? = nil,
-        groupingRootSessionID: UUID? = nil,
         origin: ConversationOrigin?,
         capabilities: [ConversationCapability],
         targetRun: ConversationRun?,
@@ -460,10 +375,6 @@ extension Persistence {
         guard let store = activeGRDBStore() else { return false }
         do {
             try store.createConversationRuntimeBundle(
-                targetSession: targetSession,
-                targetMessages: targetMessages,
-                groupingFolder: groupingFolder,
-                groupingRootSessionID: groupingRootSessionID,
                 origin: origin,
                 capabilities: capabilities,
                 targetRun: targetRun,

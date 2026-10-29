@@ -101,48 +101,6 @@ extension ChatService {
         persistAndPublishMessages(messages, for: sessionID)
     }
 
-    func replaceRoleplayWorldbook(named name: String, entries value: JSONValue) {
-        guard case .array = value,
-              let data = try? JSONEncoder().encode(value),
-              let entries = try? JSONDecoder().decode([WorldbookEntry].self, from: data) else { return }
-        var worldbook = loadWorldbooks().first(where: { $0.name == name }) ?? Worldbook(name: name, entries: [])
-        worldbook.entries = entries.enumerated().map { index, entry in
-            var entry = entry
-            if entry.uid == nil { entry.uid = index }
-            return entry
-        }
-        worldbook.updatedAt = Date()
-        saveWorldbook(worldbook)
-    }
-
-    func createRoleplayWorldbook(named name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !loadWorldbooks().contains(where: { $0.name == trimmed }) else { return }
-        saveWorldbook(Worldbook(name: trimmed, entries: []))
-    }
-
-    func deleteRoleplayWorldbook(named name: String) {
-        guard let worldbook = loadWorldbooks().first(where: { $0.name == name }) else { return }
-        deleteWorldbook(id: worldbook.id)
-    }
-
-    func rebindRoleplayCharacterWorldbooks(_ value: JSONValue, sessionID: UUID) {
-        guard case .dictionary(let fields) = value,
-              var binding = roleplayStore.binding(sessionID: sessionID),
-              let characterID = binding.characterIDs.first,
-              var character = roleplayStore.character(id: characterID) else { return }
-        let books = loadWorldbooks()
-        let primaryName = fields["primary"]?.stringValue
-        let primaryID = primaryName.flatMap { name in books.first(where: { $0.name == name })?.id }
-        let additionalNames = fields["additional"]?.stringArrayValue ?? []
-        let additionalIDs = additionalNames.compactMap { name in books.first(where: { $0.name == name })?.id }
-
-        character.embeddedWorldbookID = primaryID
-        binding.additionalWorldbookIDs = additionalIDs.filter { $0 != primaryID }
-        roleplayStore.upsertCharacter(character)
-        roleplayStore.upsertBinding(binding)
-    }
-
     func replaceRoleplayRegexRules(_ value: JSONValue, sessionID: UUID) {
         guard case .array(let values) = value,
               let binding = roleplayStore.binding(sessionID: sessionID),

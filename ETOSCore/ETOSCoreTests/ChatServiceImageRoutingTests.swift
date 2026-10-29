@@ -44,11 +44,9 @@ struct ChatServiceImageRoutingTests {
         let session = URLSession(configuration: sessionConfig)
         let service = ChatService(
             adapters: ["openai-compatible": adapter],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
 
-        await service.waitForInitialPersistenceStateIfNeeded()
         if savedTarget {
             _ = service.createSavedSession(name: "生图排序目标")
         } else {
@@ -71,12 +69,8 @@ struct ChatServiceImageRoutingTests {
             content: "画一只会发光的猫",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             imageAttachments: [sourceImage],
             targetSessionID: targetSession.id,
@@ -91,9 +85,7 @@ struct ChatServiceImageRoutingTests {
         #expect(prepared?.messageIDsBySource.count == 2)
         #expect(prepared?.sessionID == targetSession.id)
         #expect(service.currentSessionSubject.value?.id == browsingSession.id)
-        #expect(Persistence.loadMessages(for: browsingSession.id).isEmpty)
         #expect(service.chatSessionsSubject.value.first?.id == targetSession.id)
-        #expect(Persistence.loadChatSessions().first?.id == targetSession.id)
     }
 
     @MainActor
@@ -125,7 +117,6 @@ struct ChatServiceImageRoutingTests {
         sessionConfig.protocolClasses = [ImageRoutingURLProtocol.self]
         let service = ChatService(
             adapters: ["openai-compatible": adapter],
-            memoryManager: MemoryManager(),
             urlSession: URLSession(configuration: sessionConfig)
         )
         service.createNewSession()
@@ -135,24 +126,16 @@ struct ChatServiceImageRoutingTests {
             content: "画一只戴围巾的猫",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
         await service.sendAndProcessMessage(
             content: "把围巾改成蓝色",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -190,7 +173,6 @@ struct ChatServiceImageRoutingTests {
         let session = URLSession(configuration: sessionConfig)
         let service = ChatService(
             adapters: ["openai-compatible": adapter],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -206,12 +188,8 @@ struct ChatServiceImageRoutingTests {
             content: "请根据语音生成图片",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             audioAttachment: audioAttachment
         )

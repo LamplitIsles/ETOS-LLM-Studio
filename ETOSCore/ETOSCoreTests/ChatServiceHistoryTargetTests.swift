@@ -28,12 +28,9 @@ extension ChatServiceTests {
         #expect(chatService.messagesSnapshot(for: source.id) == saved)
     }
 
-    @Test("从尚未落盘的消息分支时保留历史、会话提示词和首选模型")
+    @Test("从尚未落盘的消息分支时保留历史和首选模型")
     func branchCopiesLiveHistoryAndSessionConfiguration() throws {
         var source = chatService.createSavedSession(name: "分支来源")
-        source.systemPrompt = "会话提示词"
-        source.topicPrompt = "话题"
-        source.enhancedPrompt = "增强"
         source.preferredModelIdentifier = dummyModel.id
         chatService.updateSession(source)
         let user = ChatMessage(role: .user, content: "未落盘的问题")
@@ -42,18 +39,9 @@ extension ChatServiceTests {
         // 切到另一会话，使分支只能从来源运行期快照读取，而不能碰巧命中前台消息。
         let other = chatService.createSavedSession(name: "其他会话")
         chatService.setCurrentSession(other)
-        let branch = chatService.branchSessionFromMessage(from: source, upToMessage: answer, copyPrompts: true)
-        #expect(branch.systemPrompt == source.systemPrompt)
-        #expect(branch.topicPrompt == source.topicPrompt)
-        #expect(branch.enhancedPrompt == source.enhancedPrompt)
+        let branch = chatService.branchSessionFromMessage(from: source, upToMessage: answer)
         #expect(branch.preferredModelIdentifier == dummyModel.id)
         #expect(chatService.messagesForSessionSubject.value.map(\.content) == [user.content, answer.content])
-
-        let withoutPrompts = chatService.branchSessionFromMessage(from: source, upToMessage: user, copyPrompts: false)
-        #expect(withoutPrompts.systemPrompt == nil)
-        #expect(withoutPrompts.topicPrompt == nil)
-        #expect(withoutPrompts.enhancedPrompt == nil)
-        #expect(chatService.messagesForSessionSubject.value.map(\.content) == [user.content])
     }
 
     @Test("等待旧请求取消时切换会话与模型，重试仍使用来源会话与原模型", .timeLimit(.minutes(1)))
@@ -84,9 +72,8 @@ extension ChatServiceTests {
         defer { signal.finish(); Task { await gate.release() } }
         let retry = Task {
             await chatService.retryMessage(
-                answer, aiTemperature: 0, aiTopP: 1, systemPrompt: "", maxChatHistory: 10,
-                enableStreaming: false, enhancedPrompt: nil, enableMemory: false, enableMemoryWrite: false,
-                includeSystemTime: false, targetSessionID: source.id
+                answer, aiTemperature: 0, aiTopP: 1, maxChatHistory: 10,
+                enableStreaming: false, includeSystemTime: false, targetSessionID: source.id
             )
         }
         var events = cancellations.makeAsyncIterator()

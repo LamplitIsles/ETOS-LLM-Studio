@@ -16,7 +16,6 @@ public actor BatchService {
     init(database: @escaping @Sendable () -> PersistenceGRDBStore? = { Persistence.activeGRDBStore() },
          providers: @escaping @Sendable () -> [Provider] = { ConfigLoader.loadProviders() },
          didChange: @escaping @Sendable () -> Void = {
-             WatchDatabaseSyncService.markDatabaseChanged(.chat)
              NotificationCenter.default.post(name: .batchJobsChanged, object: nil)
          }, transport: @escaping @Sendable (URLRequest, Provider) async throws -> Data = { request, provider in
              guard await MainActor.run(body: { AppLockManager.shared.state != .locked }) else { throw CancellationError() }

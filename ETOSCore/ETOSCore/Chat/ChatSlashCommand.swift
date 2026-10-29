@@ -17,15 +17,12 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
     case tools
     case daily
     case usage
-    case memory
     case mcp
     case skills
     case shortcuts
     case roleplay
-    case worldbook
     case features
     case temporary
-    case compact
     case retry
     case stop
     case clear
@@ -52,8 +49,6 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return ["extensions"]
         case .temporary:
             return ["temp"]
-        case .compact:
-            return ["compress"]
         default:
             return []
         }
@@ -75,8 +70,6 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "每日脉冲"
         case .usage:
             return "用量统计"
-        case .memory:
-            return "记忆系统"
         case .mcp:
             return "MCP 工具集成"
         case .skills:
@@ -85,14 +78,10 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "快捷指令工具集成"
         case .roleplay:
             return "角色扮演与酒馆兼容"
-        case .worldbook:
-            return "世界书"
         case .features:
             return "拓展功能"
         case .temporary:
             return "临时对话"
-        case .compact:
-            return "压缩为续聊"
         case .retry:
             return "重试"
         case .stop:
@@ -118,8 +107,6 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "sparkles"
         case .usage:
             return "chart.bar"
-        case .memory:
-            return "brain"
         case .mcp:
             return "network"
         case .skills:
@@ -128,14 +115,10 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "bolt"
         case .roleplay:
             return "theatermasks"
-        case .worldbook:
-            return "book"
         case .features:
             return "ellipsis.circle"
         case .temporary:
             return "eye.slash"
-        case .compact:
-            return "rectangle.compress.vertical"
         case .retry:
             return "arrow.clockwise"
         case .stop:

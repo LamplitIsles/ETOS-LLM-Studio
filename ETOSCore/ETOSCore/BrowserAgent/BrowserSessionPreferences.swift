@@ -39,7 +39,6 @@ public extension Persistence {
     static func saveBrowserProfileDraft(_ profile: BrowserAgentDataProfile, expected: BrowserAgentDataProfile, sessionID: UUID) throws {
         guard let store = activeGRDBStore() else { throw BrowserSessionPreferencesError.unavailable }
         try store.saveBrowserProfileDraft(profile, expected: expected, sessionID: sessionID)
-        WatchDatabaseSyncService.markDatabaseChanged(.chat)
         NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
     }
 }

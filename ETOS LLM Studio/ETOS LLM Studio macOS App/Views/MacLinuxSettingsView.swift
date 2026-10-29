@@ -39,9 +39,6 @@ struct MacLinuxSettingsView: View {
                     label: { Label(NSLocalizedString("命令规则", comment: ""), systemImage: "checklist") }
                 NavigationLink { MacLinuxShortcutsView(isActive: isActive, runtime: model) }
                     label: { Label(NSLocalizedString("终端快捷键", comment: ""), systemImage: "keyboard") }
-                NavigationLink {
-                    MacAgentPromptsView(isActive: isActive, model: workspace.agentPrompts)
-                } label: { Label(NSLocalizedString("Agent 提示词", comment: ""), systemImage: "text.bubble") }
             } footer: {
                 Text(NSLocalizedString("开启后，命令与本地 MCP 输出中出现已启用环境变量的值时，只会在发送给模型前替换；用户终端和原始日志保持不变。关闭后会原样发送。", comment: "")).font(.footnote).foregroundStyle(.secondary)
             }

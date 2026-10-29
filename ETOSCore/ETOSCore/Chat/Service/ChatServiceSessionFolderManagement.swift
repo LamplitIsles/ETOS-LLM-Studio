@@ -25,7 +25,6 @@ extension ChatService {
         let folder = SessionFolder(name: trimmedName, parentID: parentID, updatedAt: Date())
         folders.append(folder)
         sessionFoldersSubject.send(folders)
-        Persistence.saveSessionFolders(folders)
         logger.info("已创建会话文件夹: \(trimmedName)")
         return folder
     }
@@ -40,7 +39,6 @@ extension ChatService {
         folders[index].name = trimmedName
         folders[index].updatedAt = Date()
         sessionFoldersSubject.send(folders)
-        Persistence.saveSessionFolders(folders)
         logger.info("已重命名会话文件夹: \(trimmedName)")
     }
 
@@ -51,7 +49,6 @@ extension ChatService {
         let removedIDs = collectSessionFolderDescendantIDs(rootID: folderID, folders: folders)
         let retainedFolders = folders.filter { !removedIDs.contains($0.id) }
         sessionFoldersSubject.send(retainedFolders)
-        Persistence.saveSessionFolders(retainedFolders)
 
         var sessions = chatSessionsSubject.value
         var didUpdateSessions = false
@@ -69,7 +66,6 @@ extension ChatService {
                updatedCurrent != current {
                 currentSessionSubject.send(updatedCurrent)
             }
-            Persistence.saveChatSessions(sessions)
         }
 
         logger.info("已删除会话文件夹及子目录，共 \(removedIDs.count) 个。")
@@ -89,7 +85,6 @@ extension ChatService {
         folders[folderIndex].parentID = parentID
         folders[folderIndex].updatedAt = Date()
         sessionFoldersSubject.send(folders)
-        Persistence.saveSessionFolders(folders)
         logger.info("已移动会话文件夹。")
     }
 
@@ -113,57 +108,11 @@ extension ChatService {
             currentSessionSubject.send(sessions[sessionIndex])
         }
 
-        Persistence.saveChatSessions(sessions)
         logger.info("已移动会话到文件夹。")
     }
 
     public func moveSession(_ session: ChatSession, toFolderID folderID: UUID?) {
         moveSession(sessionID: session.id, toFolderID: folderID)
-    }
-
-    public func reloadCurrentSessionMessagesFromPersistence() {
-        guard let currentSession = currentSessionSubject.value else { return }
-        Persistence.flushPendingMessageWritesForSyncSnapshot()
-        let reloadedMessages = Persistence.loadMessages(for: currentSession.id)
-        storeRuntimeMessagesSnapshot(reloadedMessages, for: currentSession.id)
-        publishMessages(reloadedMessages)
-        logger.info("已从持久化层刷新当前会话消息: \(currentSession.id.uuidString)")
-    }
-
-    public func reloadSessionStateFromPersistenceAfterMigration() {
-        let persistedSessions = Persistence.loadChatSessions()
-        let persistedFolders = Persistence.loadSessionFolders()
-        let persistedTags = Persistence.loadSessionTags()
-        let existingTemporary = chatSessionsSubject.value.first(where: \.isTemporary)
-            ?? ChatSession(
-                id: UUID(),
-                name: NSLocalizedString("新的对话", comment: "Default new chat session name"),
-                isTemporary: true
-            )
-
-        var mergedSessions = persistedSessions
-        mergedSessions.insert(existingTemporary, at: 0)
-
-        let previousCurrentSessionID = currentSessionSubject.value?.id
-        let resolvedCurrentSession = mergedSessions.first(where: { $0.id == previousCurrentSessionID })
-            ?? persistedSessions.first
-            ?? existingTemporary
-        if previousCurrentSessionID != resolvedCurrentSession.id {
-            clearLocalLLMKVCache(for: previousCurrentSessionID)
-        }
-
-        chatSessionsSubject.send(mergedSessions)
-        sessionFoldersSubject.send(persistedFolders)
-        sessionTagsSubject.send(persistedTags)
-        currentSessionSubject.send(resolvedCurrentSession)
-
-        let resolvedMessages = resolvedCurrentSession.isTemporary
-            ? []
-            : Persistence.loadMessages(for: resolvedCurrentSession.id)
-        storeRuntimeMessagesSnapshot(resolvedMessages, for: resolvedCurrentSession.id)
-        publishMessages(resolvedMessages)
-
-        logger.info("JSON→SQLite 迁移后已刷新会话状态: sessions=\(persistedSessions.count), folders=\(persistedFolders.count), tags=\(persistedTags.count)")
     }
 
     public func setCurrentSession(_ session: ChatSession?) {
@@ -184,14 +133,12 @@ extension ChatService {
             if let index = sessions.firstIndex(where: { $0.id == session.id }) {
                 sessions[index] = session
                 chatSessionsSubject.send(sessions)
-                Persistence.saveChatSessions(sessions)
             }
 
             logger.info("已更新当前会话元数据: \(session.name)")
             return
         }
 
-        clearLocalLLMKVCache(for: currentSession?.id)
         currentSessionSubject.send(session)
         let messages = preparedMessages ?? session.map { messagesForSessionActivation($0.id) } ?? []
         if let session {
@@ -201,35 +148,13 @@ extension ChatService {
         logger.info("已切换到会话: \(session?.name ?? "无")")
     }
 
-    func clearLocalLLMKVCache(for sessionID: UUID?) {
-        guard let sessionID else { return }
-        Task.detached(priority: .utility) {
-            LocalLLMEngine.shared.clearKVCache(for: sessionID.uuidString)
-        }
-    }
-
     @MainActor
     func promoteSessionToTopIfNeeded(sessionID: UUID) async {
         guard let index = chatSessionsSubject.value.firstIndex(where: { $0.id == sessionID }), index > 0 else { return }
-        let database = await Persistence.resolveSessionOrderingDatabase()
-        // 解析存储期间可能切会话、编辑或删除；只重排当前列表，不回放 await 前的快照。
         var sessions = chatSessionsSubject.value
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }), index > 0 else { return }
         let session = sessions.remove(at: index)
         sessions.insert(session, at: 0)
-        guard let database else {
-            // 发送已完成 GRDB 追加；解析间锁库或替换时仍更新内存，不改写另一份 JSON 存储。
-            chatSessionsSubject.send(sessions)
-            logger.error("会话排序未保存：聊天数据库不可用。")
-            return
-        }
-        await withCheckedContinuation { continuation in
-            Persistence.enqueueChatSessionPromotion(sessionID, database: database) {
-                continuation.resume()
-            }
-            // 登记写入后才发布，后续管理操作看到的列表与 writer 中的先后次序一致。
-            chatSessionsSubject.send(sessions)
-        }
+        chatSessionsSubject.send(sessions)
         logger.info("已将会话移动到列表顶部。")
     }
 

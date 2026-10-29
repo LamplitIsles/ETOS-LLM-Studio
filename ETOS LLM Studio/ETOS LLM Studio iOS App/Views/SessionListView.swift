@@ -29,7 +29,6 @@ struct SessionListView: View {
 
 struct SessionFolderBrowserView: View {
     @EnvironmentObject var viewModel: ChatViewModel
-    @EnvironmentObject var syncManager: WatchSyncManager
     @Environment(\.dismiss) var dismiss
 
     let folderID: UUID?
@@ -54,7 +53,6 @@ struct SessionFolderBrowserView: View {
     @State var draftSessionName: String = ""
     @State var sessionToDelete: ChatSession?
     @State var sessionInfo: SessionInfoPayload?
-    @State var contextCompressionSourceSession: ChatSession?
     @State var showGhostSessionAlert = false
     @State var ghostSession: ChatSession?
 

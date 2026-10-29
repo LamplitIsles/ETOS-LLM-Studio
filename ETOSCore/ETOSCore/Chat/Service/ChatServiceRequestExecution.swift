@@ -50,15 +50,9 @@ extension ChatService {
         wasTemporarySession: Bool,
         aiTemperature: Double,
         aiTopP: Double,
-        systemPrompt: String,
         maxChatHistory: Int,
         enableStreaming: Bool,
-        enhancedPrompt: String?,
         tools: [InternalToolDefinition]?,
-        localAgentPrompt: String?,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool,
         includeSystemTime: Bool,
         systemTimeInjectionPosition: SystemTimeInjectionPosition,
         enablePeriodicTimeLandmark: Bool,
@@ -73,26 +67,9 @@ extension ChatService {
         let sessionForRequest = currentSessionSnapshot?.id == currentSessionID
             ? currentSessionSnapshot
             : conversationSession(withID: currentSessionID)
-        let resolvedEnhancedPrompt = sessionForRequest?.enhancedPrompt ?? enhancedPrompt
         let linkedConversations = await Task.detached(priority: .utility) {
             Persistence.loadLinkedConversationContacts(sourceSessionID: currentSessionID)
         }.value
-        let continuationMessages: [ChatMessage]
-        do {
-            continuationMessages = try await Task.detached(priority: .userInitiated) {
-                try Persistence.loadConversationContinuationContext(for: currentSessionID)
-            }.value.map(ContextCompressionPromptBuilder.continuationRequestMessages) ?? []
-        } catch {
-            addErrorMessage(
-                String(
-                    format: NSLocalizedString("错误: 无法读取续聊上下文：%@", comment: "Continuation context load error"),
-                    error.localizedDescription
-                ),
-                sessionID: currentSessionID
-            )
-            emitSessionRequestStatus(.error, sessionID: currentSessionID)
-            return
-        }
         let preparedRequestMessages = preparedMessagesForRequest(
             from: messages,
             loadingMessageID: loadingMessageID,
@@ -132,12 +109,6 @@ extension ChatService {
         // 先按实际模型展开发送副本，并保护字面宏，再交给角色与脚本模板处理。
         let requestStartedAt = Date()
         let promptMacroRequest = await PromptMacroRenderer.render(
-            PromptMacroTemplates(
-                global: sessionForRequest?.isGlobalSystemPromptIsolationActive == true ? nil : systemPrompt,
-                conversation: sessionForRequest?.systemPrompt,
-                topic: sessionForRequest?.topicPrompt,
-                enhanced: resolvedEnhancedPrompt
-            ),
             model: runnableModel,
             sessionID: currentSessionID,
             session: sessionForRequest,
@@ -145,7 +116,6 @@ extension ChatService {
             now: requestStartedAt,
             roleplayStore: roleplayStore
         )
-        let promptTemplates = promptMacroRequest.templates
         var resolvedRoleplay = RoleplayRuntime.resolve(
             sessionID: currentSessionID,
             messages: promptMacroRequest.messages,
@@ -178,51 +148,6 @@ extension ChatService {
             }
         }
 
-        var memories: [MemoryItem] = []
-        if enableMemory {
-            let topK = resolvedMemoryTopK()
-            if topK == 0 {
-                memories = await self.memoryManager.getActiveMemories()
-            } else {
-                // 检索使用可读文本，字面宏的临时保护标记只留在模板处理链路内。
-                let messagesBeforeMemoryQuery = requestMessages
-                let memoryQueryMessages = await Task.detached(priority: .userInitiated) {
-                    promptMacroRequest.restoringLiterals(in: messagesBeforeMemoryQuery)
-                }.value
-                let queryText = buildMemoryQueryContext(from: memoryQueryMessages, fallbackUserMessage: userMessage)
-                let queryImages = await memoryQueryImageAttachments(
-                    currentImages: currentImageAttachments,
-                    currentFiles: currentFileAttachments
-                )
-                if queryText != nil || !queryImages.isEmpty {
-                    memories = await self.memoryManager.searchMemoriesHybrid(
-                        query: queryText ?? "",
-                        imageAttachments: queryImages,
-                        topK: topK
-                    )
-                }
-            }
-            if !memories.isEmpty {
-                logger.info("已检索到 \(memories.count) 条相关记忆。")
-            }
-        }
-
-        let isMemoryIsolationActive = sessionForRequest?.isMemoryContextIsolationActive ?? false
-        let conversationMemoryEnabled = enableMemory && isConversationMemoryEnabled() && !isMemoryIsolationActive
-        let recentConversationSummaries: [ConversationSessionSummary]
-        let conversationUserProfile: ConversationUserProfile?
-        if conversationMemoryEnabled {
-            await deduplicateConversationUserProfileIfNeeded(sessionID: currentSessionID)
-            recentConversationSummaries = ConversationMemoryManager.loadRecentSessionSummaries(
-                limit: resolvedConversationMemoryRecentLimit(),
-                excludingSessionID: currentSessionID
-            )
-            conversationUserProfile = ConversationMemoryManager.loadUserProfile()
-        } else {
-            recentConversationSummaries = []
-            conversationUserProfile = nil
-        }
-
         let effectiveStreaming = resolvedRequestStreamingEnabled(
             preference: enableStreaming,
             overrides: runnableModel.effectiveOverrideParameters
@@ -248,19 +173,6 @@ extension ChatService {
             modelPricing: runnableModel.model.pricing
         )
 
-        var boundWorldbookIDs = sessionForRequest?.lorebookIDs ?? []
-        if let resolvedRoleplay {
-            boundWorldbookIDs.append(contentsOf: resolvedRoleplay.worldbookIDs)
-        }
-        var seenWorldbookIDs = Set<UUID>()
-        boundWorldbookIDs = boundWorldbookIDs.filter { seenWorldbookIDs.insert($0).inserted }
-        var boundWorldbooks = worldbookStore.resolveWorldbooks(ids: boundWorldbookIDs)
-        if let resolvedRoleplay {
-            boundWorldbooks = RoleplayRuntime.resolvedWorldbooks(
-                boundWorldbooks,
-                macroContext: resolvedRoleplay.macroContext
-            )
-        }
         var promptTemplateMacroContext = resolvedRoleplay?.macroContext ?? RoleplayMacroContext(
             variables: roleplayStore.variableSnapshot(sessionID: currentSessionID),
             lastMessage: requestMessages.last?.content ?? "",
@@ -269,69 +181,14 @@ extension ChatService {
             messageCount: requestMessages.count,
             chatSeed: currentSessionID.uuidString
         )
-        boundWorldbooks = await RoleplayPromptTemplateRenderer.preprocessWorldbooks(
-            boundWorldbooks,
-            messages: requestMessages,
-            regexRules: resolvedRoleplay?.regexRules ?? [],
-            macroContext: &promptTemplateMacroContext
-        )
-        let messagesForWorldbookScan = requestMessages
-        // 关键词扫描复用本轮提示词宏快照；只还原扫描副本，后续模板链路仍保留字面宏保护。
-        let worldbookScanInput = await Task.detached(priority: .userInitiated) {
-            (
-                messages: promptMacroRequest.restoringLiterals(in: messagesForWorldbookScan),
-                topic: promptTemplates.topic.map { promptMacroRequest.restoringLiterals(in: $0) },
-                enhanced: promptTemplates.enhanced.map { promptMacroRequest.restoringLiterals(in: $0) }
-            )
-        }.value
-        var worldbookResult = await worldbookEngine.evaluateAsync(
-            .init(
-                sessionID: currentSessionID,
-                worldbooks: boundWorldbooks,
-                messages: worldbookScanInput.messages,
-                topicPrompt: worldbookScanInput.topic,
-                enhancedPrompt: worldbookScanInput.enhanced,
-                personaDescription: resolvedRoleplay?.persona?.description,
-                characterDescription: resolvedRoleplay?.characters.first?.description,
-                characterPersonality: resolvedRoleplay?.characters.first?.personality,
-                characterDepthPrompt: resolvedRoleplay?.characters.first?.postHistoryInstructions,
-                scenario: resolvedRoleplay?.characters.first?.scenario,
-                creatorNotes: resolvedRoleplay?.characters.first?.creatorNotes
-            )
-        )
-        worldbookResult = await RoleplayPromptTemplateRenderer.renderWorldbookEvaluation(
-            worldbookResult,
-            worldbooks: boundWorldbooks,
-            chatHistory: requestMessages,
-            regexRules: resolvedRoleplay?.regexRules ?? [],
-            macroContext: &promptTemplateMacroContext
-        )
-
         var messagesToSend: [ChatMessage] = []
         let includesConversationTools = runnableModel.model.supportsToolCalling
             && (tools?.contains { ConversationToolDefinitions.containsExposedName($0.name) } == true)
-        let includesLocalLinuxInstructions = shouldIncludeLocalLinuxInstructions(
-            tools: tools,
-            modelSupportsToolCalling: runnableModel.model.supportsToolCalling,
-            localLinuxToolsEnabled: activeRequestIncludesLocalLinuxTools(sessionID: currentSessionID)
-        )
         var finalSystemPrompt = buildFinalSystemPrompt(
-            global: promptTemplates.global,
-            conversationSystem: promptTemplates.conversation,
-            topic: promptTemplates.topic,
             includeConversationRuntime: includesConversationTools,
             linkedConversations: linkedConversations,
-            memories: memories,
-            recentConversationSummaries: recentConversationSummaries,
-            conversationProfile: conversationUserProfile,
             includeSystemTime: includeSystemTime && systemTimeInjectionPosition == .front,
-            worldbookBefore: worldbookResult.before,
-            worldbookAfter: worldbookResult.after,
-            worldbookANTop: worldbookResult.anTop,
-            worldbookANBottom: worldbookResult.anBottom,
-            roleplayPrompt: resolvedRoleplay.map(RoleplayRuntime.roleplaySystemPrompt),
-            includeLocalLinuxInstructions: includesLocalLinuxInstructions,
-            localAgentPrompt: localAgentPrompt
+            roleplayPrompt: resolvedRoleplay.map(RoleplayRuntime.roleplaySystemPrompt)
         )
         if !helperScriptIDs.isEmpty, finalSystemPrompt.contains("{{") {
             finalSystemPrompt = await RoleplayMacroExpansionBridge.shared.expand(
@@ -361,16 +218,7 @@ extension ChatService {
             periodicTimeLandmarkLastInjectedAtBySessionID.removeValue(forKey: currentSessionID)
         }
 
-        if !worldbookResult.atDepth.isEmpty {
-            chatHistory = injectAtDepthMessages(worldbookResult.atDepth, into: chatHistory)
-        }
-
-        let emTopMessages = makeWorldbookRoleMessages(worldbookResult.emTop, tag: "worldbook_em_top")
-        let emBottomMessages = makeWorldbookRoleMessages(worldbookResult.emBottom, tag: "worldbook_em_bottom")
-
-        messagesToSend.append(contentsOf: emTopMessages)
         messagesToSend.append(contentsOf: chatHistory)
-        messagesToSend.append(contentsOf: emBottomMessages)
 
         if let resolvedRoleplay,
            let postHistoryPrompt = RoleplayRuntime.postHistoryPrompt(resolvedRoleplay) {
@@ -382,14 +230,6 @@ extension ChatService {
         }
         let apiFormat = runnableModel.effectiveAPIFormat
 
-        if let enhancedPromptMessage = makeEnhancedPromptMessage(
-            promptTemplates.enhanced,
-            apiFormat: apiFormat,
-            openAIUsesSystemRole: openAIUsesSystemRole
-        ) {
-            appendTailContextMessage(enhancedPromptMessage, to: &messagesToSend, apiFormat: apiFormat)
-        }
-
         if includeSystemTime && systemTimeInjectionPosition == .tail {
             let timeMessage = makeTailSystemTimeMessage(
                 apiFormat: apiFormat,
@@ -400,9 +240,7 @@ extension ChatService {
 
         messagesToSend = await RoleplayPromptTemplateRenderer.renderMessages(
             messagesToSend,
-            worldbooks: boundWorldbooks,
             chatHistory: requestMessages,
-            regexRules: resolvedRoleplay?.regexRules ?? [],
             macroContext: &promptTemplateMacroContext
         )
         let storedPromptTemplateVariables = roleplayStore.variableSnapshot(sessionID: currentSessionID)
@@ -412,24 +250,10 @@ extension ChatService {
                 sessionID: currentSessionID
             )
         }
-        let worldbookOutlets = makeWorldbookOutletValues(entries: worldbookResult.outlet)
-        for index in messagesToSend.indices {
-            messagesToSend[index].content = RoleplayMacroResolver.resolveWorldbookOutlets(
-                messagesToSend[index].content,
-                outlets: worldbookOutlets
-            )
-        }
         let messagesBeforeLiteralRestoration = messagesToSend
         messagesToSend = await Task.detached(priority: .userInitiated) {
             promptMacroRequest.restoringLiterals(in: messagesBeforeLiteralRestoration)
         }.value
-
-        // 续聊上下文是已持久化的固定交接，不参与角色模板、正则和宏替换。
-        // 将它放在首个系统提示词之后，也确保 maxChatHistory 永远不会裁掉这段上下文。
-        if !continuationMessages.isEmpty {
-            let insertionIndex = messagesToSend.first?.role == .system ? 1 : 0
-            messagesToSend.insert(contentsOf: continuationMessages, at: insertionIndex)
-        }
 
         var audioAttachments: [UUID: AudioAttachment] = [:]
         for msg in messagesToSend {
@@ -544,42 +368,11 @@ extension ChatService {
         }
 
         if !helperScriptIDs.isEmpty {
-            if continuationMessages.isEmpty {
-                messagesToSend = await RoleplayPromptMutationBridge.shared.mutate(
-                    messagesToSend,
-                    sessionID: currentSessionID,
-                    scriptIDs: helperScriptIDs
-                )
-            } else {
-                let protectedMessageIDs = Set(continuationMessages.map(\.id))
-                let firstProtectedIndex = messagesToSend.firstIndex {
-                    protectedMessageIDs.contains($0.id)
-                }
-                let lastProtectedIndex = messagesToSend.lastIndex {
-                    protectedMessageIDs.contains($0.id)
-                }
-                if let firstProtectedIndex, let lastProtectedIndex {
-                    let prefixSource = Array(messagesToSend[..<firstProtectedIndex])
-                    let prefix = prefixSource.isEmpty
-                        ? []
-                        : await RoleplayPromptMutationBridge.shared.mutate(
-                            prefixSource,
-                            sessionID: currentSessionID,
-                            scriptIDs: helperScriptIDs
-                        )
-                    let protectedMessages = Array(messagesToSend[firstProtectedIndex...lastProtectedIndex])
-                    let suffixStartIndex = messagesToSend.index(after: lastProtectedIndex)
-                    let suffixSource = Array(messagesToSend[suffixStartIndex...])
-                    let suffix = suffixSource.isEmpty
-                        ? []
-                        : await RoleplayPromptMutationBridge.shared.mutate(
-                            suffixSource,
-                            sessionID: currentSessionID,
-                            scriptIDs: helperScriptIDs
-                        )
-                    messagesToSend = prefix + protectedMessages + suffix
-                }
-            }
+            messagesToSend = await RoleplayPromptMutationBridge.shared.mutate(
+                messagesToSend,
+                sessionID: currentSessionID,
+                scriptIDs: helperScriptIDs
+            )
         }
 
         // 预填充必须位于所有尾部提示之后，且保留原文边界，不经过宏或正则再次改写。
@@ -588,43 +381,6 @@ extension ChatService {
                 id: assistantPrefill.id, role: .assistant, content: assistantPrefill.content,
                 reasoningContent: assistantPrefill.reasoningContent
             ))
-        }
-
-        if LocalModelProviderBridge.isLocalRunnableModel(runnableModel) {
-            let localTools = runnableModel.model.supportsToolCalling ? tools : nil
-            if tools != nil, localTools == nil {
-                logger.info("当前本地模型未启用工具能力，本次请求不会附带工具定义。")
-            }
-            await persistSentSystemPromptSnapshot(
-                from: messagesToSend,
-                loadingMessageID: loadingMessageID,
-                sessionID: currentSessionID
-            )
-            await handleLocalLLMResponse(
-                runnableModel: runnableModel,
-                messagesToSend: messagesToSend,
-                loadingMessageID: loadingMessageID,
-                currentSessionID: currentSessionID,
-                userMessage: userMessage,
-                wasTemporarySession: wasTemporarySession,
-                aiTemperature: aiTemperature,
-                aiTopP: aiTopP,
-                systemPrompt: systemPrompt,
-                maxChatHistory: maxChatHistory,
-                enableMemory: enableMemory,
-                enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
-                includeSystemTime: includeSystemTime,
-                systemTimeInjectionPosition: systemTimeInjectionPosition,
-                enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
-                periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
-                enableResponseSpeedMetrics: enableResponseSpeedMetrics,
-                requestStartedAt: requestStartedAt,
-                requestLogContext: requestLogContext,
-                availableTools: localTools,
-                imageAttachments: imageAttachments
-            )
-            return
         }
 
         guard let adapter = adapters[runnableModel.effectiveAPIFormat] else {
@@ -847,12 +603,8 @@ extension ChatService {
                     wasTemporarySession: wasTemporarySession,
                     aiTemperature: aiTemperature,
                     aiTopP: aiTopP,
-                    systemPrompt: systemPrompt,
                     maxChatHistory: maxChatHistory,
                     availableTools: effectiveTools,
-                    enableMemory: enableMemory,
-                    enableMemoryWrite: enableMemoryWrite,
-                    enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                     includeSystemTime: includeSystemTime,
                     systemTimeInjectionPosition: systemTimeInjectionPosition,
                     enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -875,11 +627,7 @@ extension ChatService {
                     availableTools: effectiveTools,
                     aiTemperature: aiTemperature,
                     aiTopP: aiTopP,
-                    systemPrompt: systemPrompt,
                     maxChatHistory: maxChatHistory,
-                    enableMemory: enableMemory,
-                    enableMemoryWrite: enableMemoryWrite,
-                    enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                     includeSystemTime: includeSystemTime,
                     systemTimeInjectionPosition: systemTimeInjectionPosition,
                     enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -906,37 +654,6 @@ extension ChatService {
         }
         #endif
         return "application/octet-stream"
-    }
-
-    private func memoryQueryImageAttachments(
-        currentImages: [ImageAttachment],
-        currentFiles: [FileAttachment]
-    ) async -> [ImageAttachment] {
-        let videos = currentFiles.filter(VideoAttachmentSupport.isVideo)
-        guard !videos.isEmpty else { return currentImages }
-
-        let configuration = await MainActor.run {
-            let appConfig = AppConfigStore.shared
-            return VideoFrameExtractionConfiguration(
-                mode: VideoFrameExtractionMode.normalized(appConfig.videoFrameExtractionMode),
-                fixedFPS: appConfig.videoFrameExtractionFPS,
-                maximumFrameCount: appConfig.videoFrameMaximumCount
-            )
-        }
-        var images = currentImages
-        let extractor = VideoFrameExtractor()
-        for video in videos {
-            do {
-                let result = try await extractor.extractFrames(
-                    from: video,
-                    configuration: configuration
-                )
-                images.append(contentsOf: result.frames.map(\.attachment))
-            } catch {
-                logger.warning("视频帧无法用于多模态记忆检索，将继续使用其他查询信息：\(error.localizedDescription)")
-            }
-        }
-        return images
     }
 
     func preprocessVideoAttachments(

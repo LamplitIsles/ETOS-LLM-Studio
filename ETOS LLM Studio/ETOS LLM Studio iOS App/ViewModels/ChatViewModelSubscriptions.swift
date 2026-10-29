@@ -30,7 +30,6 @@ extension ChatViewModel {
         aiTopP = appConfig.aiTopP
         aiTemperatureEnabled = appConfig.aiTemperatureEnabled
         aiTopPEnabled = appConfig.aiTopPEnabled
-        systemPrompt = appConfig.systemPrompt
         maxChatHistory = appConfig.maxChatHistory
         enableStreaming = appConfig.enableStreaming
         enableResponseSpeedMetrics = appConfig.enableResponseSpeedMetrics
@@ -40,14 +39,6 @@ extension ChatViewModel {
         currentBackgroundImage = appConfig.currentBackgroundImage
         enableAutoRotateBackground = appConfig.enableAutoRotateBackground
         enableAutoSessionNaming = appConfig.enableAutoSessionNaming
-        enableMemory = appConfig.enableMemory
-        enableMemoryWrite = appConfig.enableMemoryWrite
-        enableMemoryActiveRetrieval = appConfig.enableMemoryActiveRetrieval
-        enableConversationMemoryAsync = appConfig.enableConversationMemoryAsync
-        conversationMemoryRecentLimit = appConfig.conversationMemoryRecentLimit
-        conversationMemoryRoundThreshold = appConfig.conversationMemoryRoundThreshold
-        conversationMemorySummaryMinIntervalMinutes = appConfig.conversationMemorySummaryMinIntervalMinutes
-        enableConversationProfileDailyUpdate = appConfig.enableConversationProfileDailyUpdate
         enableReasoningSummary = appConfig.enableReasoningSummary
         enableLiquidGlass = appConfig.enableLiquidGlass
         enableChatTopBlurFade = appConfig.enableChatTopBlurFade
@@ -55,10 +46,8 @@ extension ChatViewModel {
         sendSpeechAsAudio = appConfig.sendSpeechAsAudio
         enableSpeechInput = appConfig.enableSpeechInput
         speechModelIdentifier = appConfig.speechModelIdentifier
-        memoryEmbeddingModelIdentifier = appConfig.memoryEmbeddingModelIdentifier
         titleGenerationModelIdentifier = appConfig.titleGenerationModelIdentifier
         dailyPulseModelIdentifier = appConfig.dailyPulseModelIdentifier
-        conversationSummaryModelIdentifier = appConfig.conversationSummaryModelIdentifier
         reasoningSummaryModelIdentifier = appConfig.reasoningSummaryModelIdentifier
         ocrModelIdentifier = appConfig.ocrModelIdentifier
         includeSystemTimeInPrompt = appConfig.includeSystemTimeInPrompt
@@ -74,81 +63,25 @@ extension ChatViewModel {
         applyAppConfigSnapshotToLocalState()
         BackgroundGenerationKeepAliveManager.shared.setGenerationActive(!runningSessionIDs.isEmpty)
         BackgroundGenerationAudioKeepAliveManager.shared.setGenerationActive(!runningSessionIDs.isEmpty)
-        chatService.reloadLocalModelsAndAppConfigBackedModelState()
         providers = chatService.providersSubject.value
         applyActivatedConversationModels(chatService.activatedConversationModels)
         selectedModel = chatService.selectedModelSubject.value
         MessageRegexRuleStore.shared.reload()
         refreshVisualMessagesAfterRegexRulesChange()
         syncSpeechModelSelection()
-        syncEmbeddingModelSelection()
         syncTitleGenerationModelSelection()
         syncDailyPulseModelSelection()
-        syncConversationSummaryModelSelection()
         syncReasoningSummaryModelSelection()
         syncOCRModelSelection()
         rotateBackgroundImageIfNeeded()
-        reloadGlobalSystemPromptEntries()
-        reloadConversationMemoryState()
     }
 
     func reloadAfterSnapshotRestore() {
         AppConfigStore.shared.reloadFromPersistentStore()
         chatService.reloadProviders()
         chatService.reloadSessionStateFromPersistenceAfterMigration()
-        MemoryManager.shared.reloadFromPersistenceAfterSnapshotRestore()
         DailyPulseManager.shared.reloadPersistedRuns()
         DailyPulseDeliveryCoordinator.shared.reloadFromStorage()
-        reloadGlobalSystemPromptEntries()
-        reloadConversationMemoryState()
-    }
-
-    func reloadGlobalSystemPromptEntries() {
-        guard !isPersistingGlobalSystemPrompts else { return }
-        globalSystemPromptReloadTask?.cancel()
-        globalSystemPromptReloadTask = Task { [weak self] in
-            let snapshot = await Task.detached(priority: .userInitiated) {
-                GlobalSystemPromptStore.load()
-            }.value
-
-            guard let self, !Task.isCancelled, !self.isPersistingGlobalSystemPrompts else { return }
-            self.applyGlobalSystemPromptSnapshot(snapshot)
-        }
-    }
-
-    func persistGlobalSystemPromptEntries(selectedEntryID: UUID?) {
-        globalSystemPromptReloadTask?.cancel()
-        isPersistingGlobalSystemPrompts = true
-        let snapshot = GlobalSystemPromptStore.save(
-            entries: globalSystemPromptEntries,
-            selectedEntryID: selectedEntryID
-        )
-        applyGlobalSystemPromptSnapshot(snapshot)
-        isPersistingGlobalSystemPrompts = false
-    }
-
-    func duplicateGlobalSystemPromptEntry(_ id: UUID) async -> GlobalSystemPromptEntry? {
-        guard !isPersistingGlobalSystemPrompts else { return nil }
-        globalSystemPromptReloadTask?.cancel()
-        isPersistingGlobalSystemPrompts = true
-        defer { isPersistingGlobalSystemPrompts = false }
-        let result = await Task.detached(priority: .userInitiated) {
-            GlobalSystemPromptStore.duplicateEntry(id: id)
-        }.value
-        applyGlobalSystemPromptSnapshot(result.snapshot)
-        return result.entry
-    }
-
-    func applyGlobalSystemPromptSnapshot(_ snapshot: GlobalSystemPromptSnapshot) {
-        if globalSystemPromptEntries != snapshot.entries {
-            globalSystemPromptEntries = snapshot.entries
-        }
-        if selectedGlobalSystemPromptEntryID != snapshot.selectedEntryID {
-            selectedGlobalSystemPromptEntryID = snapshot.selectedEntryID
-        }
-        if systemPrompt != snapshot.activeSystemPrompt {
-            systemPrompt = snapshot.activeSystemPrompt
-        }
     }
 
     func registerLifecycleObservers() {
@@ -204,43 +137,6 @@ extension ChatViewModel {
         guard let sessionID = currentSession?.id else { return }
         Task {
             await AppLocalNotificationCenter.shared.removeChatReplyNotifications(sessionID: sessionID)
-        }
-    }
-
-    func shouldPresentMemoryEmbeddingErrorAlert(message: String) -> Bool {
-        guard !message.isEmpty else { return false }
-        guard isApplicationActive else { return false }
-
-        let now = Date()
-        if showMemoryEmbeddingErrorAlert && memoryEmbeddingErrorMessage == message {
-            return false
-        }
-        if lastMemoryEmbeddingErrorSignature == message,
-           now.timeIntervalSince(lastMemoryEmbeddingErrorDate) < memoryEmbeddingErrorAlertCooldown {
-            return false
-        }
-
-        lastMemoryEmbeddingErrorSignature = message
-        lastMemoryEmbeddingErrorDate = now
-        return true
-    }
-
-    func presentMemoryRetryStoppedNotice() {
-        let message = NSLocalizedString(
-            "记忆系统嵌入已停止自动重试，请前往“记忆设置”检查嵌入模型。",
-            comment: "Non-modal notice shown when automatic memory embedding retry is stopped."
-        )
-        memoryRetryStoppedNoticeMessage = message
-
-        memoryRetryStoppedNoticeTask?.cancel()
-        memoryRetryStoppedNoticeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                self.memoryRetryStoppedNoticeMessage = nil
-                self.memoryRetryStoppedNoticeTask = nil
-            }
         }
     }
 
@@ -393,10 +289,8 @@ extension ChatViewModel {
                 self.applyActivatedChatModels(chatService.activatedChatModels)
                 self.speechModels = chatService.activatedSpeechModels
                 self.syncSpeechModelSelection()
-                self.syncEmbeddingModelSelection()
                 self.syncTitleGenerationModelSelection()
                 self.syncDailyPulseModelSelection()
-                self.syncConversationSummaryModelSelection()
                 self.syncReasoningSummaryModelSelection()
                 self.syncOCRModelSelection()
             }
@@ -468,59 +362,10 @@ extension ChatViewModel {
             }
             .store(in: &cancellables)
 
-        MemoryManager.shared.memoriesPublisher
-            .receive(on: DispatchQueue.main)
-            .assign(to: \.memories, on: self)
-            .store(in: &cancellables)
-
-        MemoryManager.shared.dimensionMismatchPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] (queryDim, indexDim) in
-                self?.dimensionMismatchMessage = String(
-                    format: NSLocalizedString("嵌入维度不匹配！\n查询维度: %d\n索引维度: %d\n\n请前往记忆库管理页面，点击“重新生成全部嵌入”按钮。", comment: ""),
-                    queryDim,
-                    indexDim
-                )
-                self?.showDimensionMismatchAlert = true
-            }
-            .store(in: &cancellables)
-
-        MemoryManager.shared.embeddingProgressPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] progress in
-                self?.memoryEmbeddingProgress = progress
-            }
-            .store(in: &cancellables)
-
-        MemoryManager.shared.embeddingErrorPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] error in
-                guard let self else { return }
-                let message = String(
-                    format: NSLocalizedString(
-                        "记忆已保存，但向量嵌入失败：%@",
-                        comment: "Message shown when memory text is stored but embedding generation failed."
-                    ),
-                    error.localizedDescription
-                )
-                self.presentMemoryRetryStoppedNotice()
-                guard self.shouldPresentMemoryEmbeddingErrorAlert(message: message) else { return }
-                self.memoryEmbeddingErrorMessage = message
-                self.showMemoryEmbeddingErrorAlert = true
-            }
-            .store(in: &cancellables)
-
         NotificationCenter.default.publisher(for: .syncBackgroundsUpdated)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshBackgroundImages()
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: .globalSystemPromptStoreDidChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.reloadGlobalSystemPromptEntries()
             }
             .store(in: &cancellables)
 
@@ -542,21 +387,11 @@ extension ChatViewModel {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: .conversationMemoryDidChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.reloadConversationMemoryState()
-            }
-            .store(in: &cancellables)
-
         syncSpeechModelSelection()
-        syncEmbeddingModelSelection()
         syncTitleGenerationModelSelection()
         syncDailyPulseModelSelection()
-        syncConversationSummaryModelSelection()
         syncReasoningSummaryModelSelection()
         syncOCRModelSelection()
-        reloadConversationMemoryState()
     }
 
     private func handleRoleplayBridgeAction(_ notification: Notification) {

@@ -38,8 +38,7 @@ struct MacChatView: View {
             MacChatTimeline(isActive: isVisible && workspace.canManageLocalModels, hasMessages: !workspace.messages.isEmpty, sendRevision: sendRevision,
                 onUserInteraction: { sendMotion.cancel() }, viewportHeight: $viewportHeight, viewportBounds: $viewportBounds) {
                     LazyVStack(alignment: .leading, spacing: 24) {
-                        MacContinuationHeader(model: workspace.contextCompression)
-                        if workspace.messages.isEmpty && workspace.contextCompression.presentation?.context == nil {
+                        if workspace.messages.isEmpty {
                             ContentUnavailableView {
                                 Label(NSLocalizedString("新的对话", comment: ""), systemImage: "bubble.left.and.bubble.right")
                             } description: {
@@ -102,7 +101,6 @@ struct MacChatView: View {
                                     Button(NSLocalizedString("删除", comment: ""), role: .destructive) { prepareDeletion(row.message, kind: .message) }
                                         .disabled(!workspace.canModifyCurrentHistory)
                                 }
-                            MacContinuationMessageLinks(model: workspace.contextCompression, messageID: row.id)
                         }
                     }
                     .padding()
@@ -121,13 +119,6 @@ struct MacChatView: View {
             }
             MacTTSPlaybackView(model: workspace.tts, isActive: workspace.canManageLocalModels).padding(.horizontal)
             MacRoleplayScriptHost(runtime: workspace.roleplayRuntime).padding(.horizontal)
-            if configuration.localModelPerformanceMonitorEnabled && workspace.selectedModelIsLocal && workspace.canManageLocalModels {
-                MacLocalResourceUsageView()
-            }
-            if let mode = workspace.temporaryChatMemoryMode {
-                Label(mode.isMemoryEnabled ? NSLocalizedString("允许使用记忆", comment: "") : NSLocalizedString("隔离记忆上下文", comment: ""), systemImage: "clock")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             if let model = workspace.activeQuestionnaireModel {
                 MacQuestionnaireView(model: model)
             } else {
@@ -172,7 +163,7 @@ struct MacChatView: View {
             id: GuidePageID(rawValue: "mac-chat-\(workspace.currentSession?.id.uuidString ?? "none")"),
             title: NSLocalizedString("对话", comment: ""),
             documents: [GuideDocumentReference(id: "macos-workspace", title: "macOS Workspace"),
-                        GuideDocumentReference(id: "local-models", title: "Local Models"), GuideDocumentReference(id: "tts", title: "Text to Speech"),
+                        GuideDocumentReference(id: "tts", title: "Text to Speech"),
                         GuideDocumentReference(id: "slash-commands", title: "Quick Commands")],
             isActive: chatGuideActive,
             settings: [
@@ -180,7 +171,6 @@ struct MacChatView: View {
                 .readOnly("has_audio_draft", label: NSLocalizedString("语音输入", comment: ""), value: { .bool(workspace.audioAttachment != nil) }),
                 .readOnly("tts_playback_status", label: NSLocalizedString("语音输出", comment: ""), value: { .string(workspace.tts.player.playbackState.status.rawValue) }),
                 .readOnly("importing_files", label: NSLocalizedString("处理中", comment: ""), value: { .bool(workspace.isImportingAttachments) }),
-                .readOnly("imported_local_models", label: NSLocalizedString("本地模型", comment: ""), value: { .int(workspace.incomingDocuments.importedModelCount) }),
                 .readOnly("requires_manual_send", label: NSLocalizedString("发送", comment: ""), value: { .bool(true) })
             ]
         )
@@ -196,7 +186,6 @@ struct MacChatView: View {
         .sheet(item: $rewritingMessage) { MacMessageRewriteView(target: $0) }
         .sheet(item: $speechSource) { MacSpeechRecorderView(model: workspace.speechInput, source: $0) }
         .sheet(isPresented: $showsRequestControls) { MacRequestRuntimeView(model: workspace.requestControls) }
-        .modifier(MacContextCompressionHost(model: workspace.contextCompression))
         .sheet(item: $slashDestination) { MacChatQuickActionSheet(target: $0) }
         .sheet(isPresented: $showsSlashModelPicker) { MacSlashCommandModelPicker() }
         .sheet(item: $linuxJobsTarget) { target in
@@ -207,7 +196,7 @@ struct MacChatView: View {
         }
         .sheet(isPresented: $showsBrowser) {
             NavigationStack {
-                MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.temporaryChatMemoryMode != nil,
+                MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.isTemporaryChat,
                                isActive: isVisible && workspace.canManageLocalModels, model: workspace.browser)
             }
         }
@@ -242,7 +231,6 @@ struct MacChatView: View {
               deletingMessage == nil, !showsRequestControls, !showsBrowser,
               linuxJobsTarget == nil, speechSource == nil, slashDestination == nil, !showsSlashModelPicker else { return false }
         return !workspace.tts.isExportPanelOpen && !workspace.backgrounds.isPresentingMedia && !workspace.fonts.isImportPanelOpen
-            && workspace.contextCompression.optionsSession == nil && !workspace.contextCompression.showsDetails
     }
 
     private func receiveDroppedDocuments(_ urls: [URL], _ location: CGPoint) -> Bool {
@@ -317,11 +305,8 @@ struct MacChatView: View {
             case .page(let page):
                 composerFocused = false
                 slashDestination = MacChatQuickActionDestination(page: page, sessionID: workspace.currentSession?.id,
-                    isTemporary: workspace.temporaryChatMemoryMode != nil)
+                    isTemporary: workspace.isTemporaryChat)
             case .temporary: workspace.slashCommands.actions.temporary(workspace: workspace)
-            case .compact:
-                if workspace.contextCompression.canCompress { composerFocused = false; workspace.contextCompression.openOptions() }
-                else { workspace.errorMessage = NSLocalizedString("当前会话没有可以压缩的对话内容。", comment: "") }
             case .retry: workspace.slashCommands.actions.retry(workspace: workspace)
             case .stop:
                 if workspace.isGenerating || workspace.isPreparingSend { workspace.stop() }
@@ -345,10 +330,6 @@ struct MacChatView: View {
                     MacAudioPreviewView(attachment: audio, isActive: isVisible && workspace.canManageLocalModels && speechSource == nil)
                     Button(NSLocalizedString("移除附件", comment: ""), role: .destructive) { workspace.removeAudioAttachment() }
                 }.buttonStyle(.borderless)
-            }
-            if workspace.incomingDocuments.importedModelCount > 0 {
-                Text(String(format: NSLocalizedString("已导入 %d 个本地模型，可在模型管理中查看。", comment: ""), workspace.incomingDocuments.importedModelCount))
-                    .font(.footnote).foregroundStyle(.secondary)
             }
             if !workspace.attachments.isEmpty {
                 ScrollView(.horizontal) {
@@ -419,7 +400,6 @@ struct MacChatView: View {
                     Button { showsRequestControls = true } label: {
                         Label(NSLocalizedString("聊天控制", comment: ""), systemImage: "slider.horizontal.3")
                     }.disabled(workspace.effectiveModelName == nil || !workspace.canEditRequestControls)
-                    MacContextCompressionEntry(model: workspace.contextCompression)
                     Button {
                         if let sessionID = workspace.currentSession?.id { linuxJobsTarget = MacLinuxJobsTarget(sessionID: sessionID) }
                     } label: { Label(NSLocalizedString("任务与终端", comment: ""), systemImage: "list.bullet.rectangle") }

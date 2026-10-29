@@ -82,22 +82,7 @@ extension ChatView {
                 let imageConfiguration = format == .png
                     ? await transcriptSwiftUIImageConfiguration(session: session)
                     : nil
-                let exportSource = await Task.detached(priority: .userInitiated) {
-                    let resolvedMessages: [ChatMessage]
-                    if let suppliedMessages = messages {
-                        resolvedMessages = suppliedMessages
-                    } else if let session {
-                        resolvedMessages = Persistence.loadMessages(for: session.id)
-                    } else {
-                        resolvedMessages = []
-                    }
-                    let continuationContext = try? session.flatMap {
-                        try Persistence.loadConversationContinuationContext(for: $0.id)
-                    }
-                    return (resolvedMessages, continuationContext)
-                }.value
-                let sourceMessages = exportSource.0
-                let continuationContext = exportSource.1
+                let sourceMessages = messages ?? session.map { ChatService.shared.messagesSnapshot(for: $0.id) } ?? []
 
                 let output: ChatTranscriptExportOutput
                 switch format {
@@ -110,7 +95,6 @@ extension ChatView {
                             session: session,
                             messages: sourceMessages,
                             includeReasoning: includeReasoning,
-                            continuationContext: continuationContext,
                             upToMessageID: upToMessageID,
                             selectedMessageIDs: selectedMessageIDs
                         )
@@ -133,7 +117,6 @@ extension ChatView {
                             format: format,
                             includeReasoning: includeReasoning,
                             includeSystemPrompt: includeSystemPrompt,
-                            continuationContext: continuationContext,
                             upToMessageID: upToMessageID,
                             selectedMessageIDs: selectedMessageIDs
                         )

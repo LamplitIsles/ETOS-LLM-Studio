@@ -226,21 +226,17 @@ public enum BackgroundGenerationAudioKeepAliveSettings {
 
 public enum AppConfigKey: String, CaseIterable, Sendable {
     case syncProviders = "sync.options.providers"
-    case syncSessions = "sync.options.sessions"
     case syncBackgrounds = "sync.options.backgrounds"
-    case syncMemories = "sync.options.memories"
     case syncMCPServers = "sync.options.mcpServers"
     case syncAudioFiles = "sync.options.audioFiles"
     case syncImageFiles = "sync.options.imageFiles"
     case syncSkills = "sync.options.skills"
     case syncShortcutTools = "sync.options.shortcutTools"
-    case syncWorldbooks = "sync.options.worldbooks"
     case syncFeedbackTickets = "sync.options.feedbackTickets"
     case syncDailyPulse = "sync.options.dailyPulse"
     case syncUsageStats = "sync.options.usageStats"
     case syncFontFiles = "sync.options.fontFiles"
     case syncAppStorage = "sync.options.appStorage"
-    case syncGlobalPrompt = "sync.options.globalPrompt"
     case syncAutoSyncEnabled = "sync.autoSyncEnabled"
     case cloudSyncEnabled = "cloudSync.enabled"
     case cloudSyncAutoSyncEnabled = "cloudSync.autoSyncEnabled"
@@ -256,12 +252,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case modelOrderRunnableModels = "modelOrder.runnableModels"
     case providerOrderIDs = "providerOrder.ids"
     case selectedRunnableModelID = "selectedRunnableModelID"
-    case lastActiveSessionID = "launch.lastActiveSessionID"
-    case lastAppBackgroundedAt = "launch.lastAppBackgroundedAt"
-    case localModelsEnabled = "localModels.enabled"
-    case localModelPerformanceMonitorEnabled = "localModels.performanceMonitor.enabled"
-    case localModelCacheEnabled = "localModels.cache.enabled"
-    case localModelKVCacheEnabled = "localModels.kvCache.enabled"
     case localLinuxEnabled = "localLinux.enabled"
     case localLinuxEnvironmentPrivacyEnabled = "localLinux.environmentPrivacy.enabled"
     case localLinuxCommandSafetyEnabled = "localLinux.commandSafety.enabled"
@@ -303,10 +293,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case aiTopP = "aiTopP"
     case aiTemperatureEnabled = "aiTemperatureEnabled"
     case aiTopPEnabled = "aiTopPEnabled"
-    case systemPrompt = "systemPrompt"
     case maxChatHistory = "maxChatHistory"
-    case enableContextCompressionReminder = "contextCompression.reminder.enabled"
-    case contextCompressionReminderTokenThreshold = "contextCompression.reminder.tokenThreshold"
     case enableStreaming = "enableStreaming"
     case maximumRequestRetries = "chat.maximumRequestRetries"
     case requestRetrySmartDetectionEnabled = "chat.retry.smartDetectionEnabled"
@@ -329,19 +316,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case enableVideoAnalysisForNonNativeModels = "video.analysis.enabled"
     case videoAnalysisModelIdentifier = "video.analysis.modelIdentifier"
 
-    case enableMemory = "enableMemory"
-    case enableMemoryWrite = "enableMemoryWrite"
-    case enableMemoryActiveRetrieval = "enableMemoryActiveRetrieval"
-    case memoryTopK = "memoryTopK"
-    case memorySendUpdateTime = "memory.sendUpdateTime"
-    case memoryReembeddingConcurrencyLimit = "memoryReembedding.concurrencyLimit"
-    case enableMemoryAutoConsolidation = "memory.autoConsolidation.enabled"
-    case memoryAutoConsolidationState = "memory.autoConsolidation.state"
-    case enableConversationMemoryAsync = "enableConversationMemoryAsync"
-    case conversationMemoryRecentLimit = "conversationMemoryRecentLimit"
-    case conversationMemoryRoundThreshold = "conversationMemoryRoundThreshold"
-    case conversationMemorySummaryMinIntervalMinutes = "conversationMemorySummaryMinIntervalMinutes"
-    case enableConversationProfileDailyUpdate = "enableConversationProfileDailyUpdate"
 
     case speechModelIdentifier = "speechModelIdentifier"
     case ttsModelIdentifier = "ttsModelIdentifier"
@@ -349,10 +323,8 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case ttsCacheNetworkAudioForReplay = "tts.cacheNetworkAudioForReplay"
     case ttsTextSelectionMode = "tts.textSelectionMode"
     case ttsFilterCodeAndHTML = "tts.filterCodeAndHTML"
-    case memoryEmbeddingModelIdentifier = "memoryEmbeddingModelIdentifier"
     case titleGenerationModelIdentifier = "titleGenerationModelIdentifier"
     case dailyPulseModelIdentifier = "dailyPulseModelIdentifier"
-    case conversationSummaryModelIdentifier = "conversationSummaryModelIdentifier"
     case reasoningSummaryModelIdentifier = "reasoningSummaryModelIdentifier"
     case ocrModelIdentifier = "ocrModelIdentifier"
     case imageGenerationModelIdentifier = "imageGenerationModelIdentifier"
@@ -404,21 +376,15 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case settingsColorfulIconsEnabled = "ui.settingsColorfulIconsEnabled"
     case iOSModelPickerGroupsByProvider = "ui.modelPicker.groupByProvider.iOS"
     case watchModelPickerGroupsByProvider = "ui.modelPicker.groupByProvider.watchOS"
-    case modelPickerPromptShortcutEnabled = "ui.modelPicker.promptShortcut.enabled"
-    case modelPickerWorldbookShortcutEnabled = "ui.modelPicker.worldbookShortcut.enabled"
     case iOSModelPickerExpandedGroupIDs = "ui.modelPicker.expandedGroupIDs.iOS"
     case watchModelPickerExpandedGroupIDs = "ui.modelPicker.expandedGroupIDs.watchOS"
     case modelPickerFolderPathsByProvider = "ui.modelPicker.folderPathsByProvider"
     case chatQuickActionIDs = "ui.chatQuickActionIDs"
-    case temporaryChatMemoryEnabled = "chat.temporary.memoryEnabled"
     case enableSlashCommands = "chat.slashCommands.enabled"
     case customChatSlashCommands = "chat.slashCommands.custom"
     case chatComposerStyle = "chat.composer.style"
     case iOSHardwareKeyboardReturnSendsMessage = "chat.composer.hardwareKeyboard.returnSendsMessage.iOS"
     case chatComposerDraft = "chat.composer.draft"
-    case restoreLastSessionOnLaunch = "launch.restoreLastSessionOnLaunchEnabled"
-    case restoreLastSessionOnlyIfRecent = "launch.restoreLastSessionOnlyIfRecent"
-    case restoreLastSessionWithinMinutes = "launch.restoreLastSessionWithinMinutes"
     case providerDetailGroupByMainstream = "providerDetail.groupByMainstream"
     case backgroundCropTarget = "backgroundCropTarget"
     case shortcutBridgeShortcutName = "shortcut.bridgeShortcutName"
@@ -447,23 +413,19 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     public var defaultValue: AppConfigValue {
         switch self {
         case .syncProviders,
-             .syncSessions,
              .syncBackgrounds,
              .syncMCPServers,
              .syncAudioFiles,
              .syncImageFiles,
              .syncSkills,
              .syncShortcutTools,
-             .syncWorldbooks,
              .syncFeedbackTickets,
              .syncDailyPulse,
              .syncUsageStats,
              .syncFontFiles,
-             .syncAppStorage,
-             .syncGlobalPrompt:
+             .syncAppStorage:
             return .bool(true)
-        case .syncMemories,
-             .syncAutoSyncEnabled,
+        case .syncAutoSyncEnabled,
              .cloudSyncEnabled,
              .cloudSyncAutoSyncEnabled,
              .syncBackupS3Enabled,
@@ -484,17 +446,8 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
         case .modelOrderRunnableModels,
              .providerOrderIDs:
             return .text("[]")
-        case .selectedRunnableModelID,
-             .lastActiveSessionID:
+        case .selectedRunnableModelID:
             return .text("")
-        case .lastAppBackgroundedAt:
-            return .real(0)
-        case .localModelsEnabled,
-             .localModelPerformanceMonitorEnabled,
-             .localModelKVCacheEnabled:
-            return .bool(false)
-        case .localModelCacheEnabled:
-            return .bool(true)
         case .localLinuxEnabled:
             return .bool(false)
         case .localLinuxEnvironmentPrivacyEnabled,
@@ -571,17 +524,11 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
              .automaticHistoryLoadingEnabled,
              .enableAutoSessionNaming:
             return .bool(true)
-        case .systemPrompt:
-            return .text("")
         case .messageRegexRules,
              .customChatSlashCommands:
             return .text("[]")
         case .maxChatHistory:
             return .integer(0)
-        case .enableContextCompressionReminder:
-            return .bool(true)
-        case .contextCompressionReminderTokenThreshold:
-            return .integer(ContextCompressionReminderPolicy.defaultTokenThreshold)
         case .enableStreaming:
             #if os(watchOS)
             return .bool(false)
@@ -627,35 +574,10 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
             return .integer(0)
             #endif
 
-        case .enableMemory,
-             .enableMemoryWrite,
-             .temporaryChatMemoryEnabled,
-             .memorySendUpdateTime,
-             .enableMemoryAutoConsolidation,
-             .enableConversationMemoryAsync,
-             .enableConversationProfileDailyUpdate:
-            return .bool(true)
-        case .enableMemoryActiveRetrieval:
-            return .bool(false)
-        case .memoryTopK:
-            return .integer(3)
-        case .memoryReembeddingConcurrencyLimit:
-            return .integer(1)
-        case .memoryAutoConsolidationState:
-            return .text("")
-        case .conversationMemoryRecentLimit:
-            return .integer(5)
-        case .conversationMemoryRoundThreshold:
-            return .integer(6)
-        case .conversationMemorySummaryMinIntervalMinutes:
-            return .integer(120)
-
         case .speechModelIdentifier,
              .ttsModelIdentifier,
-             .memoryEmbeddingModelIdentifier,
              .titleGenerationModelIdentifier,
              .dailyPulseModelIdentifier,
-             .conversationSummaryModelIdentifier,
              .reasoningSummaryModelIdentifier,
              .videoAnalysisModelIdentifier,
              .imageGenerationModelIdentifier:
@@ -765,9 +687,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
         case .iOSModelPickerGroupsByProvider,
              .watchModelPickerGroupsByProvider:
             return .bool(true)
-        case .modelPickerPromptShortcutEnabled,
-             .modelPickerWorldbookShortcutEnabled:
-            return .bool(false)
         case .iOSModelPickerExpandedGroupIDs,
              .watchModelPickerExpandedGroupIDs:
             return .text("[]")
@@ -776,26 +695,18 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
         case .chatQuickActionIDs:
             return .text([
                 "temporaryChat",
-                "contextCompression",
                 "settings",
                 "toolCenter",
                 "dailyPulse",
                 "usageAnalytics",
-                "memory",
                 "mcp",
                 "agentSkills",
                 "shortcuts",
                 "roleplay",
-                "worldbook",
                 "extendedFeatures",
                 "browser",
                 "localTerminal"
             ].joined(separator: ","))
-        case .restoreLastSessionOnLaunch,
-             .restoreLastSessionOnlyIfRecent:
-            return .bool(false)
-        case .restoreLastSessionWithinMinutes:
-            return .integer(LaunchSessionPolicy.defaultRestoreWindowMinutes)
         case .providerDetailGroupByMainstream:
             return .bool(true)
         case .backgroundCropTarget:
@@ -845,8 +756,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     public var participatesInSync: Bool {
         switch self {
         case .chatComposerDraft,
-             .lastActiveSessionID,
-             .lastAppBackgroundedAt,
              .syncAutoSyncEnabled,
              .cloudSyncEnabled,
              .cloudSyncAutoSyncEnabled,
@@ -873,17 +782,12 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
              .localDebugLastServerAddress,
              .iOSModelPickerExpandedGroupIDs,
              .watchModelPickerExpandedGroupIDs,
-             .memoryAutoConsolidationState,
              .appLockEnabled,
              .appLockTimeoutSeconds,
              .appLockBiometricEnabled,
              .databaseEncryptionEnabled:
             return false
-        case .localModelsEnabled,
-             .localModelPerformanceMonitorEnabled,
-             .localModelCacheEnabled,
-             .localModelKVCacheEnabled,
-             .localLinuxDefaultMountAccess,
+        case .localLinuxDefaultMountAccess,
              .localLinuxDefaultShellPath:
             return false
         default:

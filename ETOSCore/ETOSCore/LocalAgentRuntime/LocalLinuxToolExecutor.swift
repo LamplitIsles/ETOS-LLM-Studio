@@ -1,3 +1,4 @@
+#if os(macOS)
 // ============================================================================
 // LocalLinuxToolExecutor.swift
 // ============================================================================
@@ -451,3 +452,4 @@ public actor LocalLinuxToolExecutor {
         return string
     }
 }
+#endif

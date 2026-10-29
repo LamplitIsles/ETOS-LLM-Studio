@@ -142,13 +142,6 @@ extension ChatService {
         return messagesSnapshot(for: sessionID)
     }
 
-    func persistMessages(_ messages: [ChatMessage], for sessionID: UUID) {
-        storeRuntimeMessagesSnapshot(messages, for: sessionID)
-        guard !isTemporaryChatEnabled(for: sessionID) else { return }
-        let persisted = normalizedMessagesForPersistence(messages)
-        Persistence.saveMessages(persisted, for: sessionID)
-    }
-
     func handleStandardResponse(
         request: URLRequest,
         provider: Provider,
@@ -160,11 +153,7 @@ extension ChatService {
         availableTools: [InternalToolDefinition]?,
         aiTemperature: Double,
         aiTopP: Double,
-        systemPrompt: String,
         maxChatHistory: Int,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool,
         includeSystemTime: Bool,
         systemTimeInjectionPosition: SystemTimeInjectionPosition,
         enablePeriodicTimeLandmark: Bool,
@@ -243,12 +232,8 @@ extension ChatService {
                     availableTools: availableTools,
                     aiTemperature: aiTemperature,
                     aiTopP: aiTopP,
-                    systemPrompt: systemPrompt,
                     maxChatHistory: maxChatHistory,
                     enableStreaming: false,
-                    enableMemory: enableMemory,
-                    enableMemoryWrite: enableMemoryWrite,
-                    enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                     includeSystemTime: includeSystemTime,
                     systemTimeInjectionPosition: systemTimeInjectionPosition,
                     enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -311,11 +296,7 @@ extension ChatService {
                     availableTools: availableTools,
                     aiTemperature: aiTemperature,
                     aiTopP: aiTopP,
-                    systemPrompt: systemPrompt,
                     maxChatHistory: maxChatHistory,
-                    enableMemory: enableMemory,
-                    enableMemoryWrite: enableMemoryWrite,
-                    enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                     includeSystemTime: includeSystemTime,
                     systemTimeInjectionPosition: systemTimeInjectionPosition,
                     enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,

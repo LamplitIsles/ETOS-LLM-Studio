@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 解析 OpenMinis iOS/Android 导出的会话 ZIP/JSON、Provider JSON 与 MCP
+// 解析 OpenMinis 导出的 Provider JSON 与 MCP
 // JSON。归档只读取安全路径和受限大小的相关文件；Skill 包只识别，不恢复执行状态。
 // ============================================================================
 
@@ -17,9 +17,6 @@ extension ThirdPartyImportService {
         var skills: [SyncedSkillBundle]
         var recognizedSkillNames: [String]
         var containsSensitiveCredentials: Bool
-        var messageCount: Int
-        var attachmentPlaceholderCount: Int
-        var degradedItemCount: Int
     }
 
     private struct OpenMinisInputFile {
@@ -30,14 +27,12 @@ extension ThirdPartyImportService {
     static func parseOpenMinis(fileURL: URL) throws -> OpenMinisParsedPayload {
         let files = try loadOpenMinisInputFiles(fileURL)
         var providers: [Provider] = []
-        var sessions: [SyncedSession] = []
         var mcpServers: [MCPServerConfiguration] = []
         var warnings: [String] = []
         var containsSensitiveCredentials = false
 
         let skills = parseOpenMinisSkills(files)
 
-        let metadataByDirectory = openMinisSessionMetadata(files)
         for file in files {
             let lowerPath = file.path.lowercased()
             if lowerPath.hasSuffix("/skill.md") || lowerPath == "skill.md" {
@@ -70,22 +65,6 @@ extension ThirdPartyImportService {
                 continue
             }
 
-            if let parsedSessions = parseOpenMinisIOSSessions(json), !parsedSessions.isEmpty {
-                sessions.append(contentsOf: parsedSessions)
-                continue
-            }
-
-            if lowerPath.hasSuffix("messages.json"), let messages = json as? [[String: Any]] {
-                let directory = (file.path as NSString).deletingLastPathComponent
-                let metadata = metadataByDirectory[directory] ?? [:]
-                if let session = parseOpenMinisAndroidSession(
-                    messages: messages,
-                    metadata: metadata,
-                    directory: directory
-                ) {
-                    sessions.append(session)
-                }
-            }
         }
 
         if !skills.isEmpty {
@@ -96,27 +75,21 @@ extension ThirdPartyImportService {
                 )
             )
         }
-        if providers.isEmpty && sessions.isEmpty && mcpServers.isEmpty && skills.isEmpty {
+        if providers.isEmpty && mcpServers.isEmpty && skills.isEmpty {
             throw ThirdPartyImportError.unsupportedBackupFormat(
-                reason: NSLocalizedString("未识别到 OpenMinis 会话、Provider、MCP 或 Skill 内容。", comment: "OpenMinis no recognized data")
+                reason: NSLocalizedString("未识别到 OpenMinis Provider、MCP 或 Skill 内容。", comment: "OpenMinis no recognized data")
             )
         }
 
-        let deduplicatedSessions = dedupeOpenMinisSessions(sessions)
-        let historyCounts = openMinisHistoryCounts(deduplicatedSessions)
         return OpenMinisParsedPayload(
             payload: ParsedPayload(
                 providers: dedupeProviders(providers),
-                sessions: deduplicatedSessions,
                 warnings: warnings
             ),
             mcpServers: dedupeOpenMinisMCPServers(mcpServers),
             skills: skills,
             recognizedSkillNames: skills.map(\.name).sorted(),
-            containsSensitiveCredentials: containsSensitiveCredentials,
-            messageCount: historyCounts.messages,
-            attachmentPlaceholderCount: historyCounts.attachments,
-            degradedItemCount: historyCounts.degraded
+            containsSensitiveCredentials: containsSensitiveCredentials
         )
     }
 
@@ -245,187 +218,6 @@ extension ThirdPartyImportService {
         return components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
-    private static func parseOpenMinisIOSSessions(_ json: Any) -> [SyncedSession]? {
-        let rawSessions: [[String: Any]]
-        if let array = json as? [[String: Any]], array.contains(where: { $0["messages"] != nil }) {
-            rawSessions = array
-        } else if let root = json as? [String: Any], let sessions = root["sessions"] as? [[String: Any]] {
-            rawSessions = sessions
-        } else {
-            return nil
-        }
-
-        return rawSessions.enumerated().compactMap { index, raw in
-            let sessionSeed = nonEmpty(string(raw["id"]))
-                ?? nonEmpty(string(raw["title"]))
-                ?? "index-\(index)"
-            let messages = normalizeJSONArray(raw["messages"]).enumerated().compactMap { messageIndex, message in
-                parseOpenMinisIOSMessage(
-                    message,
-                    sessionSeed: sessionSeed,
-                    messageIndex: messageIndex
-                )
-            }
-            guard !messages.isEmpty else { return nil }
-            let session = ChatSession(
-                id: stableUUID(from: "openminis-ios-session:\(sessionSeed)") ?? UUID(),
-                name: nonEmpty(string(raw["title"]))
-                    ?? String(format: NSLocalizedString("OpenMinis 对话 %d", comment: "OpenMinis session fallback title"), index + 1),
-                preferredModelIdentifier: nonEmpty(string(raw["modelId"])),
-                isTemporary: false
-            )
-            return SyncedSession(session: session, messages: messages)
-        }
-    }
-
-    private static func parseOpenMinisIOSMessage(
-        _ raw: Any,
-        sessionSeed: String,
-        messageIndex: Int
-    ) -> ChatMessage? {
-        guard let message = dictionary(raw) else { return nil }
-        let role = mapMessageRole(string(message["role"]))
-        let parts = normalizeJSONArray(message["parts"])
-        var contentParts: [String] = []
-        for rawPart in parts {
-            guard let part = dictionary(rawPart) else { continue }
-            switch normalizedTypeString(string(part["type"])) {
-            case "text":
-                if let text = nonEmpty(string(part["text"]) ?? string(part["value"])) { contentParts.append(text) }
-            case "tool-use", "tool_use":
-                let name = nonEmpty(string(part["name"])) ?? NSLocalizedString("未知工具", comment: "Unknown imported tool")
-                contentParts.append(String(format: NSLocalizedString("[工具调用：%@]", comment: "Imported tool use placeholder"), name))
-            case "tool-result", "tool_result":
-                let output = nonEmpty(string(part["output"]) ?? string(part["snapshot"]))
-                contentParts.append(output.map { String(format: NSLocalizedString("[工具结果]\n%@", comment: "Imported tool result placeholder"), $0) }
-                    ?? NSLocalizedString("[工具结果]", comment: "Imported empty tool result placeholder"))
-            case "media":
-                contentParts.append(NSLocalizedString("[附件未包含在 OpenMinis 导出中]", comment: "OpenMinis missing attachment placeholder"))
-            default:
-                if let text = flattenText(part) { contentParts.append(text) }
-            }
-        }
-        if contentParts.isEmpty, let content = flattenText(message["content"]) {
-            contentParts.append(content)
-        }
-        let content = contentParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty else { return nil }
-        let messageSeed = nonEmpty(string(message["id"])) ?? "index-\(messageIndex)"
-        return ChatMessage(
-            id: stableUUID(from: "openminis-ios-message:\(sessionSeed):\(messageSeed)") ?? UUID(),
-            role: role,
-            content: content,
-            requestedAt: parseDate(message["createdAt"] ?? message["created_at"]),
-            reasoningContent: nonEmpty(string(message["reasoning"])),
-            tokenUsage: openMinisTokenUsage(message["tokenUsage"])
-        )
-    }
-
-    private static func openMinisSessionMetadata(_ files: [OpenMinisInputFile]) -> [String: [String: Any]] {
-        files.reduce(into: [:]) { result, file in
-            guard file.path.lowercased().hasSuffix("session.json"),
-                  let root = tryParseDictionaryJSON(file.data) else { return }
-            result[(file.path as NSString).deletingLastPathComponent] = root
-        }
-    }
-
-    private static func parseOpenMinisAndroidSession(
-        messages: [[String: Any]],
-        metadata: [String: Any],
-        directory: String
-    ) -> SyncedSession? {
-        let sessionSeed = nonEmpty(string(metadata["id"]))
-            ?? nonEmpty(directory)
-            ?? nonEmpty(string(metadata["title"]))
-            ?? "root"
-        let parsedMessages = messages.enumerated().compactMap { messageIndex, raw -> ChatMessage? in
-            let role = mapMessageRole(string(raw["role"]))
-            let rawContent = string(raw["content"]) ?? ""
-            let content: String
-            if let data = rawContent.data(using: .utf8),
-               let decoded = try? JSONSerialization.jsonObject(with: data),
-               let parts = decoded as? [Any] {
-                let flattened = parts.compactMap(openMinisAndroidPartText).joined(separator: "\n")
-                content = flattened.isEmpty ? rawContent : flattened
-            } else {
-                content = rawContent
-            }
-            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            let messageSeed = nonEmpty(string(raw["id"])) ?? "index-\(messageIndex)"
-            return ChatMessage(
-                id: stableUUID(from: "openminis-android-message:\(sessionSeed):\(messageSeed)") ?? UUID(),
-                role: role,
-                content: content,
-                requestedAt: parseDate(raw["created_at"])
-            )
-        }
-        guard !parsedMessages.isEmpty else { return nil }
-        let id = stableUUID(from: "openminis-android-session:\(sessionSeed)") ?? UUID()
-        let title = nonEmpty(string(metadata["title"])) ?? NSLocalizedString("OpenMinis Android 对话", comment: "OpenMinis Android session fallback title")
-        return SyncedSession(
-            session: ChatSession(
-                id: id,
-                name: title,
-                preferredModelIdentifier: nonEmpty(string(metadata["model_id"])),
-                isTemporary: false
-            ),
-            messages: parsedMessages
-        )
-    }
-
-    private static func openMinisTokenUsage(_ raw: Any?) -> MessageTokenUsage? {
-        guard let usage = dictionary(raw) else { return nil }
-        let parsed = MessageTokenUsage(
-            promptTokens: int(usage["inputTokens"]),
-            completionTokens: int(usage["outputTokens"]),
-            totalTokens: nil,
-            cacheWriteTokens: int(usage["cacheCreationTokens"]),
-            cacheReadTokens: int(usage["cacheReadTokens"])
-        )
-        return parsed.hasAnyData ? parsed : nil
-    }
-
-    private static func openMinisAndroidPartText(_ raw: Any) -> String? {
-        guard let part = dictionary(raw) else { return flattenText(raw) }
-        let type = normalizedTypeString(string(part["type"]))
-        let value = part["value"]
-        switch type {
-        case "text":
-            return flattenText(value)
-        case "mediaref":
-            let media = dictionary(value) ?? [:]
-            let name = nonEmpty(string(media["originalFileName"]))
-                ?? nonEmpty(string(media["relativePath"]))
-                ?? NSLocalizedString("附件", comment: "OpenMinis Android attachment fallback name")
-            let mime = nonEmpty(string(media["mimeType"]))
-            if let mime {
-                return String(
-                    format: NSLocalizedString("[附件未包含在 OpenMinis 导出中：%@（%@）]", comment: "OpenMinis Android missing attachment placeholder"),
-                    name,
-                    mime
-                )
-            }
-            return String(
-                format: NSLocalizedString("[附件未包含在 OpenMinis 导出中：%@]", comment: "OpenMinis Android missing attachment placeholder"),
-                name
-            )
-        case "tooluse":
-            let tool = dictionary(value) ?? [:]
-            let name = nonEmpty(string(tool["name"])) ?? NSLocalizedString("未知工具", comment: "Unknown imported tool")
-            let input = nonEmpty(string(tool["input"]))
-            let title = String(format: NSLocalizedString("[工具调用：%@]", comment: "Imported tool use placeholder"), name)
-            return input.map { title + "\n" + $0 } ?? title
-        case "toolresult":
-            let result = dictionary(value) ?? [:]
-            let output = nonEmpty(string(result["output"]))
-            return output.map {
-                String(format: NSLocalizedString("[工具结果]\n%@", comment: "Imported tool result placeholder"), $0)
-            } ?? NSLocalizedString("[工具结果]", comment: "Imported empty tool result placeholder")
-        default:
-            return flattenText(value ?? part)
-        }
-    }
-
     private static func parseOpenMinisProvider(
         _ root: [String: Any],
         containsSensitiveCredentials: inout Bool,
@@ -549,11 +341,6 @@ extension ThirdPartyImportService {
         }
     }
 
-    private static func dedupeOpenMinisSessions(_ sessions: [SyncedSession]) -> [SyncedSession] {
-        var seen = Set<UUID>()
-        return sessions.filter { seen.insert($0.session.id).inserted }
-    }
-
     private static func dedupeOpenMinisMCPServers(_ servers: [MCPServerConfiguration]) -> [MCPServerConfiguration] {
         var seen = Set<String>()
         return servers.filter { server in
@@ -588,32 +375,6 @@ extension ThirdPartyImportService {
         return nil
     }
 
-    private static func openMinisHistoryCounts(
-        _ sessions: [SyncedSession]
-    ) -> (messages: Int, attachments: Int, degraded: Int) {
-        let attachmentMarkers = [
-            NSLocalizedString("[附件未包含在 OpenMinis 导出中", comment: "OpenMinis missing attachment marker")
-        ]
-        let degradedMarkers = attachmentMarkers + [
-            NSLocalizedString("[工具调用：", comment: "OpenMinis imported tool use marker"),
-            NSLocalizedString("[工具结果]", comment: "OpenMinis imported tool result marker")
-        ]
-        let contents = sessions.flatMap(\.messages).map(\.content)
-        let attachments = contents.reduce(0) { total, content in
-            total + attachmentMarkers.reduce(0) { $0 + content.numberOfOccurrences(of: $1) }
-        }
-        let degraded = contents.reduce(0) { total, content in
-            total + degradedMarkers.reduce(0) { $0 + content.numberOfOccurrences(of: $1) }
-        }
-        return (contents.count, attachments, degraded)
-    }
-}
-
-private extension String {
-    func numberOfOccurrences(of value: String) -> Int {
-        guard !value.isEmpty else { return 0 }
-        return components(separatedBy: value).count - 1
-    }
 }
 
 private enum OpenMinisImportBoundary {

@@ -14,18 +14,11 @@ import SQLite3
 
 @Suite("ChatService Integration Tests", .serialized)
 struct ChatServiceTests {
-    var memoryManager: MemoryManager!
     var mockAdapter: MockAPIAdapter!
     var chatService: ChatService!
     var dummyModel: RunnableModel!
 
     init() async {
-        let existingSessions = Persistence.loadChatSessions()
-        for session in existingSessions {
-            Persistence.deleteSessionArtifacts(sessionID: session.id)
-        }
-        Persistence.saveChatSessions([])
-
         for provider in ConfigLoader.loadProviders() {
             ConfigLoader.deleteProvider(provider)
         }
@@ -58,16 +51,13 @@ struct ChatServiceTests {
             ShortcutToolManager.shared.setChatToolsEnabled(false)
         }
 
-        memoryManager = MemoryManager(embeddingGenerator: MemoryManagerTests.MockEmbeddingGenerator())
-        await memoryManager.waitForInitialization()
-
         mockAdapter = MockAPIAdapter()
 
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
         let mockSession = URLSession(configuration: config)
 
-        chatService = ChatService(adapters: ["openai-compatible": mockAdapter], memoryManager: memoryManager, urlSession: mockSession)
+        chatService = ChatService(adapters: ["openai-compatible": mockAdapter], urlSession: mockSession)
 
         dummyModel = RunnableModel(
             provider: seededProviders[0],
@@ -77,45 +67,23 @@ struct ChatServiceTests {
     }
 
     func cleanup() async {
-        let allMems = await memoryManager.getAllMemories()
-        if !allMems.isEmpty {
-            await memoryManager.deleteMemories(allMems)
-        }
         Persistence.clearRequestLogs()
         Persistence.deleteAppConfig(key: AppConfigKey.requestLogEnabled.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.requestLogPlainMessageEnabled.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.enableReasoningSummary.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.speechModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.ttsModelIdentifier.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.memoryEmbeddingModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.titleGenerationModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.dailyPulseModelIdentifier.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.conversationSummaryModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.reasoningSummaryModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.reasoningContentEchoMode.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.ocrModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.imageGenerationModelIdentifier.rawValue)
         Persistence.deleteAppConfig(key: AppConfigKey.imageGenerationParameterExpressionsByModel.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.enableMemory.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.enableMemoryWrite.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.enableMemoryActiveRetrieval.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.memoryTopK.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.memorySendUpdateTime.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.enableConversationMemoryAsync.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.conversationMemoryRecentLimit.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.conversationMemoryRoundThreshold.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.conversationMemorySummaryMinIntervalMinutes.rawValue)
-        Persistence.deleteAppConfig(key: AppConfigKey.enableConversationProfileDailyUpdate.rawValue)
-        _ = ConversationMemoryManager.clearAllSessionSummaries()
-        try? ConversationMemoryManager.clearUserProfile()
         MockURLProtocol.mockResponses = [:]
         mockAdapter.receivedMessages = nil
         mockAdapter.receivedTitleMessages = nil
         mockAdapter.receivedReasoningSummaryMessages = nil
-        mockAdapter.receivedConversationSummaryMessages = nil
-        mockAdapter.receivedConversationProfileMessages = nil
-        mockAdapter.receivedContextCompressionMessages = nil
-        mockAdapter.contextCompressionRequestCount = 0
         mockAdapter.receivedTools = nil
         mockAdapter.receivedAudioAttachments = nil
         mockAdapter.receivedImageAttachments = nil
@@ -149,13 +117,6 @@ struct ChatServiceTests {
         let summaryHTTPResponse = HTTPURLResponse(url: summaryURL, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
         let summaryJSON = #"{"choices":[{"message":{"content":"\#(summary)"}}]}"#.data(using: .utf8) ?? Data()
         MockURLProtocol.mockResponses[summaryURL] = .success((summaryHTTPResponse, summaryJSON))
-    }
-
-    func setupMockConversationProfileResponse(profile: String) {
-        let profileURL = URL(string: "https://fake.url/conversation-profile")!
-        let profileHTTPResponse = HTTPURLResponse(url: profileURL, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
-        let profileJSON = #"{"choices":[{"message":{"content":"\#(profile)"}}]}"#.data(using: .utf8) ?? Data()
-        MockURLProtocol.mockResponses[profileURL] = .success((profileHTTPResponse, profileJSON))
     }
 
     func createPermanentTestSession(name: String = "附件文本化测试") -> ChatSession {

@@ -54,7 +54,6 @@ public final class AppToolUIRequestDeliveryReceipt: @unchecked Sendable {
 public enum AppToolSQLiteDatabase: String, CaseIterable, Identifiable, Hashable, Sendable {
     case chat
     case config
-    case memory
 
     public var id: String { rawValue }
 
@@ -64,8 +63,6 @@ public enum AppToolSQLiteDatabase: String, CaseIterable, Identifiable, Hashable,
             return NSLocalizedString("聊天", comment: "App tool SQLite database display name")
         case .config:
             return NSLocalizedString("配置", comment: "App tool SQLite database display name")
-        case .memory:
-            return NSLocalizedString("记忆", comment: "App tool SQLite database display name")
         }
     }
 }

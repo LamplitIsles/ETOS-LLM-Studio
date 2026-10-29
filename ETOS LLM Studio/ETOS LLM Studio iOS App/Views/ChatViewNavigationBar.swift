@@ -279,16 +279,8 @@ extension ChatView {
         awaitsChatPickerDismissalForMessageJump = false
         activeChatPickerDetent = .medium
         quickModelSettingsTarget = nil
-        isQuickPromptEditorPresented = false
-        isQuickWorldbookBindingPresented = false
         modelPickerShowsAllModels = false
         resetSessionPickerSearchState()
-        if let pendingSession = pendingContextCompressionSourceSession {
-            pendingContextCompressionSourceSession = nil
-            DispatchQueue.main.async {
-                contextCompressionSourceSession = pendingSession
-            }
-        }
         if let destination = chatPickerDismissDestination {
             chatPickerDismissDestination = nil
             navigationDestination = destination

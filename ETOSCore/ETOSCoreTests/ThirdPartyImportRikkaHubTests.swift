@@ -43,9 +43,7 @@ struct ThirdPartyImportRikkaHubTests {
         )
 
         #expect(prepared.package.options.contains(.providers))
-        #expect(!prepared.package.options.contains(.sessions))
         #expect(prepared.package.providers.count == 1)
-        #expect(prepared.package.sessions.isEmpty)
 
         let provider = prepared.package.providers[0]
         #expect(provider.name == "Gemini 官方")

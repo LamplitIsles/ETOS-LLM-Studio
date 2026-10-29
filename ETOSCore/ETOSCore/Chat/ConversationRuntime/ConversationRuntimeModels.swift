@@ -134,13 +134,8 @@ public struct ConversationRunRequestConfiguration: Codable, Hashable, Sendable {
     public var modelIdentifier: String?
     public var temperature: Double
     public var topP: Double
-    public var systemPrompt: String
     public var maxChatHistory: Int
     public var enableStreaming: Bool
-    public var enhancedPrompt: String?
-    public var enableMemory: Bool
-    public var enableMemoryWrite: Bool
-    public var enableMemoryActiveRetrieval: Bool
     public var includeSystemTime: Bool
     public var systemTimeInjectionPosition: SystemTimeInjectionPosition
     public var enablePeriodicTimeLandmark: Bool
@@ -157,13 +152,8 @@ public struct ConversationRunRequestConfiguration: Codable, Hashable, Sendable {
         modelIdentifier: String? = nil,
         temperature: Double = 1,
         topP: Double = 1,
-        systemPrompt: String = "",
         maxChatHistory: Int = 0,
         enableStreaming: Bool = true,
-        enhancedPrompt: String? = nil,
-        enableMemory: Bool = true,
-        enableMemoryWrite: Bool = true,
-        enableMemoryActiveRetrieval: Bool = false,
         includeSystemTime: Bool = false,
         systemTimeInjectionPosition: SystemTimeInjectionPosition = .front,
         enablePeriodicTimeLandmark: Bool = false,
@@ -177,13 +167,8 @@ public struct ConversationRunRequestConfiguration: Codable, Hashable, Sendable {
         self.modelIdentifier = modelIdentifier
         self.temperature = temperature
         self.topP = topP
-        self.systemPrompt = systemPrompt
         self.maxChatHistory = max(0, maxChatHistory)
         self.enableStreaming = enableStreaming
-        self.enhancedPrompt = enhancedPrompt
-        self.enableMemory = enableMemory
-        self.enableMemoryWrite = enableMemoryWrite
-        self.enableMemoryActiveRetrieval = enableMemoryActiveRetrieval
         self.includeSystemTime = includeSystemTime
         self.systemTimeInjectionPosition = systemTimeInjectionPosition
         self.enablePeriodicTimeLandmark = enablePeriodicTimeLandmark

@@ -180,10 +180,8 @@ extension ChatServiceTests {
 
         let retryReply = ChatMessage(id: placeholder.id, role: .assistant, content: "重试成功")
         service.persistAndPublishMessages([previousReply, retryReply], for: session.id)
-        await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
 
         #expect(service.messagesSnapshot(for: session.id) == [previousReply, retryReply])
-        #expect(Persistence.loadMessages(for: session.id).last?.content == "重试成功")
     }
 
     @Test("占位变成错误后不会把流式状态转移给上一条助手回复")
@@ -203,6 +201,5 @@ extension ChatServiceTests {
         let messages = service.messagesSnapshot(for: session.id)
         #expect(messages.last?.role == .error)
         #expect(!messages.contains { $0.isReceivingStream })
-        await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
     }
 }

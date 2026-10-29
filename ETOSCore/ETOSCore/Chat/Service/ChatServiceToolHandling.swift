@@ -99,129 +99,6 @@ extension ChatService {
             resultDisposition = execution.resultDisposition
             shouldAwaitUserSupplement = execution.shouldAwaitUserSupplement
 
-        case "save_memory":
-            guard !isTemporaryChatMemoryIsolated(for: sessionID) else {
-                content = policyDeniedText(toolCall.toolName)
-                displayResult = content
-                break
-            }
-
-            struct SaveMemoryArgs: Decodable {
-                let content: String
-                let kind: String?
-                let source: String?
-                let importance: Double?
-                let confidence: Double?
-                let entities: [String]?
-                let valid_from: String?
-                let valid_until: String?
-            }
-            if let argsData = toolCall.arguments.data(using: .utf8),
-               let args = try? JSONDecoder().decode(SaveMemoryArgs.self, from: argsData) {
-                let formatter = ISO8601DateFormatter()
-                let source: MemorySource = args.source == "assistant_action" ? .assistantAction : .userStatement
-                await self.memoryManager.addMemory(
-                    MemoryWriteRequest(
-                        content: args.content,
-                        kind: MemoryKind(rawValue: args.kind ?? "") ?? .semantic,
-                        source: source,
-                        importance: args.importance ?? 0.5,
-                        confidence: args.confidence ?? 1,
-                        entities: args.entities ?? [],
-                        validFrom: args.valid_from.flatMap(formatter.date(from:)),
-                        validUntil: args.valid_until.flatMap(formatter.date(from:)),
-                        sourceSessionID: sessionID,
-                        sourceMessageID: triggeringMessageID,
-                        sourceToolName: "save_memory"
-                    )
-                )
-                content = String(format: NSLocalizedString("成功将内容 \"%@\" 存入记忆。", comment: "Save memory tool result"), args.content)
-                displayResult = content
-                logger.info("  - 记忆保存成功。")
-                scheduleLongTermMemoryConsolidationIfNeeded(
-                    for: sessionID,
-                    enableMemory: true
-                )
-            } else {
-                content = NSLocalizedString("错误：无法解析 save_memory 的参数。", comment: "Save memory args parse error")
-                displayResult = content
-                logger.error("  - 无法解析 save_memory 的参数: \(toolCall.arguments)")
-            }
-
-        case "search_memory":
-            guard !isTemporaryChatMemoryIsolated(for: sessionID) else {
-                content = policyDeniedText(toolCall.toolName)
-                displayResult = content
-                break
-            }
-
-            struct SearchMemoryArgs: Decodable {
-                let mode: String
-                let query: String
-                let count: Int?
-                let include_explanation: Bool?
-            }
-
-            guard let argsData = toolCall.arguments.data(using: .utf8),
-                  let args = try? JSONDecoder().decode(SearchMemoryArgs.self, from: argsData) else {
-                content = NSLocalizedString("错误：无法解析 search_memory 的参数。请提供 mode、query，并可选 count。", comment: "Search memory args parse error")
-                displayResult = content
-                logger.error("  - 无法解析 search_memory 的参数: \(toolCall.arguments)")
-                break
-            }
-
-            let mode = args.mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let query = args.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !query.isEmpty else {
-                content = NSLocalizedString("错误：search_memory 的 query 不能为空。", comment: "Search memory empty query error")
-                displayResult = content
-                logger.error("  - search_memory query 为空。")
-                break
-            }
-
-            let requestedCount = max(1, args.count ?? resolvedMemoryTopK())
-            var resolvedMemories: [MemoryItem] = []
-            var explanations: [UUID: MemoryRetrievalExplanation] = [:]
-            switch mode {
-            case "hybrid":
-                if args.include_explanation == true {
-                    let results = await memoryManager.searchMemoriesHybridExplained(query: query, topK: requestedCount)
-                    resolvedMemories = results.map(\.memory)
-                    explanations = Dictionary(uniqueKeysWithValues: results.map { ($0.memory.id, $0.explanation) })
-                } else {
-                    resolvedMemories = await memoryManager.searchMemoriesHybrid(query: query, topK: requestedCount)
-                }
-            case "vector":
-                resolvedMemories = await memoryManager.searchMemories(query: query, topK: requestedCount)
-            case "keyword":
-                if args.include_explanation == true {
-                    let results = await memoryManager.searchMemoriesByKeywordExplained(query: query, topK: requestedCount)
-                    resolvedMemories = results.map(\.memory)
-                    explanations = Dictionary(uniqueKeysWithValues: results.map { ($0.memory.id, $0.explanation) })
-                } else {
-                    resolvedMemories = await memoryManager.searchMemoriesByKeyword(query: query, topK: requestedCount)
-                }
-            default:
-                content = NSLocalizedString("错误：search_memory 的 mode 仅支持 hybrid、vector 或 keyword。", comment: "Search memory unsupported mode error")
-                displayResult = content
-                logger.error("  - search_memory mode 不支持: \(mode)")
-                break
-            }
-
-            if !content.isEmpty {
-                break
-            }
-
-            content = serializeMemorySearchResult(
-                mode: mode,
-                query: query,
-                requestedCount: requestedCount,
-                memories: resolvedMemories,
-                explanations: explanations
-            )
-            displayResult = content
-            logger.info("  - search_memory 检索完成: mode=\(mode), queryLength=\(query.count), resultCount=\(resolvedMemories.count)")
-
         case _ where MCPManager.isMCPToolName(toolCall.toolName):
             let presentedArguments = MCPToolCallTitleMetadata.parse(argumentsJSON: toolCall.arguments)
             let executableArguments = presentedArguments.argumentsJSON
@@ -244,10 +121,7 @@ extension ChatService {
                     argumentsJSON: executableArguments
                 )
             } else {
-                commandRuleMatch = await MCPManager.shared.localStdioCommandRuleMatch(
-                    for: toolCall.toolName,
-                    sourceAgentRunID: agentRunID
-                )
+                commandRuleMatch = nil
             }
             let needsCommandRuleConfirmation = commandRuleMatch?.action == .confirm
             let effectiveApprovalPolicy: MCPToolApprovalPolicy =
@@ -551,68 +425,6 @@ extension ChatService {
         )
     }
 
-    func serializeMemorySearchResult(
-        mode: String,
-        query: String,
-        requestedCount: Int,
-        memories: [MemoryItem],
-        explanations: [UUID: MemoryRetrievalExplanation] = [:]
-    ) -> String {
-        let formatter = ISO8601DateFormatter()
-        let items: [[String: Any]] = memories.map { memory in
-            var item: [String: Any] = [
-                "id": memory.id.uuidString,
-                "content": memory.content,
-                "kind": memory.kind.rawValue,
-                "source": memory.source.rawValue,
-                "importance": memory.importance,
-                "confidence": memory.confidence,
-                "entities": memory.entities,
-                "accessCount": memory.accessCount
-            ]
-            if let validFrom = memory.validFrom {
-                item["validFrom"] = formatter.string(from: validFrom)
-            }
-            if let validUntil = memory.validUntil {
-                item["validUntil"] = formatter.string(from: validUntil)
-            }
-            if shouldSendMemoryUpdateTime() {
-                item["updatedAt"] = formatter.string(from: memory.updatedAt ?? memory.createdAt)
-            }
-            if let explanation = explanations[memory.id] {
-                item["explanation"] = [
-                    "total": explanation.totalScore,
-                    "semantic": explanation.semantic,
-                    "keyword": explanation.lexical,
-                    "entity": explanation.entity,
-                    "importance": explanation.importance,
-                    "confidence": explanation.confidence,
-                    "recency": explanation.recency,
-                    "strength": explanation.strength,
-                    "time": explanation.temporal,
-                    "type": explanation.typeBoost
-                ]
-            }
-            return item
-        }
-        let payload: [String: Any] = [
-            "mode": mode,
-            "query": query,
-            "requestedCount": requestedCount,
-            "returnedCount": memories.count,
-            "items": items
-        ]
-
-        do {
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
-            return String(data: data, encoding: .utf8) ?? NSLocalizedString("错误：检索结果序列化失败。", comment: "Search memory serialize fallback")
-        } catch {
-            logger.error("search_memory 结果序列化失败：\(error.localizedDescription)")
-            return NSLocalizedString("错误：检索结果序列化失败。", comment: "Search memory serialize error")
-        }
-    }
-
-    @MainActor
     func attachToolResult(
         _ result: String,
         disposition: InternalToolCallResultDisposition,

@@ -4,16 +4,16 @@ import Testing
 @testable import ETOS_LLM_Studio_macOS_App
 
 struct MacRoleplayBindingDraftTests {
-    @Test("单角色编辑器保留未修改的多角色和世界书引用，固定来源会话")
+    @Test("单角色编辑器保留未修改的多角色引用，固定来源会话")
     func preservesOtherBindingFields() {
-        let first = UUID(), second = UUID(), book = UUID(), persona = UUID(), message = UUID()
+        let first = UUID(), second = UUID(), persona = UUID(), message = UUID()
         let original = SessionRoleplayBinding(sessionID: UUID(), characterIDs: [first, second], personaID: persona,
-                                             additionalWorldbookIDs: [book], selectedGreetingIndex: 3, seededGreetingMessageID: message)
+                                             selectedGreetingIndex: 3, seededGreetingMessageID: message)
         var draft = MacRoleplayBindingDraft(sessionID: original.sessionID, original: original, preferredPersonaID: UUID())
         draft.helperScriptsEnabled = false
         let saved = draft.preparedBinding()
         #expect(saved.sessionID == original.sessionID)
-        #expect(saved.characterIDs == [first, second] && saved.additionalWorldbookIDs == [book])
+        #expect(saved.characterIDs == [first, second])
         #expect(saved.selectedGreetingIndex == 3 && saved.seededGreetingMessageID == message)
         #expect(saved.personaID == persona && !saved.helperScriptsEnabled)
         let replacement = UUID()
@@ -21,7 +21,6 @@ struct MacRoleplayBindingDraftTests {
         #expect(draft.preparedBinding().characterIDs == [replacement])
         draft.characterID = ""
         #expect(draft.preparedBinding().characterIDs.isEmpty)
-        #expect(draft.preparedBinding().additionalWorldbookIDs == [book])
         draft.characterID = first.uuidString
         #expect(draft.preparedBinding().characterIDs == original.characterIDs)
     }

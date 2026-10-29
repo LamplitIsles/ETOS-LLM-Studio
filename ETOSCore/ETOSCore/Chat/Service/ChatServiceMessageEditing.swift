@@ -21,11 +21,9 @@ extension ChatService {
             throw MessageToolCallEditingError.messageChanged
         }
         publishMessages(updated)
-        persistMessages(updated, for: session.id)
-        // 图片相册也使用编辑事务；只清理已经没有任何会话引用的旧附件。
+        storeRuntimeMessagesSnapshot(updated, for: session.id)
         if original.imageFileNames != edited.imageFileNames {
             invalidateAttachmentCache(for: original)
-            scheduleStoredAttachmentCleanup(for: [original], excludingSessionIDs: [session.id], retainedMessages: updated)
         }
     }
 }

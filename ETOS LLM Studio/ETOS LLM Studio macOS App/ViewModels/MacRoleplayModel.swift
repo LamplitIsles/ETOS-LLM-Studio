@@ -115,8 +115,8 @@ final class MacRoleplayModel: ObservableObject {
 
     private func perform(_ operation: @escaping @Sendable (ChatService) throws -> Void) async throws {
         guard let service, let workspace, !isWorking, !workspace.isRestoringData, !workspace.isExportingSnapshot,
-              !workspace.worldbookModel.isWorking, !workspace.isMutatingHistory, !workspace.sessionLibrary.isWorking,
-              AppLockManager.shared.state != .locked else { throw MacMemoryWriteError.busy }
+              !workspace.isMutatingHistory, !workspace.sessionLibrary.isWorking,
+              AppLockManager.shared.state != .locked else { throw MacWorkspaceWriteError.busy }
         isWorking = true
         error = nil
         defer { isWorking = false; reload() }

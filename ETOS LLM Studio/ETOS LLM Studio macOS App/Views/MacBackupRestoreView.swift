@@ -120,7 +120,6 @@ struct MacBackupRestoreView: View {
             defer { workspace.endSnapshotExport() }
             do {
                 await workspace.modelTests.cancelAndWait()
-                await workspace.localModels.waitForPendingWrites()
                 await workspace.shortcutTools.waitForPendingWrites()
                 await workspace.builtInTools.waitForPendingWrites()
                 await workspace.toolApproval.waitForPendingWrites()
@@ -137,7 +136,6 @@ struct MacBackupRestoreView: View {
                 await workspace.fonts.waitForPendingOperations()
                 await workspace.requestControls.waitForPendingWrites()
                 await workspace.dailyPulse.waitForPendingOperations()
-                await workspace.contextCompression.waitForPendingOperations()
                 await workspace.slashCommands.waitForPendingOperations()
                 await workspace.connectionSecurity.waitForPendingOperations()
                 await workspace.remoteAccess.waitForPendingOperations()
@@ -147,7 +145,6 @@ struct MacBackupRestoreView: View {
                 try await Task.detached(priority: .userInitiated) {
                     let access = destination.startAccessingSecurityScopedResource()
                     defer { if access { destination.stopAccessingSecurityScopedResource() } }
-                    MemoryManager.flushCurrentInstancePersistenceWritesForSnapshot()
                     let source = try SnapshotBuilder.buildSnapshot(kind: kind)
                     defer { try? FileManager.default.removeItem(at: source) }
                     if let password {

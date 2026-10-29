@@ -2,13 +2,12 @@ import Foundation
 
 /// 只持有发送副本；字面宏在其他模板链路完成后还原，避免再次被当作可执行宏。
 struct PromptMacroRequest: Sendable {
-    let templates: PromptMacroTemplates
     let messages: [ChatMessage]
     private let literals: [String: String]
 
-    init(templates: PromptMacroTemplates, messages: [ChatMessage], values: [String: String]) {
+    init(messages: [ChatMessage], values: [String: String]) {
         var literals: [String: String] = [:]
-        let sources = templates.texts + messages.map(\.content) + Array(values.values)
+        let sources = messages.map(\.content) + Array(values.values)
         var namespace = "\u{E000}ETOS.literal:"
         while sources.contains(where: { $0.contains(namespace) }) {
             namespace.append(":")
@@ -21,7 +20,6 @@ struct PromptMacroRequest: Sendable {
             return marker
         }
 
-        self.templates = templates.rendered(values: values, literalTransform: protectLiteral)
         self.messages = messages.map { message in
             guard message.role == .user else { return message }
             var rendered = message

@@ -19,14 +19,11 @@ public struct SyncOptions: OptionSet, Codable {
     }
     
     public static let providers = SyncOptions(rawValue: 1 << 0)
-    public static let sessions = SyncOptions(rawValue: 1 << 1)
     public static let backgrounds = SyncOptions(rawValue: 1 << 2)
-    public static let memories = SyncOptions(rawValue: 1 << 3)
     public static let mcpServers = SyncOptions(rawValue: 1 << 4)
     public static let audioFiles = SyncOptions(rawValue: 1 << 5)  // 音频文件同步选项
     public static let imageFiles = SyncOptions(rawValue: 1 << 6)  // 图片文件同步选项
     public static let shortcutTools = SyncOptions(rawValue: 1 << 7) // 快捷指令工具同步选项
-    public static let worldbooks = SyncOptions(rawValue: 1 << 8) // 世界书同步选项
     public static let feedbackTickets = SyncOptions(rawValue: 1 << 9) // 反馈工单同步选项
     public static let appStorage = SyncOptions(rawValue: 1 << 10) // AppStorage（软件设置）同步选项
     public static let dailyPulse = SyncOptions(rawValue: 1 << 11) // 每日脉冲同步选项
@@ -36,23 +33,18 @@ public struct SyncOptions: OptionSet, Codable {
     /// 新版自动漫游使用的完整同步范围；用户只控制通道开关，不再维护细项掩码。
     public static let fullSync: SyncOptions = [
         .providers,
-        .sessions,
         .backgrounds,
-        .memories,
         .mcpServers,
         .audioFiles,
         .imageFiles,
         .skills,
         .shortcutTools,
-        .worldbooks,
         .feedbackTickets,
         .dailyPulse,
         .usageStats,
         .fontFiles,
         .appStorage
     ]
-    @available(*, deprecated, message: "请改用 appStorage 选项。")
-    public static let globalSystemPrompt = appStorage
     
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -66,17 +58,6 @@ public struct SyncOptions: OptionSet, Codable {
 }
 
 // MARK: - 数据载荷
-
-/// 单条会话的完整导出结构，包含元数据及消息记录
-public struct SyncedSession: Codable {
-    public var session: ChatSession
-    public var messages: [ChatMessage]
-    
-    public init(session: ChatSession, messages: [ChatMessage]) {
-        self.session = session
-        self.messages = messages
-    }
-}
 
 /// 背景图片同步载荷
 public struct SyncedBackground: Codable {
@@ -267,17 +248,12 @@ public struct SyncPackage: Codable {
     public var options: SyncOptions
     public var sourcePlatform: String?
     public var providers: [Provider]
-    public var sessionTags: [SessionTag]
-    public var sessions: [SyncedSession]
     public var backgrounds: [SyncedBackground]
-    public var memories: [MemoryItem]
-    public var conversationUserProfile: ConversationUserProfile?
     public var mcpServers: [MCPServerConfiguration]
     public var audioFiles: [SyncedAudio]
     public var imageFiles: [SyncedImage]
     public var skills: [SyncedSkillBundle]
     public var shortcutTools: [ShortcutToolDefinition]
-    public var worldbooks: [Worldbook]
     public var feedbackTickets: [FeedbackTicket]
     public var dailyPulseRuns: [DailyPulseRun]
     public var dailyPulseFeedbackHistory: [DailyPulseFeedbackEvent]
@@ -289,28 +265,21 @@ public struct SyncPackage: Codable {
     public var fontRouteConfigurationData: Data?
     /// 完整 AppStorage 快照（二进制 Plist），用于同步软件设置
     public var appStorageSnapshot: Data?
-    /// 兼容旧版本：仅携带 systemPrompt 时回退使用
-    public var globalSystemPrompt: String?
     
     enum CodingKeys: String, CodingKey {
-        case options, sourcePlatform, providers, sessionTags, sessions, backgrounds, memories, conversationUserProfile, mcpServers, audioFiles, imageFiles, skills, shortcutTools, worldbooks, feedbackTickets, dailyPulseRuns, dailyPulseFeedbackHistory, dailyPulsePendingCuration, dailyPulseExternalSignals, dailyPulseTasks, usageStatsDayBundles, fontFiles, fontRouteConfigurationData, appStorageSnapshot, globalSystemPrompt
+        case options, sourcePlatform, providers, backgrounds, mcpServers, audioFiles, imageFiles, skills, shortcutTools, feedbackTickets, dailyPulseRuns, dailyPulseFeedbackHistory, dailyPulsePendingCuration, dailyPulseExternalSignals, dailyPulseTasks, usageStatsDayBundles, fontFiles, fontRouteConfigurationData, appStorageSnapshot
     }
     
     public init(
         options: SyncOptions,
         sourcePlatform: String? = nil,
         providers: [Provider] = [],
-        sessionTags: [SessionTag] = [],
-        sessions: [SyncedSession] = [],
         backgrounds: [SyncedBackground] = [],
-        memories: [MemoryItem] = [],
-        conversationUserProfile: ConversationUserProfile? = nil,
         mcpServers: [MCPServerConfiguration] = [],
         audioFiles: [SyncedAudio] = [],
         imageFiles: [SyncedImage] = [],
         skills: [SyncedSkillBundle] = [],
         shortcutTools: [ShortcutToolDefinition] = [],
-        worldbooks: [Worldbook] = [],
         feedbackTickets: [FeedbackTicket] = [],
         dailyPulseRuns: [DailyPulseRun] = [],
         dailyPulseFeedbackHistory: [DailyPulseFeedbackEvent] = [],
@@ -320,23 +289,17 @@ public struct SyncPackage: Codable {
         usageStatsDayBundles: [UsageStatsDayBundle] = [],
         fontFiles: [SyncedFontFile] = [],
         fontRouteConfigurationData: Data? = nil,
-        appStorageSnapshot: Data? = nil,
-        globalSystemPrompt: String? = nil
+        appStorageSnapshot: Data? = nil
     ) {
         self.options = options
         self.sourcePlatform = sourcePlatform
         self.providers = providers
-        self.sessionTags = sessionTags
-        self.sessions = sessions
         self.backgrounds = backgrounds
-        self.memories = memories
-        self.conversationUserProfile = conversationUserProfile
         self.mcpServers = mcpServers
         self.audioFiles = audioFiles
         self.imageFiles = imageFiles
         self.skills = skills
         self.shortcutTools = shortcutTools
-        self.worldbooks = worldbooks
         self.feedbackTickets = feedbackTickets
         self.dailyPulseRuns = dailyPulseRuns
         self.dailyPulseFeedbackHistory = dailyPulseFeedbackHistory
@@ -347,7 +310,6 @@ public struct SyncPackage: Codable {
         self.fontFiles = fontFiles
         self.fontRouteConfigurationData = fontRouteConfigurationData
         self.appStorageSnapshot = appStorageSnapshot
-        self.globalSystemPrompt = globalSystemPrompt
     }
     
     public init(from decoder: Decoder) throws {
@@ -355,17 +317,12 @@ public struct SyncPackage: Codable {
         options = try container.decode(SyncOptions.self, forKey: .options)
         sourcePlatform = try container.decodeIfPresent(String.self, forKey: .sourcePlatform)
         providers = try container.decodeIfPresent([Provider].self, forKey: .providers) ?? []
-        sessionTags = try container.decodeIfPresent([SessionTag].self, forKey: .sessionTags) ?? []
-        sessions = try container.decodeIfPresent([SyncedSession].self, forKey: .sessions) ?? []
         backgrounds = try container.decodeIfPresent([SyncedBackground].self, forKey: .backgrounds) ?? []
-        memories = try container.decodeIfPresent([MemoryItem].self, forKey: .memories) ?? []
-        conversationUserProfile = try container.decodeIfPresent(ConversationUserProfile.self, forKey: .conversationUserProfile)
         mcpServers = try container.decodeIfPresent([MCPServerConfiguration].self, forKey: .mcpServers) ?? []
         audioFiles = try container.decodeIfPresent([SyncedAudio].self, forKey: .audioFiles) ?? []
         imageFiles = try container.decodeIfPresent([SyncedImage].self, forKey: .imageFiles) ?? []
         skills = try container.decodeIfPresent([SyncedSkillBundle].self, forKey: .skills) ?? []
         shortcutTools = try container.decodeIfPresent([ShortcutToolDefinition].self, forKey: .shortcutTools) ?? []
-        worldbooks = try container.decodeIfPresent([Worldbook].self, forKey: .worldbooks) ?? []
         feedbackTickets = try container.decodeIfPresent([FeedbackTicket].self, forKey: .feedbackTickets) ?? []
         dailyPulseRuns = try container.decodeIfPresent([DailyPulseRun].self, forKey: .dailyPulseRuns) ?? []
         dailyPulseFeedbackHistory = try container.decodeIfPresent([DailyPulseFeedbackEvent].self, forKey: .dailyPulseFeedbackHistory) ?? []
@@ -376,7 +333,6 @@ public struct SyncPackage: Codable {
         fontFiles = try container.decodeIfPresent([SyncedFontFile].self, forKey: .fontFiles) ?? []
         fontRouteConfigurationData = try container.decodeIfPresent(Data.self, forKey: .fontRouteConfigurationData)
         appStorageSnapshot = try container.decodeIfPresent(Data.self, forKey: .appStorageSnapshot)
-        globalSystemPrompt = try container.decodeIfPresent(String.self, forKey: .globalSystemPrompt)
     }
 }
 
@@ -385,16 +341,12 @@ public struct SyncPackage: Codable {
 /// 差异同步记录类型。
 public enum SyncRecordType: String, Codable, CaseIterable, Sendable {
     case provider
-    case sessionTag
-    case session
     case background
-    case memory
     case mcpServer
     case audioFile
     case imageFile
     case skill
     case shortcutTool
-    case worldbook
     case feedbackTicket
     case dailyPulseRun
     case usageStatsDay
@@ -514,12 +466,8 @@ public struct SyncEnvelopeV2: Codable {
 public struct SyncMergeSummary: Equatable {
     public var importedProviders: Int
     public var skippedProviders: Int
-    public var importedSessions: Int
-    public var skippedSessions: Int
     public var importedBackgrounds: Int
     public var skippedBackgrounds: Int
-    public var importedMemories: Int
-    public var skippedMemories: Int
     public var importedMCPServers: Int
     public var skippedMCPServers: Int
     public var importedAudioFiles: Int
@@ -530,8 +478,6 @@ public struct SyncMergeSummary: Equatable {
     public var skippedSkills: Int
     public var importedShortcutTools: Int
     public var skippedShortcutTools: Int
-    public var importedWorldbooks: Int
-    public var skippedWorldbooks: Int
     public var importedFeedbackTickets: Int
     public var skippedFeedbackTickets: Int
     public var importedDailyPulseRuns: Int
@@ -548,12 +494,8 @@ public struct SyncMergeSummary: Equatable {
     public init(
         importedProviders: Int = 0,
         skippedProviders: Int = 0,
-        importedSessions: Int = 0,
-        skippedSessions: Int = 0,
         importedBackgrounds: Int = 0,
         skippedBackgrounds: Int = 0,
-        importedMemories: Int = 0,
-        skippedMemories: Int = 0,
         importedMCPServers: Int = 0,
         skippedMCPServers: Int = 0,
         importedAudioFiles: Int = 0,
@@ -564,8 +506,6 @@ public struct SyncMergeSummary: Equatable {
         skippedSkills: Int = 0,
         importedShortcutTools: Int = 0,
         skippedShortcutTools: Int = 0,
-        importedWorldbooks: Int = 0,
-        skippedWorldbooks: Int = 0,
         importedFeedbackTickets: Int = 0,
         skippedFeedbackTickets: Int = 0,
         importedDailyPulseRuns: Int = 0,
@@ -581,12 +521,8 @@ public struct SyncMergeSummary: Equatable {
     ) {
         self.importedProviders = importedProviders
         self.skippedProviders = skippedProviders
-        self.importedSessions = importedSessions
-        self.skippedSessions = skippedSessions
         self.importedBackgrounds = importedBackgrounds
         self.skippedBackgrounds = skippedBackgrounds
-        self.importedMemories = importedMemories
-        self.skippedMemories = skippedMemories
         self.importedMCPServers = importedMCPServers
         self.skippedMCPServers = skippedMCPServers
         self.importedAudioFiles = importedAudioFiles
@@ -597,8 +533,6 @@ public struct SyncMergeSummary: Equatable {
         self.skippedSkills = skippedSkills
         self.importedShortcutTools = importedShortcutTools
         self.skippedShortcutTools = skippedShortcutTools
-        self.importedWorldbooks = importedWorldbooks
-        self.skippedWorldbooks = skippedWorldbooks
         self.importedFeedbackTickets = importedFeedbackTickets
         self.skippedFeedbackTickets = skippedFeedbackTickets
         self.importedDailyPulseRuns = importedDailyPulseRuns
@@ -616,12 +550,8 @@ public struct SyncMergeSummary: Equatable {
     public static let empty = SyncMergeSummary(
         importedProviders: 0,
         skippedProviders: 0,
-        importedSessions: 0,
-        skippedSessions: 0,
         importedBackgrounds: 0,
         skippedBackgrounds: 0,
-        importedMemories: 0,
-        skippedMemories: 0,
         importedMCPServers: 0,
         skippedMCPServers: 0,
         importedAudioFiles: 0,
@@ -632,8 +562,6 @@ public struct SyncMergeSummary: Equatable {
         skippedSkills: 0,
         importedShortcutTools: 0,
         skippedShortcutTools: 0,
-        importedWorldbooks: 0,
-        skippedWorldbooks: 0,
         importedFeedbackTickets: 0,
         skippedFeedbackTickets: 0,
         importedDailyPulseRuns: 0,

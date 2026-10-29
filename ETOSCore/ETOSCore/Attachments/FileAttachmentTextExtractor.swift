@@ -103,8 +103,7 @@ public struct FileAttachmentTextExtractor {
         return normalizeWhitespace(in: extractedText)
     }
 
-    /// 为无截断上下文压缩保留原始换行和空白，不执行展示用途的空白归一化。
-    public func extractTextPreservingLayout(from attachment: FileAttachment) throws -> String {
+    private func extractTextPreservingLayout(from attachment: FileAttachment) throws -> String {
         let fileName = (attachment.fileName as NSString).lastPathComponent
         let fileExtension = (fileName as NSString).pathExtension.lowercased()
         let extractedText: String

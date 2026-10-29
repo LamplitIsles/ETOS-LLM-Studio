@@ -47,27 +47,21 @@ struct ShortcutSyncTests {
     @Test("appStorage snapshot is exported when sync option is enabled")
     func testAppStorageSnapshotIsExported() {
         let backup = backupAppConfigValues([
-            .systemPrompt,
             .enableMarkdown,
             .enableExperimentalToolResultDisplay
         ])
         defer { restoreAppConfigValues(backup) }
 
-        AppConfigStore.shared.systemPrompt = "请使用二次元插画风格"
         AppConfigStore.shared.enableMarkdown = true
         AppConfigStore.shared.enableExperimentalToolResultDisplay = false
         let package = SyncEngine.buildPackage(options: [.appStorage])
 
-        #expect(package.globalSystemPrompt == "请使用二次元插画风格")
         guard let snapshotData = package.appStorageSnapshot else {
             Issue.record("未导出 appStorageSnapshot")
             return
         }
 
         let snapshot = decodeSnapshot(snapshotData)
-        #expect(snapshot["systemPrompt"] as? String == "请使用二次元插画风格")
-        #expect(snapshot[GlobalSystemPromptStore.entriesStorageKey] == nil)
-        #expect(snapshot[GlobalSystemPromptStore.selectedEntryIDStorageKey] == nil)
         #expect(boolValue(snapshot["enableMarkdown"]) == true)
         #expect(boolValue(snapshot["enableExperimentalToolResultDisplay"]) == false)
     }
@@ -76,20 +70,17 @@ struct ShortcutSyncTests {
     @Test("appStorage snapshot is merged into AppConfig")
     func testAppStorageSnapshotIsMerged() async {
         let backup = backupAppConfigValues([
-            .systemPrompt,
             .enableStreaming,
             .maxChatHistory,
             .enableExperimentalToolResultDisplay
         ])
         defer { restoreAppConfigValues(backup) }
 
-        AppConfigStore.shared.systemPrompt = "旧提示词"
         AppConfigStore.shared.enableStreaming = false
         AppConfigStore.shared.maxChatHistory = 0
         AppConfigStore.shared.enableExperimentalToolResultDisplay = true
 
         let incomingSnapshot: [String: Any] = [
-            "systemPrompt": "请优先输出 Swift 代码",
             "enableStreaming": true,
             "maxChatHistory": 256,
             "enableExperimentalToolResultDisplay": false
@@ -101,34 +92,15 @@ struct ShortcutSyncTests {
         )
 
         let summary = await SyncEngine.apply(package: package)
-        #expect(AppConfigStore.shared.systemPrompt == "请优先输出 Swift 代码")
         #expect(AppConfigStore.shared.enableStreaming == true)
         #expect(AppConfigStore.shared.maxChatHistory == 256)
         #expect(AppConfigStore.shared.enableExperimentalToolResultDisplay == false)
-        #expect(summary.importedAppStorageValues == 4)
+        #expect(summary.importedAppStorageValues == 3)
         #expect(summary.skippedAppStorageValues == 0)
 
         let summary2 = await SyncEngine.apply(package: package)
         #expect(summary2.importedAppStorageValues == 0)
-        #expect(summary2.skippedAppStorageValues == 4)
-    }
-
-    @MainActor
-    @Test("legacy global prompt payload is still merged")
-    func testLegacyGlobalPromptPayloadStillMerged() async {
-        let backup = backupAppConfigValues([.systemPrompt])
-        defer { restoreAppConfigValues(backup) }
-
-        AppConfigStore.shared.systemPrompt = "旧提示词"
-        let package = SyncPackage(
-            options: [.appStorage],
-            globalSystemPrompt: "来自旧版本的新提示词"
-        )
-
-        let summary = await SyncEngine.apply(package: package)
-        #expect(AppConfigStore.shared.systemPrompt == "来自旧版本的新提示词")
-        #expect(summary.importedAppStorageValues == 1)
-        #expect(summary.skippedAppStorageValues == 0)
+        #expect(summary2.skippedAppStorageValues == 3)
     }
 
     @MainActor
@@ -142,9 +114,6 @@ struct ShortcutSyncTests {
     @MainActor
     private func restoreAppConfigValues(_ snapshot: [String: Any]) {
         AppConfigStore.shared.apply(snapshot: snapshot)
-        if let systemPrompt = snapshot[AppConfigKey.systemPrompt.rawValue] as? String {
-            GlobalSystemPromptStore.saveActiveSystemPrompt(systemPrompt)
-        }
     }
 
     private func boolValue(_ value: Any?) -> Bool? {

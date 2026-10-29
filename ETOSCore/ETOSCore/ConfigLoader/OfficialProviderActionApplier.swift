@@ -128,7 +128,6 @@ enum OfficialProviderActionApplier {
         ConfigLoader.removeLegacyProviderBlobs()
         ConfigLoader.cleanupLegacyProviderFiles()
         ConfigLoader.reconcileStoredProviderOrder(currentIDs: transactionResult.1)
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         return transactionResult.0
     }
 

@@ -298,9 +298,7 @@ struct ProviderDetailView: View {
 
     private func saveChanges() {
         var providerToSave = provider
-        if !LocalModelProviderBridge.isLocalProvider(providerToSave) {
-            providerToSave.models = provider.models.filter { $0.isActivated }
-        }
+        providerToSave.models = provider.models.filter { $0.isActivated }
         ChatService.shared.saveProviderFromManagement(providerToSave)
         onSave(providerToSave)
     }

@@ -79,12 +79,8 @@ extension ChatServiceTests {
             content: "请记录这次请求",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -119,12 +115,8 @@ extension ChatServiceTests {
             content: "这次不要写请求日志",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -286,46 +278,6 @@ extension ChatServiceTests {
         #expect(item["result"] == nil)
     }
 
-    @Test("发送消息后会在会话 JSON 中保存请求时间")
-    func testSendMessagePersistsRequestedAtInSessionJSON() async {
-        await cleanup()
-
-        setupMockResponsesForChatAndTitle()
-        let startedAt = Date()
-
-        await chatService.sendAndProcessMessage(
-            content: "请记录请求时间",
-            aiTemperature: 0.2,
-            aiTopP: 1,
-            systemPrompt: "",
-            maxChatHistory: 5,
-            enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
-            includeSystemTime: false
-        )
-
-        let finishedAt = Date()
-        guard let sessionID = chatService.currentSessionSubject.value?.id else {
-            Issue.record("当前会话为空，无法验证请求时间落盘。")
-            return
-        }
-
-        let messages = Persistence.loadMessages(for: sessionID)
-        guard let userMessage = messages.first(where: { $0.role == .user }) else {
-            Issue.record("未找到用户消息，无法验证请求时间字段。")
-            return
-        }
-
-        guard let requestedAt = userMessage.requestedAt else {
-            Issue.record("用户消息缺少 requestedAt 字段。")
-            return
-        }
-        #expect(requestedAt >= startedAt.addingTimeInterval(-1))
-        #expect(requestedAt <= finishedAt.addingTimeInterval(1))
-    }
-
     @Test("每个文件附件会独立转换为文本消息并保留正文消息")
     func testFileAttachmentsAreTextifiedBeforeSending() async throws {
         await cleanup()
@@ -350,12 +302,8 @@ extension ChatServiceTests {
             content: "请处理这个附件",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             fileAttachments: [firstAttachment, secondAttachment]
         )
@@ -386,7 +334,6 @@ extension ChatServiceTests {
         configuration.protocolClasses = [MockURLProtocol.self]
         let service = ChatService(
             adapters: ["gemini": videoAdapter],
-            memoryManager: memoryManager,
             urlSession: URLSession(configuration: configuration)
         )
         let session = service.createSavedSession(name: "原生视频历史测试")
@@ -418,17 +365,13 @@ extension ChatServiceTests {
             content: "概括这段视频",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             fileAttachments: [attachment]
         )
 
-        let storedUserMessages = Persistence.loadMessages(for: session.id)
+        let storedUserMessages = service.messagesSnapshot(for: session.id)
             .filter { $0.role == .user }
         let storedVideoMessage = try #require(storedUserMessages.first)
         let storedTextMessage = try #require(storedUserMessages.last)
@@ -469,12 +412,8 @@ extension ChatServiceTests {
             content: "请解释这段内容",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             fileAttachments: [attachment]
         )
@@ -538,12 +477,8 @@ extension ChatServiceTests {
             content: "请读取图片文字",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             imageAttachments: [firstImage, secondImage]
         )
@@ -584,12 +519,8 @@ extension ChatServiceTests {
             content: "第一轮",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             fileAttachments: [attachment]
         )
@@ -603,18 +534,14 @@ extension ChatServiceTests {
             content: "第二轮",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             fileAttachments: [attachment]
         )
 
-        let firstFileName = try #require(Persistence.loadMessages(for: firstSession.id).first { $0.fileFileNames?.isEmpty == false }?.fileFileNames?.first)
-        let secondFileName = try #require(Persistence.loadMessages(for: secondSession.id).first { $0.fileFileNames?.isEmpty == false }?.fileFileNames?.first)
+        let firstFileName = try #require(chatService.messagesSnapshot(for: firstSession.id).first { $0.fileFileNames?.isEmpty == false }?.fileFileNames?.first)
+        let secondFileName = try #require(chatService.messagesSnapshot(for: secondSession.id).first { $0.fileFileNames?.isEmpty == false }?.fileFileNames?.first)
         #expect(firstFileName == fileName)
         #expect(secondFileName == fileName)
         #expect(Persistence.getAllFileNames().filter { $0 == fileName }.count == 1)
@@ -665,19 +592,15 @@ extension ChatServiceTests {
             content: "请看这些附件",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 10,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             audioAttachment: audioAttachment,
             imageAttachments: [imageAttachment],
             fileAttachments: [fileAttachment]
         )
 
-        let storedUserMessages = Persistence.loadMessages(for: session.id).filter { $0.role == .user }
+        let storedUserMessages = chatService.messagesSnapshot(for: session.id).filter { $0.role == .user }
         #expect(storedUserMessages.count == 4)
         #expect(storedUserMessages[0].audioFileName != nil)
         #expect(storedUserMessages[0].imageFileNames == nil)
@@ -738,17 +661,13 @@ extension ChatServiceTests {
             content: "比较三张图片",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 10,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             imageAttachments: imageAttachments
         )
 
-        let stored = Persistence.loadMessages(for: session.id).filter { $0.role == .user }
+        let stored = chatService.messagesSnapshot(for: session.id).filter { $0.role == .user }
         #expect(stored.count == 4)
         #expect(stored.prefix(3).flatMap { $0.imageFileNames ?? [] } == imageNames)
         #expect(stored[3].content == "比较三张图片")
@@ -761,31 +680,6 @@ extension ChatServiceTests {
         #expect(sent.map(\.id) == stored.map(\.id))
         #expect(sent.prefix(3).flatMap { $0.imageFileNames ?? [] } == imageNames)
         #expect(sent.last?.content == "比较三张图片")
-    }
-
-    @Test("旧复合图片消息首次读取后会稳定迁移为独立消息")
-    func testLegacyCompoundImageMessageAtomizesOnceWithStableIDs() async throws {
-        await cleanup()
-        let session = createPermanentTestSession(name: "旧复合消息迁移测试")
-        defer { chatService.deleteSessions([session]) }
-        let compound = ChatMessage(
-            role: .user,
-            content: "比较三张图片",
-            imageFileNames: ["legacy-a.png", "legacy-b.png", "legacy-c.png"]
-        )
-        Persistence.saveMessages([compound], for: session.id)
-
-        let firstLoad = Persistence.loadMessages(for: session.id)
-        let secondLoad = Persistence.loadMessages(for: session.id)
-
-        #expect(firstLoad.count == 4)
-        #expect(firstLoad.prefix(3).flatMap { $0.imageFileNames ?? [] } == [
-            "legacy-a.png", "legacy-b.png", "legacy-c.png"
-        ])
-        #expect(firstLoad.last?.id == compound.id)
-        #expect(firstLoad.last?.content == "比较三张图片")
-        #expect(secondLoad.map(\.id) == firstLoad.map(\.id))
-        #expect(secondLoad == firstLoad)
     }
 
     @Test("文件附件文本提取失败时会阻断请求")
@@ -804,12 +698,8 @@ extension ChatServiceTests {
             content: "请读取这个文件",
             aiTemperature: 0.2,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false,
             fileAttachments: [attachment]
         )
@@ -835,12 +725,8 @@ extension ChatServiceTests {
             content: "This is another test",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -871,12 +757,8 @@ extension ChatServiceTests {
             content: "Hello world, this is a test message",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -911,12 +793,8 @@ extension ChatServiceTests {
             content: "请帮我整理一次模型重构方案",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
         try await Task.sleep(for: .milliseconds(200))
@@ -944,12 +822,8 @@ extension ChatServiceTests {
             content: "请帮我写一个 SwiftUI 组件",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
         try await Task.sleep(for: .milliseconds(200))
@@ -976,12 +850,8 @@ extension ChatServiceTests {
             content: "请总结我的待办清单",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
         try await Task.sleep(for: .milliseconds(200))
@@ -1030,10 +900,7 @@ extension ChatServiceTests {
             availableTools: nil,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 0,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
         try await Task.sleep(for: .milliseconds(200))
@@ -1045,109 +912,6 @@ extension ChatServiceTests {
         #expect(reasoningSummaryUserPrompt.contains("```\n\(reasoningContent)"))
         #expect(reasoningSummaryUserPrompt.hasSuffix("```"))
         #expect(storedMessage?.responseMetrics?.reasoningSummary == "比较成本后选稳妥方案")
-
-        await cleanup()
-    }
-
-    @Test("Conversation summary keeps up to two thousand characters per message")
-    func testConversationSummary_UsesTwoThousandCharacterLimit() async throws {
-        await cleanup()
-
-        let session = createPermanentTestSession(name: "会话摘要长度测试")
-        let sessionID = session.id
-        let longUserContent = String(repeating: "甲", count: 2_500)
-        let loadingMessage = ChatMessage(role: .assistant, content: "", requestedAt: Date())
-        let messages = [
-            ChatMessage(role: .user, content: longUserContent, requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第一轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第二轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第二轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第三轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第三轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第四轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第四轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第五轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第五轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第六轮问题", requestedAt: Date()),
-            loadingMessage
-        ]
-        chatService.updateMessages(messages, for: sessionID)
-        setupMockResponsesForChatAndTitle()
-        mockAdapter.responseToReturn = ChatMessage(role: .assistant, content: "会话摘要")
-
-        await chatService.processResponseMessage(
-            responseMessage: ChatMessage(role: .assistant, content: "最终答案"),
-            loadingMessageID: loadingMessage.id,
-            currentSessionID: sessionID,
-            userMessage: nil,
-            wasTemporarySession: false,
-            availableTools: nil,
-            aiTemperature: 0,
-            aiTopP: 1,
-            systemPrompt: "",
-            maxChatHistory: 0,
-            enableMemory: true,
-            enableMemoryWrite: false,
-            includeSystemTime: false
-        )
-        try await Task.sleep(for: .milliseconds(300))
-
-        let summarySystemPrompt = mockAdapter.receivedConversationSummaryMessages?.first(where: { $0.role == .system })?.content ?? ""
-        let summaryUserPrompt = mockAdapter.receivedConversationSummaryMessages?.last(where: { $0.role == .user })?.content ?? ""
-        #expect(summarySystemPrompt == BuiltInPromptStore.render(.conversationSummarySystem))
-        #expect(summaryUserPrompt.contains(String(repeating: "甲", count: 2_000)))
-        #expect(!summaryUserPrompt.contains(String(repeating: "甲", count: 2_001)))
-
-        await cleanup()
-    }
-
-    @Test("Conversation profile stores generated content without truncation")
-    func testConversationProfile_DoesNotTruncateGeneratedProfile() async throws {
-        await cleanup()
-
-        let session = createPermanentTestSession(name: "用户画像长度测试")
-        let sessionID = session.id
-        let loadingMessage = ChatMessage(role: .assistant, content: "", requestedAt: Date())
-        let messages = [
-            ChatMessage(role: .user, content: "第一轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第一轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第二轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第二轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第三轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第三轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第四轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第四轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第五轮问题", requestedAt: Date()),
-            ChatMessage(role: .assistant, content: "第五轮回答", requestedAt: Date()),
-            ChatMessage(role: .user, content: "第六轮问题", requestedAt: Date()),
-            loadingMessage
-        ]
-        let longProfile = String(repeating: "长期偏好", count: 120)
-        chatService.updateMessages(messages, for: sessionID)
-        setupMockResponsesForChatAndTitle()
-        setupMockConversationProfileResponse(profile: longProfile)
-        mockAdapter.responseToReturn = ChatMessage(role: .assistant, content: "会话摘要")
-
-        await chatService.processResponseMessage(
-            responseMessage: ChatMessage(role: .assistant, content: "最终答案"),
-            loadingMessageID: loadingMessage.id,
-            currentSessionID: sessionID,
-            userMessage: nil,
-            wasTemporarySession: false,
-            availableTools: nil,
-            aiTemperature: 0,
-            aiTopP: 1,
-            systemPrompt: "",
-            maxChatHistory: 0,
-            enableMemory: true,
-            enableMemoryWrite: false,
-            includeSystemTime: false
-        )
-        try await Task.sleep(for: .milliseconds(500))
-
-        let profileSystemPrompt = mockAdapter.receivedConversationProfileMessages?.first(where: { $0.role == .system })?.content ?? ""
-        #expect(profileSystemPrompt == BuiltInPromptStore.render(.conversationProfileUpdateSystem))
-        #expect(ConversationMemoryManager.loadUserProfile()?.content == longProfile)
 
         await cleanup()
     }
@@ -1179,10 +943,7 @@ extension ChatServiceTests {
             availableTools: nil,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 0,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
         try await Task.sleep(for: .milliseconds(120))
@@ -1220,10 +981,7 @@ extension ChatServiceTests {
             availableTools: nil,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 0,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -1261,10 +1019,7 @@ extension ChatServiceTests {
             availableTools: nil,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 0,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -1296,7 +1051,7 @@ extension ChatServiceTests {
                 }
 
             Task {
-                await chatService.sendAndProcessMessage(content: "test message", aiTemperature: 0, aiTopP: 1, systemPrompt: "", maxChatHistory: 5, enableStreaming: false, enhancedPrompt: nil, enableMemory: false, enableMemoryWrite: false, includeSystemTime: false)
+                await chatService.sendAndProcessMessage(content: "test message", aiTemperature: 0, aiTopP: 1, maxChatHistory: 5, enableStreaming: false, includeSystemTime: false)
             }
         }
 

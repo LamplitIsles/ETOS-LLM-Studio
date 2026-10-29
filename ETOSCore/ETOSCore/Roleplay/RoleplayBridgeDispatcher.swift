@@ -137,19 +137,6 @@ public enum RoleplayBridgeDispatcher {
                   let middle = (payload["middle"] as? NSNumber)?.intValue,
                   let end = (payload["end"] as? NSNumber)?.intValue else { return }
             service.rotateRoleplayMessages(begin: begin, middle: middle, end: end, sessionID: sessionID)
-        case "replace_worldbook":
-            guard let name = payload["name"] as? String,
-                  let entries = payload["entries"].flatMap(JSONValue.init(anyJSONValue:)) else { return }
-            service.replaceRoleplayWorldbook(named: name, entries: entries)
-        case "create_worldbook":
-            guard let name = payload["name"] as? String else { return }
-            service.createRoleplayWorldbook(named: name)
-        case "delete_worldbook":
-            guard let name = payload["name"] as? String else { return }
-            service.deleteRoleplayWorldbook(named: name)
-        case "rebind_character_worldbooks":
-            guard let value = payload["value"].flatMap(JSONValue.init(anyJSONValue:)) else { return }
-            service.rebindRoleplayCharacterWorldbooks(value, sessionID: sessionID)
         case "replace_regex_rules":
             guard let value = payload["value"].flatMap(JSONValue.init(anyJSONValue:)) else { return }
             service.replaceRoleplayRegexRules(value, sessionID: sessionID)

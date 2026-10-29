@@ -71,7 +71,7 @@ public enum MCPLocalStdioConfigurationJSON {
         if !configuration.environment.isEmpty {
             object["env"] = configuration.environment
         }
-        if configuration.workingDirectory != "/home/etos" {
+        if configuration.workingDirectory != "" {
             object["cwd"] = configuration.workingDirectory
         }
         guard let data = try? JSONSerialization.data(
@@ -105,7 +105,7 @@ public enum MCPLocalStdioConfigurationJSON {
     }
 
     private static func workingDirectory(_ value: Any?) -> String? {
-        guard let value else { return "/home/etos" }
+        guard let value else { return "" }
         guard let directory = nonEmptyString(value), directory.hasPrefix("/") else { return nil }
         return directory
     }

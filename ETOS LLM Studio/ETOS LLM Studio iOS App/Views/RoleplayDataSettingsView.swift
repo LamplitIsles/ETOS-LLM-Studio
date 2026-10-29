@@ -24,7 +24,7 @@ struct RoleplayDataSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text(NSLocalizedString("自定义宏会以 {{名称}} 或 {{{名称}}} 注入提示词、世界书和角色正则。", comment: "Custom roleplay macro detail"))
+                Text(NSLocalizedString("自定义宏会以 {{名称}} 或 {{{名称}}} 用于角色模板和正则。", comment: "Custom roleplay macro detail"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -165,7 +165,7 @@ struct RoleplayDataSettingsView: View {
     private func load() async {
         let loaded = await Task.detached(priority: .utility) {
             let snapshot = ChatService.shared.roleplayVariableSnapshot(sessionID: sessionID)
-            let message = Persistence.loadMessages(for: sessionID).last
+            let message = ChatService.shared.messagesSnapshot(for: sessionID).last
             return (snapshot, message?.id, message?.getCurrentVersionIndex() ?? 0)
         }.value
         snapshot = loaded.0

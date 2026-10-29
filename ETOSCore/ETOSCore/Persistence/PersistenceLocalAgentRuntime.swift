@@ -30,7 +30,6 @@ extension PersistenceGRDBStore {
 
     func saveLocalAgentMode(_ mode: LocalAgentMode, sessionID: UUID, at date: Date) throws {
         try dbPool.write { db in
-            try ensureSessionExists(db, sessionID: sessionID)
             try db.execute(
                 sql: """
                 INSERT INTO local_agent_session_modes (session_id, mode, updated_at)
@@ -61,7 +60,6 @@ extension PersistenceGRDBStore {
         at date: Date
     ) throws {
         try dbPool.write { db in
-            try ensureSessionExists(db, sessionID: sessionID)
             try db.execute(
                 sql: """
                 INSERT INTO browser_agent_session_preferences (session_id, data_profile, updated_at)
@@ -84,7 +82,6 @@ extension PersistenceGRDBStore {
         }
         let contextData = try LocalAgentPersistenceCoding.encoder.encode(context)
         try dbPool.write { db in
-            try ensureSessionExists(db, sessionID: context.sessionID)
             try db.execute(
                 sql: """
                 INSERT INTO local_agent_runs (
@@ -221,9 +218,6 @@ extension PersistenceGRDBStore {
 
     func saveLocalAgentWorkspace(_ workspace: LocalAgentWorkspace) throws {
         try dbPool.write { db in
-            if let sessionID = workspace.sessionID {
-                try ensureSessionExists(db, sessionID: sessionID)
-            }
             try db.execute(
                 sql: """
                 INSERT INTO local_agent_workspaces (
@@ -318,9 +312,6 @@ extension PersistenceGRDBStore {
     func saveLocalLinuxJob(_ job: LocalLinuxJob) throws {
         let requestData = try LocalAgentPersistenceCoding.encoder.encode(job.request)
         try dbPool.write { db in
-            if let sessionID = job.sessionID {
-                try ensureSessionExists(db, sessionID: sessionID)
-            }
             try db.execute(
                 sql: """
                 INSERT INTO local_linux_jobs (
@@ -571,9 +562,6 @@ extension PersistenceGRDBStore {
 
     func saveLocalLinuxAudit(_ audit: LocalLinuxAuditRecord) throws {
         try dbPool.write { db in
-            if let sessionID = audit.sessionID {
-                try ensureSessionExists(db, sessionID: sessionID)
-            }
             try db.execute(
                 sql: """
                 INSERT INTO local_linux_audit (
@@ -653,64 +641,6 @@ extension PersistenceAuxiliaryGRDBStore {
         try dbPool.write { db in
             try db.execute(
                 sql: "DELETE FROM local_linux_environment_variables WHERE id = ?",
-                arguments: [id.uuidString]
-            )
-        }
-    }
-
-    func loadLocalAgentPromptProfiles() throws -> [LocalAgentPromptProfile] {
-        try dbPool.read { db in
-            try Row.fetchAll(
-                db,
-                sql: "SELECT * FROM local_agent_prompt_profiles ORDER BY is_built_in DESC, updated_at DESC"
-            ).compactMap { row in
-                guard let id = UUID(uuidString: row["id"]) else { return nil }
-                let createdAt: Double = row["created_at"]
-                let updatedAt: Double = row["updated_at"]
-                return LocalAgentPromptProfile(
-                    id: id,
-                    title: row["title"],
-                    content: row["content"],
-                    isBuiltIn: row["is_built_in"],
-                    isEnabled: row["is_enabled"],
-                    createdAt: Date(timeIntervalSince1970: createdAt),
-                    updatedAt: Date(timeIntervalSince1970: updatedAt)
-                )
-            }
-        }
-    }
-
-    func saveLocalAgentPromptProfile(_ profile: LocalAgentPromptProfile) throws {
-        try dbPool.write { db in
-            try db.execute(
-                sql: """
-                INSERT INTO local_agent_prompt_profiles (
-                    id, title, content, is_built_in, is_enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    title = excluded.title,
-                    content = excluded.content,
-                    is_built_in = excluded.is_built_in,
-                    is_enabled = excluded.is_enabled,
-                    updated_at = excluded.updated_at
-                """,
-                arguments: [
-                    profile.id.uuidString,
-                    profile.title,
-                    profile.content,
-                    profile.isBuiltIn,
-                    profile.isEnabled,
-                    profile.createdAt.timeIntervalSince1970,
-                    profile.updatedAt.timeIntervalSince1970
-                ]
-            )
-        }
-    }
-
-    func deleteLocalAgentPromptProfile(id: UUID) throws {
-        try dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM local_agent_prompt_profiles WHERE id = ? AND is_built_in = 0",
                 arguments: [id.uuidString]
             )
         }

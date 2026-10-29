@@ -22,7 +22,6 @@ extension ShortcutToolStore {
         }
         guard let result else { throw ShortcutToolSettingsWriteError.persistenceFailed }
         guard let tools = result else { throw ShortcutToolSettingsWriteError.changedExternally }
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
         return tools
     }

@@ -39,20 +39,6 @@ extension AppToolManager {
             return try await current.executeJavaScript(argumentsJSON: argumentsJSON, engine: .javaScriptCore)
         case .createCustomJSCJSTool:
             return try await current.executeCreateCustomJSTool(argumentsJSON: argumentsJSON, engine: .javaScriptCore)
-        case .executeWebKitJavaScript:
-            return try await current.executeJavaScript(argumentsJSON: argumentsJSON, engine: .webKitBridge)
-        case .createCustomWebKitJSTool:
-            return try await current.executeCreateCustomJSTool(argumentsJSON: argumentsJSON, engine: .webKitBridge)
-        case .editMemory:
-            return try await current.executeEditMemory(
-                argumentsJSON: argumentsJSON,
-                context: MemoryMutationContext(
-                    origin: .tool,
-                    sourceSessionID: sourceSessionID,
-                    sourceMessageID: sourceMessageID,
-                    sourceToolName: kind.toolName
-                )
-            )
         case .submitFeedbackTicket:
             return try await current.executeSubmitFeedbackTicket(argumentsJSON: argumentsJSON)
         case .listSandboxDirectory:
@@ -73,8 +59,6 @@ extension AppToolManager {
             return try await current.executeCreateSandboxDirectory(argumentsJSON: argumentsJSON)
         case .batchEditSandboxFile:
             return try await current.executeBatchEditSandboxFile(argumentsJSON: argumentsJSON)
-        case .listMemories:
-            return try await current.executeListMemories(argumentsJSON: argumentsJSON)
         case .listSQLiteTables:
             return try await current.executeListSQLiteTables(argumentsJSON: argumentsJSON)
         case .querySQLite:

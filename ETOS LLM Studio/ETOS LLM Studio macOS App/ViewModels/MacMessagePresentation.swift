@@ -214,8 +214,7 @@ actor MacMessagePresentationStore {
                           lineSpacing: Double = FontLibrary.defaultIOSLineSpacingEm,
                           advanced: Bool = false, actionBar: MessageActionBarConfiguration = .defaultConfiguration,
                           providers: [Provider] = []) async throws -> MacRoleplayPresentation {
-        let worldbooks = service.loadWorldbooks()
-        let context = sessionID.map { RoleplayPresentationSnapshot(sessionID: $0, messages: messages, worldbooks: worldbooks) }
+        let context = sessionID.map { RoleplayPresentationSnapshot(sessionID: $0, messages: messages) }
         let rows = try await prepare(messages, markdown: markdown, language: language, sessionID: sessionID,
                                      roleplay: context, rules: MessageRegexRuleStore.currentRules(),
                                      activeResponseID: sessionID.flatMap { service.activeResponseMessageID(for: $0) },
@@ -224,7 +223,7 @@ actor MacMessagePresentationStore {
         var scripts: [RoleplayPreparedDocument] = []
         for id in scriptSessionIDs {
             try Task.checkCancellation()
-            let snapshot = id == sessionID ? context : RoleplayPresentationSnapshot(sessionID: id, messages: service.messagesSnapshot(for: id), worldbooks: worldbooks)
+            let snapshot = id == sessionID ? context : RoleplayPresentationSnapshot(sessionID: id, messages: service.messagesSnapshot(for: id))
             scripts.append(contentsOf: snapshot?.scriptDocuments() ?? [])
         }
         return MacRoleplayPresentation(rows: rows, scripts: scripts, buttons: context?.buttons() ?? [])

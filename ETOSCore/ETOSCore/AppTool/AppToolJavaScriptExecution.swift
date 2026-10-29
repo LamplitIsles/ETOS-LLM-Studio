@@ -10,37 +10,24 @@ import Foundation
 import Combine
 import os.log
 
-#if canImport(JavaScriptCore) && !os(watchOS)
+#if canImport(JavaScriptCore)
 import JavaScriptCore
-#endif
-
-#if os(watchOS)
-import Darwin
 #endif
 
 public enum AppToolCustomJSEngine: String, Codable, Hashable, CaseIterable, Sendable {
     case javaScriptCore = "javascript_core"
-    case webKitBridge = "webkit_bridge"
 
     public var displayName: String {
         switch self {
         case .javaScriptCore:
             return NSLocalizedString("Apple JavaScriptCore", comment: "JavaScriptCore engine display name")
-        case .webKitBridge:
-            return NSLocalizedString("watchOS WebKit JavaScript bridge", comment: "watchOS WebKit JavaScript bridge engine display name")
         }
     }
 
     public var isAvailableOnCurrentPlatform: Bool {
         switch self {
         case .javaScriptCore:
-            #if canImport(JavaScriptCore) && !os(watchOS)
-            return true
-            #else
-            return false
-            #endif
-        case .webKitBridge:
-            #if os(watchOS)
+            #if canImport(JavaScriptCore)
             return true
             #else
             return false
@@ -64,15 +51,12 @@ public struct AppToolCustomJSTool: Identifiable, Codable, Hashable, Sendable {
         switch engine {
         case .javaScriptCore:
             return AppToolManager.customJSCJSToolNamePrefix + id
-        case .webKitBridge:
-            return AppToolManager.customWebKitJSToolNamePrefix + id
         }
     }
 }
 
 extension AppToolManager {
     nonisolated public static let customJSCJSToolNamePrefix = "app_custom_jsc_"
-    nonisolated public static let customWebKitJSToolNamePrefix = "app_custom_webkit_js_"
 
     struct CustomJSToolIdentity: Hashable, Sendable {
         let engine: AppToolCustomJSEngine
@@ -80,17 +64,13 @@ extension AppToolManager {
     }
 
     nonisolated public static func isCustomJSToolName(_ name: String) -> Bool {
-        name.hasPrefix(customJSCJSToolNamePrefix) || name.hasPrefix(customWebKitJSToolNamePrefix)
+        name.hasPrefix(customJSCJSToolNamePrefix)
     }
 
     nonisolated static func customJSToolIdentity(from toolName: String) -> CustomJSToolIdentity? {
         if toolName.hasPrefix(customJSCJSToolNamePrefix) {
             let id = String(toolName.dropFirst(customJSCJSToolNamePrefix.count))
             return id.isEmpty ? nil : CustomJSToolIdentity(engine: .javaScriptCore, id: id)
-        }
-        if toolName.hasPrefix(customWebKitJSToolNamePrefix) {
-            let id = String(toolName.dropFirst(customWebKitJSToolNamePrefix.count))
-            return id.isEmpty ? nil : CustomJSToolIdentity(engine: .webKitBridge, id: id)
         }
         return nil
     }
@@ -420,25 +400,17 @@ extension AppToolManager {
 
         switch engine {
         case .javaScriptCore:
-            #if canImport(JavaScriptCore) && !os(watchOS)
+            #if canImport(JavaScriptCore)
             return try await executeWrappedJavaScriptWithJavaScriptCore(script)
             #else
             throw AppToolExecutionError.invalidArguments(
                 NSLocalizedString("错误：当前平台不支持 Apple JavaScriptCore。", comment: "JavaScriptCore unavailable")
             )
             #endif
-        case .webKitBridge:
-            #if os(watchOS)
-            return try await executeWrappedJavaScriptWithWebKitBridge(script)
-            #else
-            throw AppToolExecutionError.invalidArguments(
-                NSLocalizedString("错误：当前平台不支持 watchOS WebKit JavaScript bridge。", comment: "WebKit bridge unavailable")
-            )
-            #endif
         }
     }
 
-    #if canImport(JavaScriptCore) && !os(watchOS)
+    #if canImport(JavaScriptCore)
     private static func executeWrappedJavaScriptWithJavaScriptCore(_ script: String) async throws -> JavaScriptExecutionResult {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -463,46 +435,6 @@ extension AppToolManager {
     }
     #endif
 
-    #if os(watchOS)
-    @MainActor
-    private static func executeWrappedJavaScriptWithWebKitBridge(_ script: String) async throws -> JavaScriptExecutionResult {
-        // watchOS 的 WebKit 不通过公开 Swift 模块暴露，这里只在运行时桥接 WKWebView。
-        _ = dlopen("/System/Library/Frameworks/WebKit.framework/WebKit", RTLD_LAZY)
-        guard let webViewClass = NSClassFromString("WKWebView") as? NSObject.Type else {
-            throw AppToolExecutionError.invalidArguments(
-                NSLocalizedString("错误：当前 watchOS 运行时没有可用的 WKWebView。", comment: "watchOS WebKit bridge unavailable")
-            )
-        }
-        let webView = webViewClass.init()
-        let selector = NSSelectorFromString("evaluateJavaScript:completionHandler:")
-        guard webView.responds(to: selector) else {
-            throw AppToolExecutionError.invalidArguments(
-                NSLocalizedString("错误：当前 watchOS WKWebView 不支持 evaluateJavaScript。", comment: "watchOS evaluateJavaScript unavailable")
-            )
-        }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let completion: @convention(block) (Any?, Error?) -> Void = { value, error in
-                if let error {
-                    continuation.resume(throwing: AppToolExecutionError.invalidArguments(error.localizedDescription))
-                    return
-                }
-                do {
-                    continuation.resume(
-                        returning: try parseJavaScriptEnvelope(
-                            value as? String,
-                            engine: .webKitBridge
-                        )
-                    )
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-            let completionObject = unsafeBitCast(completion, to: AnyObject.self)
-            webView.perform(selector, with: script as NSString, with: completionObject)
-        }
-    }
-    #endif
 }
 
 extension AppToolManager {

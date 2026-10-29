@@ -13,8 +13,6 @@ import Foundation
 /// 历史会话检索命中来源
 public enum SessionHistorySearchHitSource: Hashable, Sendable {
     case sessionName
-    case topicPrompt
-    case enhancedPrompt
     case userMessage
     case assistantMessage
     case systemMessage
@@ -26,7 +24,7 @@ public enum SessionHistorySearchHitSource: Hashable, Sendable {
 public struct SessionHistorySearchMatch: Hashable, Sendable {
     public let source: SessionHistorySearchHitSource
     public let preview: String
-    /// 命中消息序号（从 1 开始）。标题/提示词命中时为 nil。
+    /// 命中消息序号（从 1 开始）。标题命中时为 nil。
     public let messageOrdinal: Int?
 
     public init(source: SessionHistorySearchHitSource, preview: String, messageOrdinal: Int? = nil) {
@@ -162,26 +160,6 @@ public enum SessionHistorySearchSupport {
                 SessionHistorySearchMatch(
                     source: .sessionName,
                     preview: previewText(session.name, matcher: matcher)
-                )
-            )
-        }
-
-        if let topicPrompt = nonEmptyTrimmed(session.topicPrompt),
-           matches(topicPrompt, with: matcher) {
-            collectedMatches.append(
-                SessionHistorySearchMatch(
-                    source: .topicPrompt,
-                    preview: previewText(topicPrompt, matcher: matcher)
-                )
-            )
-        }
-
-        if let enhancedPrompt = nonEmptyTrimmed(session.enhancedPrompt),
-           matches(enhancedPrompt, with: matcher) {
-            collectedMatches.append(
-                SessionHistorySearchMatch(
-                    source: .enhancedPrompt,
-                    preview: previewText(enhancedPrompt, matcher: matcher)
                 )
             )
         }

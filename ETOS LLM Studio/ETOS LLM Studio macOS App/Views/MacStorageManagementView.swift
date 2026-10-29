@@ -35,20 +35,12 @@ struct MacStorageManagementView: View {
                         label: { Label(value.other.title, systemImage: "doc") }
                 }
                 Section {
-                    Button(NSLocalizedString("清理孤立数据", comment: "")) {
-                        actions.clear(); confirmation = MacStorageConfirmation(mutation: .orphans, detail: value.orphanDescription)
-                    }.disabled(value.orphanCount == 0 || actions.isWorking)
-                    Text(value.orphanDescription).font(.footnote).foregroundStyle(.secondary)
                     Button(NSLocalizedString("清理所有缓存", comment: ""), role: .destructive) {
                         actions.clear(); confirmation = MacStorageConfirmation(mutation: .cache,
                             detail: NSLocalizedString("Mac 媒体缓存清理说明", comment: ""))
                     }.disabled(value.cacheBytes == 0 || actions.isWorking)
                     LabeledContent(NSLocalizedString("缓存", comment: ""), value: value.cache).font(.footnote).foregroundStyle(.secondary)
                 } header: { Text(NSLocalizedString("清理工具", comment: "")) }
-                footer: {
-                    Text(NSLocalizedString("孤立数据包括：幽灵会话（消息文件丢失）、孤立音频/图片文件（无会话引用）、无效音频引用（文件已删除）。", comment: ""))
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
             }
             Section {
                 NavigationLink { MacLinuxWorkspacesView(isActive: isActive, runtime: workspace.linux) }
@@ -74,7 +66,6 @@ struct MacStorageManagementView: View {
                 .readOnly("loading", label: NSLocalizedString("正在统计", comment: ""), value: { .bool(model.isLoading) }),
                 .readOnly("total_bytes", label: NSLocalizedString("总使用空间", comment: ""), value: { .int(Int(clamping: model.value?.totalBytes ?? 0)) }),
                 .readOnly("cache_bytes", label: NSLocalizedString("缓存", comment: ""), value: { .int(Int(clamping: model.value?.cacheBytes ?? 0)) }),
-                .readOnly("orphan_count", label: NSLocalizedString("孤立数据", comment: ""), value: { .int(model.value?.orphanCount ?? 0) }),
                 .readOnly("categories", label: NSLocalizedString("存储分类", comment: ""), value: { model.value?.guideCategories ?? .array([]) })
             ])
     }

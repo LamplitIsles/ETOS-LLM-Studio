@@ -66,9 +66,7 @@ struct ThirdPartyImportKelivoTests {
         )
 
         #expect(prepared.package.options.contains(.providers))
-        #expect(prepared.package.options.contains(.sessions))
         #expect(prepared.package.providers.count == 1)
-        #expect(prepared.package.sessions.count == 1)
         #expect(prepared.warnings.isEmpty)
 
         let provider = prepared.package.providers[0]
@@ -76,13 +74,6 @@ struct ThirdPartyImportKelivoTests {
         #expect(provider.baseURL == "https://generativelanguage.googleapis.com/v1beta")
         #expect(provider.models.map(\.modelName) == ["gemini-2.5-pro"])
 
-        let session = prepared.package.sessions[0]
-        #expect(session.session.name == "Kelivo 测试会话")
-        #expect(session.messages.count == 2)
-        #expect(session.messages[0].role == .user)
-        #expect(session.messages[1].role == .assistant)
-        #expect(session.messages[1].content == "推理内容")
-        #expect(session.messages[1].tokenUsage?.totalTokens == 42)
     }
 
     @Test("Kelivo 的显式 providerType 优先于模型名推断")

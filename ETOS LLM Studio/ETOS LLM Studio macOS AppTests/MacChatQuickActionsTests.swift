@@ -15,10 +15,10 @@ struct MacChatQuickActionsTests {
 
     @Test("空配置回退到全部，单项配置保留直接入口")
     func fallbackAndSingleEntryRemainUsable() {
-        #expect(MacChatQuickActionPresentation(rawValue: "").selectedRows.count == 15)
-        let state = MacChatQuickActionPresentation(rawValue: "contextCompression")
-        #expect(state.selectedRows.map(\.action) == [.contextCompression])
-        #expect(state.selectedRows.first?.systemImage == "rectangle.compress.vertical")
+        #expect(MacChatQuickActionPresentation(rawValue: "").selectedRows.count == ChatQuickAction.allCases.count)
+        let state = MacChatQuickActionPresentation(rawValue: "browser")
+        #expect(state.selectedRows.map(\.action) == [.browser])
+        #expect(state.selectedRows.first?.systemImage == "safari")
     }
 
     @Test("向导拒绝空列表、未知项、重复项和错误类型")
@@ -34,14 +34,14 @@ struct MacChatQuickActionsTests {
 
     @Test("向导确认的选择采用数据库规范顺序")
     func guideSelectionNormalizesBeforeSaving() throws {
-        let actions = try MacChatQuickActionPresentation.guideActions(.array([.string("worldbook"), .string("settings")]))
-        #expect(actions == [.settings, .worldbook])
-        #expect(ChatQuickActionSelection.encode(actions) == "settings,worldbook")
+        let actions = try MacChatQuickActionPresentation.guideActions(.array([.string("browser"), .string("settings")]))
+        #expect(actions == [.settings, .browser])
+        #expect(ChatQuickActionSelection.encode(actions) == "settings,browser")
     }
 
     @Test("目录中每项都有独立页面或明确的原生入口")
     func allActionsHaveDestinations() {
-        let native: Set<ChatQuickAction> = [.temporaryChat, .settings, .dailyPulse, .contextCompression]
+        let native: Set<ChatQuickAction> = [.temporaryChat, .settings, .dailyPulse]
         for action in ChatQuickAction.allCases {
             let page = MacChatQuickActionPage(rawValue: action.rawValue)
             #expect((page != nil) != native.contains(action))

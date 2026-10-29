@@ -764,7 +764,7 @@ struct ConversationRuntimeTests {
     @MainActor
     @Test("流式更新只替换加载消息，不覆盖并发插入的 steering")
     func streamingMergePreservesConcurrentSteering() {
-        let service = ChatService(memoryManager: MemoryManager())
+        let service = ChatService()
         let session = service.createSavedSession(name: "并发 steering", activate: false)
         defer { service.deleteSessions([session]) }
         let loading = ChatMessage(role: .assistant, content: "生成中")

@@ -13,9 +13,6 @@ import MapKit
 #if os(iOS) && canImport(UIKit)
 import UIKit
 #endif
-#if os(watchOS) && canImport(WatchKit)
-import WatchKit
-#endif
 
 actor MCPNativeMapsExecutor {
     func execute(toolName: String, arguments: [String: Any]) async throws -> [String: Any] {
@@ -131,14 +128,9 @@ private extension MCPNativeMapsExecutor {
                 NSLocalizedString("url 必须是完整有效的 URL。", comment: "Invalid native open URL")
             )
         }
-        #if os(watchOS)
-        // openSystemURL 在 watchOS 只提供电话与短信入口。
-        let allowedSchemes: Set<String> = ["tel", "sms"]
-        #else
         let allowedSchemes: Set<String> = [
             "http", "https", "mailto", "tel", "sms", "facetime", "facetime-audio", "maps"
         ]
-        #endif
         guard allowedSchemes.contains(scheme) else {
             throw MCPNativeCapabilityError.invalidArgument(
                 NSLocalizedString("该 URL scheme 不在允许列表中。", comment: "Native open URL scheme denied")
@@ -148,11 +140,6 @@ private extension MCPNativeMapsExecutor {
         #if os(iOS) && canImport(UIKit)
         let opened = await UIApplication.shared.open(url)
         return ["opened": opened, "url": url.absoluteString]
-        #elseif os(watchOS) && canImport(WatchKit)
-        await MainActor.run {
-            WKApplication.shared().openSystemURL(url)
-        }
-        return ["requested": true, "url": url.absoluteString]
         #else
         throw MCPNativeCapabilityError.unavailable(
             NSLocalizedString("当前平台不能打开系统 URL。", comment: "System URL opening unavailable")

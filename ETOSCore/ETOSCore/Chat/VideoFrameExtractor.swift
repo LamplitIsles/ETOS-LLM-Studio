@@ -120,16 +120,9 @@ public struct VideoFrameExtractor: Sendable {
         from attachment: FileAttachment,
         configuration: VideoFrameExtractionConfiguration
     ) async throws -> VideoFrameExtractionResult {
-#if os(watchOS)
-        return try await VideoFrameExtractionRelay.shared.extractFrames(
-            from: attachment,
-            configuration: configuration
-        )
-#else
         try await Task.detached(priority: .userInitiated) {
             try await extractFramesLocally(from: attachment, configuration: configuration)
         }.value
-#endif
     }
 
     public static func plannedTimestamps(

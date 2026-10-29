@@ -56,7 +56,6 @@ struct MacChatQuickActionsView: View {
         case .temporaryChat: MacTemporaryChatMenu(showingIntroduction: $showsTemporaryIntroduction)
         case .settings: SettingsLink { Label(row.title, systemImage: row.systemImage) }
         case .dailyPulse: MacDailyPulseEntry(model: workspace.dailyPulse)
-        case .contextCompression: MacContextCompressionEntry(model: workspace.contextCompression)
         default:
             if let page = MacChatQuickActionPage(rawValue: row.action.rawValue) {
                 Button {
@@ -64,7 +63,7 @@ struct MacChatQuickActionsView: View {
                     guard page != .localTerminal || (configuration.localLinuxEnabled && !workspace.linux.isSuspended && !workspace.linux.isWorking) else { return }
                     guard page != .browser || !workspace.browser.isSuspended else { return }
                     destination = MacChatQuickActionDestination(page: page, sessionID: workspace.currentSession?.id,
-                        isTemporary: workspace.temporaryChatMemoryMode != nil)
+                        isTemporary: workspace.isTemporaryChat)
                 } label: { Label(row.title, systemImage: row.systemImage) }
                     .disabled((page.requiresSession && workspace.currentSession == nil)
                         || (page == .browser && workspace.browser.isSuspended)
@@ -102,12 +101,10 @@ struct MacChatQuickActionSheet: View {
         switch target.page {
         case .toolCenter: MacToolCenterView(isActive: available)
         case .usageAnalytics: MacUsageAnalyticsView(isActive: available)
-        case .memory: MacMemorySystemView(isActive: available)
         case .mcp: MacMCPListView(isActive: available)
         case .agentSkills: MacSkillsView(isActive: available, model: workspace.skills)
         case .shortcuts: MacShortcutToolsView(isActive: available, model: workspace.shortcutTools)
         case .roleplay: MacRoleplayLibraryView(model: workspace.roleplayModel)
-        case .worldbook: MacWorldbookListView(model: workspace.worldbookModel)
         case .extendedFeatures: MacExtendedFeaturesView(isActive: available)
         case .browser:
             MacBrowserView(sessionID: target.sessionID, isTemporary: target.isTemporary, isActive: available, model: workspace.browser)

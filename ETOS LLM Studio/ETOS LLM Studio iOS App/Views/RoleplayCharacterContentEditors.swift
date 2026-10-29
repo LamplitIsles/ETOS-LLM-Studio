@@ -456,10 +456,6 @@ struct RoleplayCharacterProfileEditorView: View {
                 minimumHeight: 180
             )
             multilineSection(
-                NSLocalizedString("系统提示词", comment: "Character system prompt"),
-                text: $character.systemPrompt
-            )
-            multilineSection(
                 NSLocalizedString("历史后指令", comment: "Character post-history instructions"),
                 text: $character.postHistoryInstructions
             )

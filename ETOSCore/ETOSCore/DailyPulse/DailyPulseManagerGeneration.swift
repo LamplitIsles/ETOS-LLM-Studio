@@ -43,10 +43,6 @@ extension DailyPulseManager {
         ) else { return }
         let now = Date()
         let generationDayKey = targetDayKey ?? Self.dayKey(for: now)
-        guard shouldGenerateOnCurrentDevice(trigger: trigger) else {
-            logger.info("每日脉冲由当前可达的 iPhone 负责生成，手表本次跳过。")
-            return
-        }
         let previousAttempt = generationRuntimeState.attempts.first(where: { $0.dayKey == generationDayKey })
         guard Self.shouldAttemptGeneration(
             trigger: trigger,
@@ -309,19 +305,6 @@ extension DailyPulseManager {
         }
     }
 
-    private func shouldGenerateOnCurrentDevice(trigger: DailyPulseTrigger) -> Bool {
-#if os(watchOS) && canImport(WatchConnectivity)
-        return Self.shouldGenerateOnCurrentDevice(
-            trigger: trigger,
-            isWatchOS: true,
-            syncEnabled: isWatchConnectivitySyncEnabled(),
-            companionReachable: WatchSyncManager.shared.isCompanionReachable
-        )
-#else
-        return true
-#endif
-    }
-
     func persistTasks() {
         tasks = Self.sortedTasks(tasks)
         let snapshot = tasks
@@ -400,21 +383,16 @@ extension DailyPulseManager {
         for targetDayKey: String,
         sessionLimit: Int
     ) async -> DailyPulseGenerationInput {
-        await memoryManager.waitForInitialization()
         prunePendingCurationIfNeeded(referenceDate: Date())
         let sessionExcerpts = await buildSessionExcerpts(limit: sessionLimit)
-        let memories = buildMemoryExcerpts()
         let requestLogSummary = buildRequestLogSummary()
         let activeTasks = pendingTasks
         let preferenceProfile = Self.makePreferenceProfile(history: feedbackHistory, recentRuns: runs)
         let externalContext = buildExternalContext()
-        let globalSystemPrompt = GlobalSystemPromptStore.load().activeSystemPrompt
         return DailyPulseGenerationInput(
             focusText: focusText.trimmingCharacters(in: .whitespacesAndNewlines),
             curationText: Self.activeCurationText(for: targetDayKey, pendingCuration: pendingCuration),
-            globalSystemPrompt: globalSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             sessionExcerpts: sessionExcerpts,
-            memories: memories,
             requestLogSummary: requestLogSummary,
             activeTasks: activeTasks,
             preferenceProfile: preferenceProfile,
@@ -480,7 +458,7 @@ extension DailyPulseManager {
            !orderedSessions.contains(where: { $0.id == current.id }) {
             orderedSessions.insert(current, at: 0)
         }
-        let sessions = orderedSessions
+        let sessions = orderedSessions.map { ($0, chatService.messagesSnapshot(for: $0.id)) }
         let excerptLimit = max(1, limit)
         let messageLimit = maxMessagesPerSession
         let userRole = NSLocalizedString("用户", comment: "Daily Pulse prompt user role label")
@@ -488,8 +466,9 @@ extension DailyPulseManager {
         let untitledName = NSLocalizedString("未命名会话", comment: "Untitled session fallback")
 
         return await Task.detached(priority: .utility) {
-            let loaded = sessions.enumerated().compactMap { offset, session -> (Int, DailyPulseSessionExcerpt)? in
-                let messages = Persistence.loadMessages(for: session.id)
+            let loaded = sessions.enumerated().compactMap { offset, item -> (Int, DailyPulseSessionExcerpt)? in
+                let (session, snapshot) = item
+                let messages = snapshot
                     .filter { $0.role == .user || $0.role == .assistant }
                 guard !messages.isEmpty else { return nil }
 
@@ -535,15 +514,6 @@ extension DailyPulseManager {
                 .prefix(excerptLimit)
                 .map { $0.1 }
         }.value
-    }
-
-    private func buildMemoryExcerpts() -> [String] {
-        let now = Date()
-        return memoryManager.currentMemoriesSnapshot()
-            .filter { $0.isValid(at: now) }
-            .prefix(maxMemoriesInPrompt)
-            .map { Self.truncated($0.content.trimmingCharacters(in: .whitespacesAndNewlines), limit: 120) }
-            .filter { !$0.isEmpty }
     }
 
     private func buildRequestLogSummary() -> String {

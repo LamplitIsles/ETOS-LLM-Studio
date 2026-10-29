@@ -25,7 +25,6 @@ extension ChatService {
 
     public func deleteRoleplayCharacterDraft(_ original: RoleplayCharacter) throws {
         guard roleplayStore.deleteCharacter(id: original.id, expected: original) else { throw RoleplayDraftWriteError.persistenceFailed }
-        if let worldbookID = original.embeddedWorldbookID { _ = worldbookStore.deleteWorldbook(id: worldbookID) }
     }
 
     public func deletePersonaDraft(_ original: PersonaProfile) throws {

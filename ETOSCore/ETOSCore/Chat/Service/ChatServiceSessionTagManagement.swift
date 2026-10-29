@@ -25,7 +25,6 @@ extension ChatService {
         tags.append(tag)
         tags = normalizedSessionTags(tags)
         sessionTagsSubject.send(tags)
-        Persistence.saveSessionTags(tags)
         logger.info("已创建会话标签: \(trimmedName)")
         return tag
     }
@@ -51,7 +50,6 @@ extension ChatService {
         tags[index].updatedAt = Date()
         tags = normalizedSessionTags(tags)
         sessionTagsSubject.send(tags)
-        Persistence.saveSessionTags(tags)
         logger.info("已更新会话标签: \(trimmedName)")
     }
 
@@ -64,7 +62,6 @@ extension ChatService {
         guard tags.contains(where: { $0.id == tagID }) else { return }
         tags.removeAll { $0.id == tagID }
         sessionTagsSubject.send(tags)
-        Persistence.saveSessionTags(tags)
 
         var sessions = chatSessionsSubject.value
         var didUpdateSessions = false
@@ -79,7 +76,6 @@ extension ChatService {
                let updatedCurrent = sessions.first(where: { $0.id == current.id }) {
                 currentSessionSubject.send(updatedCurrent)
             }
-            Persistence.saveChatSessions(sessions)
         }
 
         logger.info("已删除会话标签。")
@@ -105,7 +101,6 @@ extension ChatService {
         if let current = currentSessionSubject.value, current.id == sessionID {
             currentSessionSubject.send(sessions[index])
         }
-        Persistence.saveChatSessions(sessions)
         logger.info("已更新会话标签绑定。")
     }
 
@@ -151,7 +146,6 @@ extension ChatService {
                 tags[index].updatedAt = Date()
                 tags = normalizedSessionTags(tags)
                 sessionTagsSubject.send(tags)
-                Persistence.saveSessionTags(tags)
             }
             return tags.first(where: { $0.id == systemTag.id }) ?? systemTag
         }
@@ -159,7 +153,6 @@ extension ChatService {
         tags.append(systemTag)
         tags = normalizedSessionTags(tags)
         sessionTagsSubject.send(tags)
-        Persistence.saveSessionTags(tags)
         logger.info("已创建系统颜色标签: \(systemTag.name)")
         return systemTag
     }

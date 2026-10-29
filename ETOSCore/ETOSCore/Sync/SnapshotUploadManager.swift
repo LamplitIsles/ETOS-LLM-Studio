@@ -139,8 +139,6 @@ public final class SnapshotUploadManager: ObservableObject {
         do {
             diagnostics.record("writes.flush.begin")
             await AppConfigStore.shared.flushPendingWrites()
-            await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
-            MemoryManager.flushCurrentInstancePersistenceWritesForSnapshot()
             let fileURL = try SnapshotBuilder.buildSnapshot(kind: request.kind, diagnostics: diagnostics)
             // 文件由任务持有，覆盖加密、网络失败和成功三条退出路径。
             defer { try? FileManager.default.removeItem(at: fileURL) }

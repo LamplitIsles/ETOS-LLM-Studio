@@ -3,45 +3,6 @@ import Testing
 @testable import ETOSCore
 
 extension ChatServiceTests {
-    @Test("实际请求按模型展开专属提示词，切换到未配置模型后清空且存储保留宏")
-    func modelPromptIsResolvedOnlyForTheCurrentRequest() async throws {
-        await cleanup()
-        setupMockResponsesForChatAndTitle()
-        var provider = dummyModel.provider
-        provider.models[0].prompt = "只属于模型甲的指令"
-        chatService.saveProviderFromManagement(provider)
-        let firstModel = try #require(activatedChatModels().first { $0.id == dummyModel.id })
-        let nextModel = try #require(activatedChatModels().first { $0.id != dummyModel.id })
-        var session = createPermanentTestSession(name: "模型专属宏")
-        session.toolContextIsolationEnabled = true
-        session.preferredModelIdentifier = firstModel.id
-        chatService.setCurrentSession(session)
-
-        await chatService.sendAndProcessMessage(
-            content: "user[{{model_prompt}}]", aiTemperature: 0, aiTopP: 1, systemPrompt: "global[{{model_prompt}}]",
-            maxChatHistory: 10, enableStreaming: false, enhancedPrompt: nil,
-            enableMemory: false, enableMemoryWrite: false, includeSystemTime: false
-        )
-        let first = try #require(mockAdapter.receivedMessages)
-        #expect(first.contains { $0.content.contains("global[只属于模型甲的指令]") })
-        let user = try #require(first.first { $0.role == .user && $0.content == "user[只属于模型甲的指令]" })
-
-        session.preferredModelIdentifier = nextModel.id
-        chatService.setCurrentSession(session)
-        await chatService.sendAndProcessMessage(
-            content: "继续", aiTemperature: 0, aiTopP: 1, systemPrompt: "global[{{model_prompt}}]",
-            maxChatHistory: 10, enableStreaming: false, enhancedPrompt: nil,
-            enableMemory: false, enableMemoryWrite: false, includeSystemTime: false
-        )
-        let second = try #require(mockAdapter.receivedMessages)
-        #expect(mockAdapter.receivedChatModel?.id == nextModel.id)
-        #expect(second.contains { $0.content.contains("global[]") })
-        #expect(second.first { $0.id == user.id }?.content == "user[]")
-        #expect(!second.contains { $0.content.contains("只属于模型甲的指令") })
-        #expect(Persistence.loadMessages(for: session.id).first { $0.id == user.id }?.content == "user[{{model_prompt}}]")
-        await cleanup()
-    }
-
     @Test("提示词与用户消息共享请求快照，三括号保留字面宏且持久化保持原文")
     func promptMacrosRenderAtRequestBoundary() async throws {
         await cleanup()
@@ -132,38 +93,5 @@ extension ChatServiceTests {
         await cleanup()
     }
 
-    @Test("增强提示词中的时间电量变化不进入前置提示词，并保留各协议尾部角色")
-    func changingTailMacrosPreservePromptPrefix() throws {
-        let templates = PromptMacroTemplates(
-            global: "稳定全局规则", conversation: "稳定会话规则", topic: "稳定话题规则",
-            enhanced: "time={{cur_datetime}} battery={{battery_level}}"
-        )
-        let first = templates.rendered(values: ["cur_datetime": "2026-01-01 12:00:00", "battery_level": "83"])
-        let second = templates.rendered(values: ["cur_datetime": "2026-01-01 12:01:00", "battery_level": "82"])
-        let firstSystem = chatService.buildFinalSystemPrompt(
-            global: first.global, conversationSystem: first.conversation, topic: first.topic,
-            memories: [], recentConversationSummaries: [], conversationProfile: nil, includeSystemTime: false
-        )
-        let secondSystem = chatService.buildFinalSystemPrompt(
-            global: second.global, conversationSystem: second.conversation, topic: second.topic,
-            memories: [], recentConversationSummaries: [], conversationProfile: nil, includeSystemTime: false
-        )
-        #expect(firstSystem == secondSystem)
-        #expect(!firstSystem.contains("time="))
 
-        for format in ["openai-compatible", "openai-responses", "anthropic", "gemini", LocalModelProviderBridge.apiFormat] {
-            let firstTail = try #require(chatService.makeEnhancedPromptMessage(
-                first.enhanced, apiFormat: format, openAIUsesSystemRole: false
-            ))
-            let secondTail = try #require(chatService.makeEnhancedPromptMessage(
-                second.enhanced, apiFormat: format, openAIUsesSystemRole: false
-            ))
-            #expect(firstTail.content != secondTail.content)
-            #expect(firstTail.role == (format == LocalModelProviderBridge.apiFormat ? .system : .user))
-            var messages = [ChatMessage(role: .system, content: firstSystem), ChatMessage(role: .user, content: "问题")]
-            chatService.appendTailContextMessage(firstTail, to: &messages, apiFormat: format)
-            #expect(messages.first?.content == firstSystem)
-            #expect(messages.last?.content.contains("battery=83") == true)
-        }
-    }
 }

@@ -142,7 +142,6 @@ struct MCPToolCenterDetailView: View {
 
 struct MCPToolCategoryDetailView: View {
     let currentSessionIsolationActive: Bool
-    let currentSessionMemoryIsolationActive: Bool
     let searchText: String
     let showEnabledOnly: Bool
 
@@ -227,7 +226,6 @@ struct MCPToolCategoryDetailView: View {
             settings: [
                 .bool("chat_tools_enabled", label: NSLocalizedString("向模型暴露 MCP 工具", comment: "向导设置字段"), get: { manager.chatToolsEnabled }, set: { manager.setChatToolsEnabled($0) }),
                 .readOnly("current_session_isolation_active", label: NSLocalizedString("当前会话屏蔽工具上下文", comment: "向导设置字段"), value: { .bool(currentSessionIsolationActive) }),
-                .readOnly("current_session_memory_isolation_active", label: NSLocalizedString("当前会话屏蔽记忆上下文", comment: "向导设置字段"), value: { .bool(currentSessionMemoryIsolationActive) }),
                 .readOnly("visible_tools", label: NSLocalizedString("MCP 工具", comment: "向导设置字段"), value: {
                     .array(filteredTools.map { available in
                         .dictionary([
@@ -291,8 +289,6 @@ struct MCPToolCategoryDetailView: View {
 
     private func isBlockedBySessionPolicy(_ available: MCPAvailableTool) -> Bool {
         currentSessionIsolationActive
-            || (currentSessionMemoryIsolationActive
-                && MCPBuiltInAppToolServer.category(for: available.server.id) == .memory)
     }
 }
 

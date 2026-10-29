@@ -89,50 +89,6 @@ extension AppToolManager {
         objectWillChange.send()
     }
 
-    func refreshCurrentSessionMessagesIfNeeded(mutatedPaths: [String]) {
-        let currentSessionID = ChatService.shared.currentSessionSubject.value?.id
-        guard Self.shouldRefreshCurrentSessionMessages(
-            afterMutatingPaths: mutatedPaths,
-            currentSessionID: currentSessionID
-        ) else {
-            return
-        }
-        ChatService.shared.reloadCurrentSessionMessagesFromPersistence()
-        Self.logger.info("检测到当前会话文件被拓展工具修改，已从磁盘刷新会话消息。")
-    }
-
-    static func shouldRefreshCurrentSessionMessages(
-        afterMutatingPaths paths: [String],
-        currentSessionID: UUID?
-    ) -> Bool {
-        guard let currentSessionID else { return false }
-        let normalizedPaths = Set(paths.compactMap(normalizedSandboxPathForComparison))
-        guard !normalizedPaths.isEmpty else { return false }
-
-        let currentID = currentSessionID.uuidString.lowercased()
-        let candidates = Set([
-            "documents/chatsessions/sessions/\(currentID).json",
-            "documents/chatsessions/\(currentID).json"
-        ])
-        return !normalizedPaths.intersection(candidates).isEmpty
-    }
-
-    private static func normalizedSandboxPathForComparison(_ rawPath: String) -> String? {
-        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let components = trimmed
-            .replacingOccurrences(of: "\\", with: "/")
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard !components.isEmpty else { return nil }
-
-        if components[0].lowercased() == "documents" {
-            return components.joined(separator: "/").lowercased()
-        }
-        return (["Documents"] + components).joined(separator: "/").lowercased()
-    }
-
     static func normalizedRequestID(_ rawValue: String?) -> String {
         if let normalized = normalizedOptionalText(rawValue) {
             return normalized

@@ -56,7 +56,7 @@ struct ModelSettingsView: View {
                 )
             }
 
-            if model.kind.supportsConnectivityTest && !LocalModelProviderBridge.isLocalProvider(provider) {
+            if model.kind.supportsConnectivityTest {
                 Section {
                     NavigationLink {
                         SingleModelConnectivityTestView(provider: provider, model: model)
@@ -84,17 +84,6 @@ struct ModelSettingsView: View {
                 ) {
                     specializedModelCapabilityRows
                 }
-            }
-
-            Section {
-                TextField(NSLocalizedString("model.prompt.title", value: "Model prompt", comment: "模型专属提示词"), text: $model.prompt, axis: .vertical)
-                    .lineLimit(4...10)
-            } header: {
-                Text(NSLocalizedString("model.prompt.title", value: "Model prompt", comment: "模型专属提示词"))
-            } footer: {
-                Text(NSLocalizedString("model.prompt.footer", value: "Use {{model_prompt}} in a prompt to insert this model's text. Empty values insert nothing.", comment: "模型提示词宏简要说明"))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
 
             Section(
@@ -187,9 +176,7 @@ struct ModelSettingsView: View {
                 RequestBodyPreviewInlineView(preview: preview)
             }
 
-            if !LocalModelProviderBridge.isLocalProvider(provider) {
-                modelAdapterSection
-            }
+            modelAdapterSection
         }
         .navigationDestination(isPresented: $isRequestBodyControlImportPresented) {
             RequestBodyControlImportView(sources: requestBodyControlImportSources) { source in
@@ -234,7 +221,6 @@ struct ModelSettingsView: View {
         fields["provider_name"] = GuideSnapshotField(label: NSLocalizedString("提供商", comment: "模型向导提供商"), value: .string(provider.name), access: .readOnly)
         fields["provider_id"] = GuideSnapshotField(label: NSLocalizedString("提供商 ID", value: "Provider ID", comment: "模型向导提供商标识"), value: .string(provider.id.uuidString), access: .readOnly)
         fields["effective_api_format"] = GuideSnapshotField(label: NSLocalizedString("API 格式", comment: "模型向导实际协议"), value: .string(effectiveAPIFormat), access: .readOnly)
-        fields["model_prompt"] = GuideSnapshotField(label: NSLocalizedString("model.prompt.title", value: "Model prompt", comment: "模型专属提示词"), value: .string(model.prompt))
         fields.merge([
             "display_name": GuideSnapshotField(
                 label: NSLocalizedString("模型名称", comment: "模型向导快照字段"),
@@ -290,7 +276,6 @@ struct ModelSettingsView: View {
                 throw GuideError.invalidToolArguments
             }
             let labels: [String: String] = [
-                "model_prompt": NSLocalizedString("model.prompt.title", value: "Model prompt", comment: "模型专属提示词"),
                 "display_name": NSLocalizedString("模型名称", comment: "模型向导修改字段"),
                 "model_id": NSLocalizedString("模型ID", comment: "模型向导修改字段"),
                 "picker_group": NSLocalizedString("分组名称", comment: "模型向导修改字段"),
@@ -299,7 +284,6 @@ struct ModelSettingsView: View {
             ]
             try GuideToolArguments.requireOnlyKeys(Set(labels.keys), in: arguments)
             _ = try GuideToolArguments.optionalString("display_name", in: arguments)
-            _ = try GuideToolArguments.optionalString("model_prompt", in: arguments)
             _ = try GuideToolArguments.optionalString("model_id", in: arguments)
             _ = try GuideToolArguments.optionalString("picker_group", in: arguments)
             _ = try GuideToolArguments.optionalString("api_format_override", in: arguments)
@@ -375,7 +359,6 @@ struct ModelSettingsView: View {
         switch proposal.toolName {
         case GuideToolCatalog.updateModelConfiguration.name:
             oldArguments = currentModelGuideArguments(for: proposal.arguments.keys)
-            if let value = try GuideToolArguments.optionalString("model_prompt", in: proposal.arguments) { model.prompt = value }
             if let value = try GuideToolArguments.optionalString("display_name", in: proposal.arguments) { model.displayName = value }
             if let value = try GuideToolArguments.optionalString("model_id", in: proposal.arguments) { model.modelName = value }
             if let value = try GuideToolArguments.optionalString("picker_group", in: proposal.arguments) {
@@ -419,7 +402,6 @@ struct ModelSettingsView: View {
         var values: [String: JSONValue] = [:]
         for key in keys {
             switch key {
-            case "model_prompt": values[key] = .string(model.prompt)
             case "display_name": values[key] = .string(model.displayName)
             case "model_id": values[key] = .string(model.modelName)
             case "picker_group": values[key] = .string(model.pickerGroupName ?? "")

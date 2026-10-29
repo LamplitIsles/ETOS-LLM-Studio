@@ -91,7 +91,7 @@ final class MacSkillsModel: ObservableObject {
 
     @discardableResult
     func mutate(_ mutation: SkillLibraryMutation, expectedEpoch: UUID) async throws -> String? {
-        guard canWrite, epoch == expectedEpoch, let manager else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch, let manager else { throw MacWorkspaceWriteError.busy }
         isWorking = true
         let task = Task { try await manager.mutateLibraryInBackground(mutation) }
         writeTask = task
@@ -116,7 +116,7 @@ final class MacSkillsModel: ObservableObject {
     }
 
     func prepareImport(_ source: MacSkillImportSource, expectedEpoch: UUID) async throws -> MacSkillImportPreview {
-        guard canWrite, epoch == expectedEpoch else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch else { throw MacWorkspaceWriteError.busy }
         isPreparingImport = true
         let task = Task.detached(priority: .utility) { try await MacSkillImportPreview.prepare(source) }
         importTask = task

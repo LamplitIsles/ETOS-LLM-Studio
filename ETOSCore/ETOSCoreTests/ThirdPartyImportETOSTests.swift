@@ -49,40 +49,6 @@ struct ThirdPartyImportETOSTests {
         #expect(prepared.package.appStorageSnapshot == snapshot)
     }
 
-    @Test("ETOS 导入兼容旧版纯 SyncPackage JSON")
-    func testPrepareETOSImportFromLegacyRawSyncPackage() throws {
-        let sandbox = makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: sandbox) }
-
-        let session = ChatSession(
-            id: UUID(),
-            name: "ETOS Legacy Session",
-            isTemporary: false
-        )
-        let message = ChatMessage(
-            id: UUID(),
-            role: .assistant,
-            content: "legacy session message"
-        )
-        let package = SyncPackage(
-            options: [.sessions],
-            sessions: [SyncedSession(session: session, messages: [message])]
-        )
-
-        let data = try JSONEncoder().encode(package)
-        let fileURL = sandbox.appendingPathComponent("legacy-sync.json")
-        try data.write(to: fileURL)
-
-        let prepared = try ThirdPartyImportService.prepareImport(
-            source: .etosBackup,
-            fileURL: fileURL
-        )
-
-        #expect(prepared.package.options.contains(.sessions))
-        #expect(prepared.package.sessions.count == 1)
-        #expect(prepared.package.sessions[0].session.name == "ETOS Legacy Session")
-    }
-
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

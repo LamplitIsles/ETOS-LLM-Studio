@@ -8,35 +8,19 @@ struct MacTemporaryChatMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                workspace.setTemporaryChat(memoryMode: .enabled)
-            } label: {
-                Label(NSLocalizedString("允许使用记忆", comment: ""), systemImage: workspace.temporaryChatMemoryMode == .enabled ? "checkmark" : "brain")
-            }
-            .disabled(!canChangeMode)
-            Button {
-                workspace.setTemporaryChat(memoryMode: .isolated)
-            } label: {
-                Label(NSLocalizedString("隔离记忆上下文", comment: ""), systemImage: workspace.temporaryChatMemoryMode == .isolated ? "checkmark" : "brain")
-            }
-            .disabled(!canChangeMode)
-            if workspace.temporaryChatMemoryMode != nil {
-                Divider()
-                Button(NSLocalizedString("保存为会话", comment: "")) { workspace.saveTemporaryChat() }
-                    .disabled(!workspace.canModifyCurrentHistory)
-            }
+            Button(NSLocalizedString("开启临时对话", comment: "")) { workspace.enableTemporaryChat() }
+                .disabled(!canChangeMode || workspace.isTemporaryChat)
             Divider()
             Button(NSLocalizedString("使用说明", comment: "")) { showingIntroduction = true }
         } label: {
             Label(NSLocalizedString("临时对话", comment: ""), systemImage: ChatQuickAction.temporaryChat.systemImage(
-                isTemporaryChatEnabled: workspace.temporaryChatMemoryMode != nil,
-                memoryMode: workspace.temporaryChatMemoryMode ?? .enabled))
+                isTemporaryChatEnabled: workspace.isTemporaryChat))
         }
         .disabled(!workspace.canManageLocalModels)
     }
 
     private var canChangeMode: Bool {
-        workspace.canModifyCurrentHistory && (workspace.temporaryChatMemoryMode != nil || workspace.messages.isEmpty)
+        workspace.canModifyCurrentHistory && (workspace.isTemporaryChat || workspace.messages.isEmpty)
     }
 }
 
@@ -50,7 +34,7 @@ struct MacTemporaryChatIntroductionView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text(NSLocalizedString("临时对话在保存前不写入聊天数据库，重新启动后不会恢复。允许使用记忆时，记忆读写仍遵循当前设置；隔离记忆会关闭该会话的记忆读取、写入和主动检索。系统只保留一个临时对话，新建时会复用它。需要保留消息时，请选择“保存为会话”。", comment: ""))
+                    Text(NSLocalizedString("临时对话只保存在运行期间，重新启动后不会恢复。", comment: ""))
                         .textSelection(.enabled)
                 }
             }
@@ -60,8 +44,8 @@ struct MacTemporaryChatIntroductionView: View {
                 id: "mac-temporary-chat-introduction", title: NSLocalizedString("临时对话", comment: ""),
                 documents: [GuideDocumentReference(id: "macos-workspace", title: "macOS Workspace")],
                 isActive: isActive && workspace.canManageLocalModels,
-                settings: [.readOnly("memory_mode", label: NSLocalizedString("状态", comment: ""), value: {
-                    .string(workspace.temporaryChatMemoryMode.map { $0.isMemoryEnabled ? "enabled" : "isolated" } ?? "disabled")
+                settings: [.readOnly("temporary_chat", label: NSLocalizedString("状态", comment: ""), value: {
+                    .bool(workspace.isTemporaryChat)
                 })]
             )
         }

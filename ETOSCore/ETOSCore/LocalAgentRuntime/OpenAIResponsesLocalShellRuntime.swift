@@ -22,20 +22,16 @@ public actor OpenAIResponsesLocalShellRuntime {
     }
 
     private struct RunEnvironment {
-        let leases: [LocalLinuxMountLease]
         let skills: [MountedSkill]
     }
 
     private let packageStore: SkillExecutionPackageStore
-    private let mountManager: LocalLinuxMountManager
     private var environments: [UUID: RunEnvironment] = [:]
 
     public init(
-        packageStore: SkillExecutionPackageStore = .shared,
-        mountManager: LocalLinuxMountManager = .shared
+        packageStore: SkillExecutionPackageStore = .shared
     ) {
         self.packageStore = packageStore
-        self.mountManager = mountManager
     }
 
     public func toolDefinition(for context: AgentRuntimeContext) async throws -> InternalToolDefinition {
@@ -94,40 +90,20 @@ public actor OpenAIResponsesLocalShellRuntime {
     }
 
     public func finishRun(id: UUID) {
-        guard let environment = environments.removeValue(forKey: id) else { return }
-        environment.leases.forEach { $0.release() }
+        environments.removeValue(forKey: id)
     }
 
+    #if os(macOS)
     private func prepareEnvironment(context: AgentRuntimeContext) async throws -> RunEnvironment {
-        #if os(macOS)
-        let leases: [LocalLinuxMountLease] = []
-        #else
-        var leases: [LocalLinuxMountLease] = []
-        #endif
         var mountedSkills: [MountedSkill] = []
-        do {
-            for snapshot in (context.skillSnapshots ?? []).sorted(by: { $0.skillName < $1.skillName }) {
-                let package = try await packageStore.materialize(
-                    skillName: snapshot.skillName,
-                    frozenSnapshot: snapshot
-                )
-                #if os(macOS)
-                let guestPath = package.path
-                #else
-                let guestPath = "/mnt/etos/skills/\(snapshot.skillID)/\(snapshot.versionDigest)"
-                let lease = try await mountManager.acquireReadOnlySkillMount(
-                    skillID: snapshot.skillID,
-                    hostDirectory: package,
-                    guestDirectory: guestPath
-                )
-                leases.append(lease)
-                #endif
-                mountedSkills.append(MountedSkill(snapshot: snapshot, guestPath: guestPath))
-            }
-            return RunEnvironment(leases: leases, skills: mountedSkills)
-        } catch {
-            leases.forEach { $0.release() }
-            throw error
+        for snapshot in (context.skillSnapshots ?? []).sorted(by: { $0.skillName < $1.skillName }) {
+            let package = try await packageStore.materialize(
+                skillName: snapshot.skillName,
+                frozenSnapshot: snapshot
+            )
+            mountedSkills.append(MountedSkill(snapshot: snapshot, guestPath: package.path))
         }
+        return RunEnvironment(skills: mountedSkills)
     }
+    #endif
 }

@@ -121,47 +121,6 @@ extension PersistenceGRDBStore {
         }
     }
 
-    func loadConversationRuntimeSessionStates() throws -> [ConversationRuntimeSessionState] {
-        try dbPool.read { db in
-            let sessionIDs = try String.fetchAll(
-                db,
-                sql: "SELECT id FROM sessions WHERE is_temporary = 0 AND container_session_id IS NULL ORDER BY sort_index ASC"
-            )
-            return try sessionIDs.compactMap { rawSessionID in
-                guard let sessionID = UUID(uuidString: rawSessionID) else { return nil }
-                let runStatusRaw = try String.fetchOne(
-                    db,
-                    sql: """
-                    SELECT status FROM conversation_runs
-                    WHERE session_id = ?
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT 1
-                    """,
-                    arguments: [rawSessionID]
-                )
-                let pendingEventCount = try Int.fetchOne(
-                    db,
-                    sql: """
-                    SELECT COUNT(*) FROM conversation_events
-                    WHERE destination_session_id = ? AND state IN ('pending', 'claimed')
-                    """,
-                    arguments: [rawSessionID]
-                ) ?? 0
-                let originRow = try Row.fetchOne(
-                    db,
-                    sql: "SELECT * FROM conversation_origins WHERE child_session_id = ?",
-                    arguments: [rawSessionID]
-                )
-                return ConversationRuntimeSessionState(
-                    sessionID: sessionID,
-                    runStatus: runStatusRaw.flatMap(ConversationRunStatus.init(rawValue:)),
-                    pendingEventCount: pendingEventCount,
-                    origin: originRow.flatMap(conversationOrigin(from:))
-                )
-            }
-        }
-    }
-
     func updateConversationRunStatus(
         id: UUID,
         status: ConversationRunStatus,

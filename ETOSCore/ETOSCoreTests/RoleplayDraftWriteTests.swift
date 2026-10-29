@@ -19,13 +19,11 @@ struct RoleplayDraftWriteTests {
         }
         try store.saveCharacterDraft(character, replacing: nil)
         try store.savePersonaDraft(persona, replacing: nil)
-        let bookID = UUID()
         let draft = SessionRoleplayBinding(sessionID: sessionID, characterIDs: [character.id, character.id], personaID: persona.id,
-                                           additionalWorldbookIDs: [bookID, bookID], selectedGreetingIndex: 2)
+                                           selectedGreetingIndex: 2)
         try store.saveBindingDraft(draft, replacing: nil)
         let original = try #require(store.binding(sessionID: sessionID))
         #expect(original.characterIDs == [character.id])
-        #expect(original.additionalWorldbookIDs == [bookID])
         #expect(store.preferredPersonaID() == persona.id)
         var edited = original
         edited.helperScriptsEnabled = false
@@ -34,7 +32,7 @@ struct RoleplayDraftWriteTests {
         #expect(throws: RoleplayDraftWriteError.self) { try store.saveBindingDraft(draft, replacing: nil) }
         #expect(!store.removeBinding(sessionID: sessionID, expected: original))
         let latest = try #require(store.binding(sessionID: sessionID))
-        #expect(!latest.helperScriptsEnabled && latest.additionalWorldbookIDs == [bookID])
+        #expect(!latest.helperScriptsEnabled)
         var missing = latest
         missing.characterIDs = [UUID()]
         #expect(throws: RoleplayDraftWriteError.self) { try store.saveBindingDraft(missing, replacing: latest) }
@@ -196,7 +194,7 @@ struct RoleplayDraftWriteTests {
         #expect(personaFiles == [latestName])
     }
 
-    @Test("导入卡片头像复用已安装资源，删除会清除头像与内嵌世界书")
+    @Test("导入卡片头像复用已安装资源，删除会清除头像")
     func importedAvatarUsesInstalledAsset() throws {
         let data = Data(#"{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"导入资源回归","assets":[{"type":"icon","uri":"data:image/png;base64,iVBORw0KGgo=","name":"main","ext":"png"}],"character_book":{"name":"测试世界书","entries":[{"keys":["key"],"content":"内容","enabled":true}]}}}"#.utf8)
         let service = ChatService.shared
@@ -207,10 +205,7 @@ struct RoleplayDraftWriteTests {
         #expect(saved.avatarFileName == asset)
         let url = Persistence.getImageDirectory().appendingPathComponent(asset)
         #expect(FileManager.default.fileExists(atPath: url.path))
-        let worldbookID = try #require(saved.embeddedWorldbookID)
-        #expect(WorldbookStore.shared.loadWorldbooks().contains { $0.id == worldbookID })
         try service.deleteRoleplayCharacterDraft(saved)
         #expect(!FileManager.default.fileExists(atPath: url.path))
-        #expect(!WorldbookStore.shared.loadWorldbooks().contains { $0.id == worldbookID })
     }
 }

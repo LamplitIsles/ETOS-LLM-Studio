@@ -110,21 +110,6 @@ extension ChatService {
         initialMessages.append(requestMessage)
 
         let inheritsSessionConfiguration = contextMode != .new
-        let systemPrompt = try resolvedConversationPrompt(
-            inherited: inheritsSessionConfiguration ? sourceSession.systemPrompt : nil,
-            provided: arguments.systemPrompt,
-            rawMode: arguments.systemPromptMode
-        )
-        let topicPrompt = try resolvedConversationPrompt(
-            inherited: inheritsSessionConfiguration ? sourceSession.topicPrompt : nil,
-            provided: arguments.topicPrompt,
-            rawMode: arguments.topicPromptMode
-        )
-        let enhancedPrompt = try resolvedConversationPrompt(
-            inherited: inheritsSessionConfiguration ? sourceSession.enhancedPrompt : nil,
-            provided: arguments.enhancedPrompt,
-            rawMode: arguments.enhancedPromptMode
-        )
         let requestedModelIdentifier = ConversationToolModelSelection.explicitIdentifier(
             from: arguments.modelIdentifier
         )
@@ -168,19 +153,9 @@ extension ChatService {
         let targetSession = ChatSession(
             id: UUID(),
             name: normalizedOptionalText(arguments.title) ?? String(initialMessageText.prefix(24)),
-            systemPrompt: systemPrompt,
-            topicPrompt: topicPrompt,
-            enhancedPrompt: enhancedPrompt,
             preferredModelIdentifier: preferredModelIdentifier,
-            lorebookIDs: inheritsSessionConfiguration ? sourceSession.lorebookIDs : [],
-            memoryContextIsolationEnabled: inheritsSessionConfiguration
-                ? sourceSession.memoryContextIsolationEnabled
-                : false,
             toolContextIsolationEnabled: inheritsSessionConfiguration
                 ? sourceSession.toolContextIsolationEnabled
-                : false,
-            globalSystemPromptIsolationEnabled: inheritsSessionConfiguration
-                ? sourceSession.globalSystemPromptIsolationEnabled
                 : false,
             folderID: targetFolderID,
             containerSessionID: containerSessionID,
@@ -731,28 +706,6 @@ extension ChatService {
             configuration.modelIdentifier = preferred
         }
         return configuration
-    }
-
-    private func resolvedConversationPrompt(
-        inherited: String?,
-        provided: String?,
-        rawMode: String?
-    ) throws -> String? {
-        let defaultMode: ConversationPromptInheritanceMode = normalizedOptionalText(provided) == nil ? .inherit : .append
-        let mode: ConversationPromptInheritanceMode
-        if let rawMode {
-            guard let parsedMode = ConversationPromptInheritanceMode(rawValue: rawMode) else {
-                throw ConversationRuntimeError.malformedArguments
-            }
-            mode = parsedMode
-        } else {
-            mode = defaultMode
-        }
-        return ConversationContextForkBuilder.resolvedPrompt(
-            inherited: inherited,
-            provided: provided,
-            mode: mode
-        )
     }
 
     private func conversationContextMode(_ rawValue: String) -> ConversationSpawnContextMode? {

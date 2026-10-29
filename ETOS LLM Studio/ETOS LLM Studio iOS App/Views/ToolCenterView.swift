@@ -28,36 +28,11 @@ struct ToolCenterView: View {
         viewModel.currentSession?.isToolContextIsolationActive ?? false
     }
 
-    var currentSessionMemoryIsolationActive: Bool {
-        viewModel.currentSession?.isMemoryContextIsolationActive ?? false
-    }
-
-    var enableMemory: Bool {
-        viewModel.enableMemory
-    }
-
-    var enableMemoryWrite: Bool {
-        viewModel.enableMemoryWrite
-    }
-
-    var enableMemoryActiveRetrieval: Bool {
-        viewModel.enableMemoryActiveRetrieval
-    }
-
-    var memoryTopK: Int {
-        appConfig.memoryTopK
-    }
-
     var builtInStates: [ToolCatalogBuiltInToolState] {
         ToolCatalogSupport.builtInToolStates(
-            enableMemory: enableMemory,
-            enableMemoryWrite: enableMemoryWrite,
-            enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
-            memoryTopK: memoryTopK,
             enableWidgetTool: appToolManager.isToolEnabled(.showWidget),
             enableAskUserInputTool: appToolManager.isToolEnabled(.askUserInput),
             enableGetSystemTimeTool: appToolManager.isToolEnabled(.getSystemTime),
-            isMemoryIsolated: currentSessionMemoryIsolationActive,
             isToolIsolated: currentSessionIsolationActive
         )
     }
@@ -74,8 +49,7 @@ struct ToolCenterView: View {
         let matchesGroup = matchesSearch(
             for: [
                 NSLocalizedString("内置工具", comment: "Built-in tools section title"),
-                NSLocalizedString("启用记忆系统", comment: "Enable long-term memory"),
-                NSLocalizedString("内置工具会直接影响聊天时是否向模型暴露记忆能力、网页卡片渲染能力与结构化问答能力。", comment: "Built-in tools footer")
+                NSLocalizedString("内置工具控制网页卡片、问答与系统时间能力。", comment: "Built-in tools footer")
             ]
         )
         return builtInStates.filter { state in
@@ -98,8 +72,7 @@ struct ToolCenterView: View {
         return matchesSearch(
             for: [
                 NSLocalizedString("内置工具", comment: "Built-in tools section title"),
-                NSLocalizedString("启用记忆系统", comment: "Enable long-term memory"),
-                NSLocalizedString("内置工具会直接影响聊天时是否向模型暴露记忆能力、网页卡片渲染能力与结构化问答能力。", comment: "Built-in tools footer")
+                NSLocalizedString("内置工具控制网页卡片、问答与系统时间能力。", comment: "Built-in tools footer")
             ]
         )
     }
@@ -226,13 +199,7 @@ struct ToolCenterView: View {
         return mcpCatalogTools.filter {
             mcpManager.isToolEnabled(serverID: $0.server.id, toolId: $0.tool.toolId)
             && mcpManager.approvalPolicy(serverID: $0.server.id, toolId: $0.tool.toolId) != .alwaysDeny
-            && !isBlockedMemoryManagementTool($0)
         }.count
-    }
-
-    func isBlockedMemoryManagementTool(_ available: MCPAvailableTool) -> Bool {
-        currentSessionMemoryIsolationActive
-            && MCPBuiltInAppToolServer.category(for: available.server.id) == .memory
     }
 
     var configuredShortcutCount: Int {

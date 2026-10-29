@@ -121,8 +121,6 @@ extension ChatServiceTests {
             for: pending.id, in: session.id
         )
         #expect(service.messagesSnapshot(for: session.id).last?.usesRainbowThinkingSweep == true)
-        await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
-        #expect(Persistence.loadMessages(for: session.id).last?.usesRainbowThinkingSweep == false)
 
         let nextPending = ChatMessage(role: .assistant, content: "")
         _ = try await service.appendConversationMessage(nextPending, to: session.id)

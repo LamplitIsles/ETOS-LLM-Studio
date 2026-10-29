@@ -126,9 +126,6 @@ private struct RoleplayCharacterLibraryView: View {
                                 HStack {
                                     Text(String(format: NSLocalizedString("正则 %d", comment: "Roleplay regex count"), character.regexRules.count))
                                     Text(String(format: NSLocalizedString("脚本 %d", comment: "Roleplay script count"), character.helperScripts.count))
-                                    if character.embeddedWorldbookID != nil {
-                                        Text(NSLocalizedString("内嵌世界书", comment: "Embedded lorebook badge"))
-                                    }
                                 }
                                 .etFont(.caption)
                                 .foregroundStyle(.secondary)
@@ -214,7 +211,6 @@ private struct RoleplayCharacterLibraryView: View {
                             "format": .string([character.sourceSpec, character.sourceSpecVersion].compactMap { $0 }.joined(separator: " ")),
                             "regex_rule_count": .int(character.regexRules.count),
                             "helper_script_count": .int(character.helperScripts.count),
-                            "has_embedded_worldbook": .bool(character.embeddedWorldbookID != nil)
                         ])
                     })
                 })
@@ -279,7 +275,6 @@ private struct RoleplayCharacterLibraryView: View {
 
 private struct RoleplayCharacterDetailView: View {
     @State private var character: RoleplayCharacter
-    @State private var isCreatingEmbeddedWorldbook = false
 
     init(character: RoleplayCharacter) {
         self._character = State(initialValue: character)
@@ -312,7 +307,6 @@ private struct RoleplayCharacterDetailView: View {
             }
 
             Section(NSLocalizedString("提示词覆盖", comment: "Character prompt overrides")) {
-                preview(NSLocalizedString("系统提示词", comment: "Character system prompt"), character.systemPrompt)
                 preview(NSLocalizedString("历史后指令", comment: "Character post-history instructions"), character.postHistoryInstructions)
             }
 
@@ -350,20 +344,6 @@ private struct RoleplayCharacterDetailView: View {
                 } label: {
                     detail(NSLocalizedString("助手脚本", comment: "Roleplay helper scripts"), "\(character.helperScripts.count)")
                 }
-                if let worldbookID = character.embeddedWorldbookID {
-                    NavigationLink {
-                        WorldbookDetailView(worldbookID: worldbookID)
-                    } label: {
-                        detail(NSLocalizedString("内嵌世界书", comment: "Embedded lorebook"), NSLocalizedString("编辑", comment: "Edit"))
-                    }
-                } else {
-                    Button {
-                        createEmbeddedWorldbook()
-                    } label: {
-                        Label(NSLocalizedString("创建内嵌世界书", comment: "Create embedded lorebook"), systemImage: "books.vertical.fill")
-                    }
-                    .disabled(isCreatingEmbeddedWorldbook)
-                }
                 detail(NSLocalizedString("初始变量", comment: "Roleplay initial variables"), "\(character.initialVariables.count)")
                 detail(NSLocalizedString("可选开场白", comment: "Available greetings"), "\(availableGreetingCount)")
                 detail(NSLocalizedString("资源文件", comment: "Character asset files"), "\(character.assets?.count ?? 0)")
@@ -394,7 +374,6 @@ private struct RoleplayCharacterDetailView: View {
                         "initial_variable_count": .int(character.initialVariables.count),
                         "asset_count": .int(character.assets?.count ?? 0),
                         "extension_field_count": .int(character.extensions.count),
-                        "embedded_worldbook_id": .string(character.embeddedWorldbookID?.uuidString ?? "")
                     ])
                 })
             ]
@@ -455,26 +434,7 @@ private struct RoleplayCharacterDetailView: View {
         }
     }
 
-    private func createEmbeddedWorldbook() {
-        guard !isCreatingEmbeddedWorldbook else { return }
-        isCreatingEmbeddedWorldbook = true
-        let characterID = character.id
-        let worldbookName = String(
-            format: NSLocalizedString("%@ 的世界书", comment: "Default embedded lorebook name"),
-            character.name
-        )
-        Task {
-            await Task.detached(priority: .utility) {
-                let worldbook = Worldbook(name: worldbookName, entries: [])
-                ChatService.shared.saveWorldbook(worldbook)
-                guard var updated = ChatService.shared.loadRoleplayCharacters().first(where: { $0.id == characterID }) else { return }
-                updated.embeddedWorldbookID = worldbook.id
-                ChatService.shared.saveRoleplayCharacter(updated)
-            }.value
-            isCreatingEmbeddedWorldbook = false
-            reload()
-        }
-    }
+
 }
 
 private struct PersonaLibraryView: View {
@@ -752,14 +712,6 @@ private struct RoleplaySessionBindingView: View {
 
                 Section {
                     Toggle(
-                        NSLocalizedString("屏蔽记忆", comment: "Block memory for current session"),
-                        isOn: Binding(
-                            get: { currentSession?.memoryContextIsolationEnabled ?? false },
-                            set: { updateContextIsolation(\.memoryContextIsolationEnabled, isEnabled: $0) }
-                        )
-                    )
-
-                    Toggle(
                         NSLocalizedString("屏蔽工具", comment: "Block tools for current session"),
                         isOn: Binding(
                             get: { currentSession?.toolContextIsolationEnabled ?? false },
@@ -767,15 +719,8 @@ private struct RoleplaySessionBindingView: View {
                         )
                     )
 
-                    Toggle(
-                        NSLocalizedString("屏蔽全局系统提示词", comment: "Block global system prompt for current session"),
-                        isOn: Binding(
-                            get: { currentSession?.globalSystemPromptIsolationEnabled ?? false },
-                            set: { updateContextIsolation(\.globalSystemPromptIsolationEnabled, isEnabled: $0) }
-                        )
-                    )
                 } footer: {
-                    Text(NSLocalizedString("分别控制当前会话是否发送记忆、工具和全局系统提示词。角色卡、会话提示词与世界书不受影响。", comment: "Independent session context isolation description"))
+                    Text(NSLocalizedString("控制当前会话是否使用工具。", comment: "Session tool isolation description"))
                         .etFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -818,11 +763,6 @@ private struct RoleplaySessionBindingView: View {
                         }
                     }
 
-                    NavigationLink {
-                        WorldbookSettingsView()
-                    } label: {
-                        Label(NSLocalizedString("管理与绑定世界书", comment: "Manage roleplay lorebooks"), systemImage: "books.vertical")
-                    }
                 }
             }
         }
@@ -869,9 +809,7 @@ private struct RoleplaySessionBindingView: View {
             ),
             .bool("html_rendering_enabled", label: NSLocalizedString("自动渲染 HTML", comment: "角色扮演向导字段"), get: { htmlRenderingEnabled }, set: { htmlRenderingEnabled = $0; persist() }),
             .bool("helper_scripts_enabled", label: NSLocalizedString("启用助手脚本", comment: "角色扮演向导字段"), get: { helperScriptsEnabled }, set: { helperScriptsEnabled = $0; persist() }),
-            .bool("isolate_memory", label: NSLocalizedString("屏蔽记忆", comment: "角色扮演向导字段"), get: { currentSession?.memoryContextIsolationEnabled ?? false }, set: { updateContextIsolation(\.memoryContextIsolationEnabled, isEnabled: $0) }),
             .bool("isolate_tools", label: NSLocalizedString("屏蔽工具", comment: "角色扮演向导字段"), get: { currentSession?.toolContextIsolationEnabled ?? false }, set: { updateContextIsolation(\.toolContextIsolationEnabled, isEnabled: $0) }),
-            .bool("isolate_global_system_prompt", label: NSLocalizedString("屏蔽全局系统提示词", comment: "角色扮演向导字段"), get: { currentSession?.globalSystemPromptIsolationEnabled ?? false }, set: { updateContextIsolation(\.globalSystemPromptIsolationEnabled, isEnabled: $0) }),
             .readOnly("available_characters", label: NSLocalizedString("可用角色卡", comment: "角色扮演向导字段"), value: {
                 .array(characters.map { .dictionary(["id": .string($0.id.uuidString), "name": .string($0.name)]) })
             }),
@@ -981,13 +919,9 @@ private struct RoleplaySessionBindingView: View {
     private func persist(seedGreeting: Bool = false) {
         guard let sessionID = currentSession?.id else { return }
         let characterIDs = selectedCharacterID.map { [$0] } ?? []
-        let additionalWorldbookIDs = ChatService.shared
-            .roleplayBinding(sessionID: sessionID)?
-            .additionalWorldbookIDs ?? []
         // 未绑定角色时仍保留非默认承载设置；恢复默认后才移除空绑定。
         guard !characterIDs.isEmpty
                 || selectedPersonaID != nil
-                || !additionalWorldbookIDs.isEmpty
                 || !htmlRenderingEnabled
                 || !helperScriptsEnabled else {
             ChatService.shared.unbindRoleplay(sessionID: sessionID)
@@ -997,7 +931,6 @@ private struct RoleplaySessionBindingView: View {
             sessionID: sessionID,
             characterIDs: characterIDs,
             personaID: selectedPersonaID,
-            additionalWorldbookIDs: additionalWorldbookIDs,
             selectedGreetingIndex: selectedGreetingIndex,
             htmlRenderingEnabled: htmlRenderingEnabled,
             helperScriptsEnabled: helperScriptsEnabled,
@@ -1012,12 +945,6 @@ private struct RoleplaySessionBindingView: View {
         guard var session = currentSession else { return }
         session[keyPath: keyPath] = isEnabled
         currentSession = session
-        ChatService.shared.updateWorldbookSessionSettings(
-            sessionID: session.id,
-            worldbookIDs: session.lorebookIDs,
-            memoryContextIsolationEnabled: session.memoryContextIsolationEnabled,
-            toolContextIsolationEnabled: session.toolContextIsolationEnabled,
-            globalSystemPromptIsolationEnabled: session.globalSystemPromptIsolationEnabled
-        )
+        ChatService.shared.updateSession(session)
     }
 }

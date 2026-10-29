@@ -45,13 +45,7 @@ extension ChatService {
     @discardableResult
     public func importRoleplayCard(data: Data, fileName: String) throws -> RoleplayCardImportResult {
         var result = try RoleplayCardImportService().importCard(from: data, fileName: fileName)
-        var createdWorldbookID: UUID?
         do {
-            if let worldbook = result.embeddedWorldbook {
-                try worldbookStore.saveDraft(worldbook, replacing: nil)
-                createdWorldbookID = worldbook.id
-                result.character.embeddedWorldbookID = worldbook.id
-            }
             let assets = try RoleplayAssetStore.install(result.assets, characterID: result.character.id)
             result.character.assets = assets
             if let icon = assets.first(where: { $0.type == "icon" && $0.name == "main" && $0.localFileName != nil })
@@ -70,7 +64,6 @@ extension ChatService {
                 Persistence.deleteImage(fileName: name)
             }
             RoleplayAssetStore.deleteFiles(for: result.character.assets ?? [])
-            if let createdWorldbookID { _ = worldbookStore.deleteWorldbook(id: createdWorldbookID) }
             throw error
         }
     }
@@ -94,14 +87,12 @@ extension ChatService {
 
     public func deleteRoleplayCharacter(id: UUID) {
         guard let character = roleplayStore.character(id: id), roleplayStore.deleteCharacter(id: id, expected: character) else { return }
-        if let worldbookID = character.embeddedWorldbookID { _ = worldbookStore.deleteWorldbook(id: worldbookID) }
     }
 
     public func bindRoleplay(
         sessionID: UUID,
         characterIDs: [UUID],
         personaID: UUID?,
-        additionalWorldbookIDs: [UUID] = [],
         selectedGreetingIndex: Int = 0,
         htmlRenderingEnabled: Bool = true,
         helperScriptsEnabled: Bool = true,
@@ -109,8 +100,7 @@ extension ChatService {
     ) {
         let draft = SessionRoleplayBinding(
             sessionID: sessionID, characterIDs: characterIDs, personaID: personaID,
-            additionalWorldbookIDs: additionalWorldbookIDs, selectedGreetingIndex: selectedGreetingIndex,
-            htmlRenderingEnabled: htmlRenderingEnabled, helperScriptsEnabled: helperScriptsEnabled
+            selectedGreetingIndex: selectedGreetingIndex, htmlRenderingEnabled: htmlRenderingEnabled, helperScriptsEnabled: helperScriptsEnabled
         )
         do {
             try saveRoleplayBindingDraft(draft, replacing: roleplayStore.binding(sessionID: sessionID), seedGreetingIfEmpty: seedGreetingIfEmpty)
@@ -174,7 +164,6 @@ extension ChatService {
             sessionID: sessionID,
             characterIDs: characterIDs,
             personaID: personaID,
-            additionalWorldbookIDs: draft.additionalWorldbookIDs,
             selectedGreetingIndex: normalizedGreetingIndex,
             htmlRenderingEnabled: draft.htmlRenderingEnabled,
             helperScriptsEnabled: draft.helperScriptsEnabled,
@@ -223,11 +212,8 @@ extension ChatService {
         let resolvedGreetings = [character.firstMessage] + character.alternateGreetings
         guard resolvedGreetings.indices.contains(normalizedGreetingIndex) else { return }
         let rawGreeting = resolvedGreetings[normalizedGreetingIndex]
-        let enabledWorldbookIDs = Set(resolved.worldbookIDs)
         let initialization = RoleplayMVUInitializer.initialize(
             greeting: rawGreeting,
-            worldbooks: loadWorldbooks().filter { enabledWorldbookIDs.contains($0.id) },
-            primaryWorldbookID: character.embeddedWorldbookID,
             existingVariables: variableSnapshot.character,
             macroContext: resolved.macroContext
         )

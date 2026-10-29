@@ -19,18 +19,11 @@ extension ChatService {
     }
 
     public var activatedRunnableModels: [RunnableModel] {
-        configuredRunnableModels.filter { runnable in
-            guard runnable.model.isActivated else { return false }
-            guard LocalModelProviderBridge.isLocalRunnableModel(runnable) else { return true }
-            return localModelRecord(for: runnable)?.isActivated == true
-        }
+        configuredRunnableModels.filter { $0.model.isActivated }
     }
 
     public var activatedConversationModels: [RunnableModel] {
-        activatedRunnableModels.filter { runnable in
-            guard runnable.model.isConversationModel else { return false }
-            return localModelRecord(for: runnable, requiresExistingFile: false)?.isSpeechTranscriptionModel != true
-        }
+        activatedRunnableModels.filter { $0.model.isConversationModel }
     }
 
     public var activatedChatModels: [RunnableModel] {
@@ -109,19 +102,6 @@ extension ChatService {
         let mergedIDs = ModelOrderIndex.merge(storedIDs: storedIDs, currentIDs: currentIDs)
         guard mergedIDs != storedIDs else { return }
         AppConfigStore.persistStringArray(mergedIDs, for: .modelOrderRunnableModels)
-    }
-
-    func localModelRecord(
-        for runnableModel: RunnableModel,
-        requiresExistingFile: Bool = true
-    ) -> LocalModelRecord? {
-        guard LocalModelProviderBridge.isLocalRunnableModel(runnableModel),
-              let recordID = LocalModelProviderBridge.localRecordID(from: runnableModel.id) else {
-            return nil
-        }
-        return localModelStore.models.first {
-            $0.id == recordID && (!requiresExistingFile || localModelStore.fileExists(for: $0))
-        }
     }
 
     func reconcileStoredProviderOrder() {
@@ -205,14 +185,6 @@ extension ChatService {
             itemOrderIDs: organization.orderedItemIDs,
             for: providerID
         )
-        if LocalModelProviderBridge.isLocalProvider(updatedProvider) {
-            persistLocalProviderModelChanges(updatedProvider)
-            updatedProvider = LocalModelProviderBridge.provider(
-                records: localModelStore.models,
-                preserving: updatedProvider,
-                preferRecordBasics: false
-            )
-        }
         ConfigLoader.saveProvider(updatedProvider)
         reloadProviders()
     }
@@ -245,7 +217,7 @@ extension ChatService {
     }
 
     public func reloadAppConfigBackedModelState() {
-        providers = synchronizedProviders(preferRecordBasics: true)
+        providers = ConfigLoader.loadProviders()
         reconcileStoredProviderOrder()
         reconcileStoredModelOrder()
         providersSubject.send(providers)
@@ -259,21 +231,11 @@ extension ChatService {
         selectedModelSubject.send(nextModel)
     }
 
-    public func reloadLocalModelsAndAppConfigBackedModelState() {
-        _ = localModelStore.reload()
-        reloadAppConfigBackedModelState()
-    }
-
-    public func reloadLocalModelsAndProvidersIfNeeded() {
-        guard localModelStore.reload() else { return }
-        reloadProviders()
-    }
-
     public func reloadProviders() {
         logger.info("正在重新加载提供商配置...")
         let currentSelectedID = selectedModelSubject.value?.id
 
-        self.providers = synchronizedProviders(preferRecordBasics: true)
+        self.providers = ConfigLoader.loadProviders()
         self.reconcileStoredProviderOrder()
         self.reconcileStoredModelOrder()
 
@@ -294,17 +256,7 @@ extension ChatService {
     }
 
     public func deleteProvider(_ provider: Provider) {
-        if LocalModelProviderBridge.isLocalProvider(provider) {
-            localModelStore.setProviderEnabled(false)
-            reloadProviders()
-            return
-        }
         ConfigLoader.deleteProvider(provider)
-        reloadProviders()
-    }
-
-    public func setLocalModelsEnabled(_ isEnabled: Bool) {
-        localModelStore.setProviderEnabled(isEnabled)
         reloadProviders()
     }
 
@@ -325,38 +277,7 @@ extension ChatService {
         self.reloadProviders()
     }
 
-    func synchronizedProviders(preferRecordBasics: Bool) -> [Provider] {
-        let storedProviders = ConfigLoader.loadProviders()
-        return LocalModelProviderBridge.applyingLocalProvider(
-            to: storedProviders,
-            records: localModelStore.models,
-            isEnabled: localModelStore.isProviderEnabled,
-            preferRecordBasics: preferRecordBasics
-        )
-    }
-
-    func persistLocalProviderModelChanges(_ provider: Provider) {
-        guard LocalModelProviderBridge.isLocalProvider(provider) else { return }
-        for model in provider.models {
-            localModelStore.updateFromProviderModel(model)
-        }
-    }
-
     public func saveProviderFromManagement(_ provider: Provider) {
-        if LocalModelProviderBridge.isLocalProvider(provider) {
-            if !localModelStore.isProviderEnabled {
-                localModelStore.setProviderEnabled(true)
-            }
-            persistLocalProviderModelChanges(provider)
-            let normalizedProvider = LocalModelProviderBridge.provider(
-                records: localModelStore.models,
-                preserving: provider,
-                preferRecordBasics: false
-            )
-            ConfigLoader.saveProvider(normalizedProvider)
-            reloadProviders()
-            return
-        }
         ConfigLoader.saveProvider(provider)
         reloadProviders()
     }

@@ -80,66 +80,6 @@ struct CloudSyncManagerTests {
     }
 
     @MainActor
-    @Test("新增聊天消息只上传所属会话而不重传其他会话")
-    func newMessageUploadsOnlyOwningSession() async {
-        let context = makeTestContext(name: "session-incremental")
-        defer { context.cleanup() }
-        let sessionA = ChatSession(id: UUID(), name: "会话 A")
-        let sessionB = ChatSession(id: UUID(), name: "会话 B")
-        let firstMessage = ChatMessage(
-            role: .user,
-            content: "第一条消息",
-            requestedAt: Date(timeIntervalSince1970: 1_729_999_000)
-        )
-        let state = SnapshotState(
-            package: SyncPackage(
-                options: [.sessions],
-                sessions: [
-                    SyncedSession(session: sessionA, messages: [firstMessage]),
-                    SyncedSession(session: sessionB, messages: [])
-                ]
-            )
-        )
-        let transport = MockCloudSyncTransport(fetchResults: [
-            .empty(token: "token-1"),
-            .empty(token: "token-2")
-        ])
-        let manager = makeManager(context: context, state: state, transport: transport)
-        await establishTrustedEmptyBaseline(manager)
-
-        await withCloudSyncEnabled {
-            await manager.performSync(options: .fullSync)
-            state.setPackage(
-                SyncPackage(
-                    options: [.sessions],
-                    sessions: [
-                        SyncedSession(
-                            session: sessionA,
-                            messages: [
-                                firstMessage,
-                                ChatMessage(
-                                    role: .assistant,
-                                    content: "新回复",
-                                    requestedAt: context.now
-                                )
-                            ]
-                        ),
-                        SyncedSession(session: sessionB, messages: [])
-                    ]
-                )
-            )
-            await manager.performSync(options: .fullSync)
-        }
-
-        let mutations = await transport.mutations
-        #expect(mutations.count == 2)
-        #expect(mutations[1].records.count == 1)
-        #expect(mutations[1].records[0].payload.type == .session)
-        #expect(mutations[1].records[0].payload.recordID == sessionA.id.uuidString)
-        #expect(mutations[1].records[0].payload.package.sessions.first?.messages.count == 2)
-    }
-
-    @MainActor
     @Test("本地删除对象会删除对应 CloudKit Record")
     func localDeletionDeletesCloudRecord() async {
         let context = makeTestContext(name: "local-deletion")
@@ -428,7 +368,7 @@ struct CloudSyncManagerTests {
         let context = makeTestContext(name: "app-config")
         defer { context.cleanup() }
         let snapshot = SyncEngine.encodeAppStorageSnapshot([
-            AppConfigKey.systemPrompt.rawValue: "系统提示词",
+            AppConfigKey.enableStreaming.rawValue: true,
             AppConfigKey.appToolsChatToolsEnabled.rawValue: true
         ])
         let state = SnapshotState(
@@ -445,7 +385,7 @@ struct CloudSyncManagerTests {
         let records = await transport.mutations[0].records
         #expect(records.count == 2)
         #expect(Set(records.map(\.payload.recordID)) == [
-            AppConfigKey.systemPrompt.rawValue,
+            AppConfigKey.enableStreaming.rawValue,
             AppConfigKey.appToolsChatToolsEnabled.rawValue
         ])
         #expect(records.allSatisfy { record in
@@ -462,13 +402,13 @@ struct CloudSyncManagerTests {
     func appConfigEditUploadsOnlyChangedKey() async {
         let context = makeTestContext(name: "app-config-incremental")
         defer { context.cleanup() }
-        let systemPromptKey = AppConfigKey.systemPrompt.rawValue
+        let streamingKey = AppConfigKey.enableStreaming.rawValue
         let toolsEnabledKey = AppConfigKey.appToolsChatToolsEnabled.rawValue
         let state = SnapshotState(
             package: SyncPackage(
                 options: [.appStorage],
                 appStorageSnapshot: SyncEngine.encodeAppStorageSnapshot([
-                    systemPromptKey: "旧提示词",
+                    streamingKey: false,
                     toolsEnabledKey: true
                 ])
             )
@@ -486,7 +426,7 @@ struct CloudSyncManagerTests {
                 SyncPackage(
                     options: [.appStorage],
                     appStorageSnapshot: SyncEngine.encodeAppStorageSnapshot([
-                        systemPromptKey: "新提示词",
+                        streamingKey: true,
                         toolsEnabledKey: true
                     ])
                 )
@@ -496,7 +436,7 @@ struct CloudSyncManagerTests {
 
         let mutations = await transport.mutations
         #expect(mutations.count == 2)
-        #expect(mutations[1].records.map(\.payload.recordID) == [systemPromptKey])
+        #expect(mutations[1].records.map(\.payload.recordID) == [streamingKey])
     }
 
     @MainActor

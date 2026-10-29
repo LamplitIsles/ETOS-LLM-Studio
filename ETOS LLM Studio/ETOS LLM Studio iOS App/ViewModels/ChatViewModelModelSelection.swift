@@ -11,19 +11,11 @@ import Foundation
 import ETOSCore
 
 extension ChatViewModel {
-    var embeddingModelOptions: [RunnableModel] {
-        configuredModels.filter { $0.model.supportsEmbedding }
-    }
-
     var titleGenerationModelOptions: [RunnableModel] {
         activatedChatModels
     }
 
     var dailyPulseModelOptions: [RunnableModel] {
-        activatedChatModels
-    }
-
-    var conversationSummaryModelOptions: [RunnableModel] {
         activatedChatModels
     }
 
@@ -54,15 +46,6 @@ extension ChatViewModel {
         }
     }
 
-    func setSelectedEmbeddingModel(_ model: RunnableModel?) {
-        selectedEmbeddingModel = model
-        let newIdentifier = model?.id ?? ""
-        persistSpecializedModelIdentifier(newIdentifier, for: .memoryEmbeddingModelIdentifier)
-        if memoryEmbeddingModelIdentifier != newIdentifier {
-            memoryEmbeddingModelIdentifier = newIdentifier
-        }
-    }
-
     func setSelectedTitleGenerationModel(_ model: RunnableModel?) {
         selectedTitleGenerationModel = model
         let newIdentifier = model?.id ?? ""
@@ -78,15 +61,6 @@ extension ChatViewModel {
         persistSpecializedModelIdentifier(newIdentifier, for: .dailyPulseModelIdentifier)
         if dailyPulseModelIdentifier != newIdentifier {
             dailyPulseModelIdentifier = newIdentifier
-        }
-    }
-
-    func setSelectedConversationSummaryModel(_ model: RunnableModel?) {
-        selectedConversationSummaryModel = model
-        let newIdentifier = model?.id ?? ""
-        persistSpecializedModelIdentifier(newIdentifier, for: .conversationSummaryModelIdentifier)
-        if conversationSummaryModelIdentifier != newIdentifier {
-            conversationSummaryModelIdentifier = newIdentifier
         }
     }
 
@@ -127,24 +101,6 @@ extension ChatViewModel {
         speechModelIdentifier = ""
     }
 
-    func syncEmbeddingModelSelection() {
-        if let match = embeddingModelOptions.first(where: { $0.id == memoryEmbeddingModelIdentifier }) {
-            selectedEmbeddingModel = match
-            return
-        }
-
-        guard !memoryEmbeddingModelIdentifier.isEmpty else {
-            selectedEmbeddingModel = nil
-            return
-        }
-
-        guard !configuredModels.isEmpty else { return }
-
-        selectedEmbeddingModel = nil
-        persistSpecializedModelIdentifier("", for: .memoryEmbeddingModelIdentifier)
-        memoryEmbeddingModelIdentifier = ""
-    }
-
     func syncTitleGenerationModelSelection() {
         if let match = titleGenerationModelOptions.first(where: { $0.id == titleGenerationModelIdentifier }) {
             selectedTitleGenerationModel = match
@@ -179,24 +135,6 @@ extension ChatViewModel {
         selectedDailyPulseModel = nil
         persistSpecializedModelIdentifier("", for: .dailyPulseModelIdentifier)
         dailyPulseModelIdentifier = ""
-    }
-
-    func syncConversationSummaryModelSelection() {
-        if let match = conversationSummaryModelOptions.first(where: { $0.id == conversationSummaryModelIdentifier }) {
-            selectedConversationSummaryModel = match
-            return
-        }
-
-        guard !conversationSummaryModelIdentifier.isEmpty else {
-            selectedConversationSummaryModel = nil
-            return
-        }
-
-        guard !conversationSummaryModelOptions.isEmpty else { return }
-
-        selectedConversationSummaryModel = nil
-        persistSpecializedModelIdentifier("", for: .conversationSummaryModelIdentifier)
-        conversationSummaryModelIdentifier = ""
     }
 
     func syncReasoningSummaryModelSelection() {

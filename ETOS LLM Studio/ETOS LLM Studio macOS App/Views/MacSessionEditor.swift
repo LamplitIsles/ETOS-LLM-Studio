@@ -19,15 +19,6 @@ struct MacSessionEditor: View {
             Form {
                 Section { TextField(NSLocalizedString("名称", comment: ""), text: $draft.name) }
                 Section {
-                    TextField(NSLocalizedString("会话系统提示词", comment: ""), text: optionalText(\.systemPrompt), axis: .vertical).lineLimit(3...10)
-                    TextField(NSLocalizedString("主题提示", comment: ""), text: optionalText(\.topicPrompt), axis: .vertical).lineLimit(3...10)
-                    TextField(NSLocalizedString("增强提示词", comment: ""), text: optionalText(\.enhancedPrompt), axis: .vertical).lineLimit(3...10)
-                } header: { Text(NSLocalizedString("会话提示词", comment: "")) }
-                footer: {
-                    Text(NSLocalizedString("这些提示词只对当前会话生效，App 的工具协议与运行约束不会被替换。", comment: ""))
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section {
                     Picker(NSLocalizedString("首选模型", comment: ""), selection: optionalText(\.preferredModelIdentifier)) {
                         Text(NSLocalizedString("跟随全局模型", comment: "")).tag("")
                         ForEach(workspace.sessionModelCatalog.rows) { row in Text(row.title).tag(row.id) }
@@ -37,15 +28,13 @@ struct MacSessionEditor: View {
                     }
                 }
                 Section {
-                    Toggle(NSLocalizedString("隔离记忆上下文", comment: ""), isOn: $draft.memoryContextIsolationEnabled)
                     Toggle(NSLocalizedString("隔离工具上下文", comment: ""), isOn: $draft.toolContextIsolationEnabled)
-                    Toggle(NSLocalizedString("隔离全局系统提示词", comment: ""), isOn: $draft.globalSystemPromptIsolationEnabled)
                 } footer: {
                     Text(NSLocalizedString("修改保留为草稿，点击保存后生效。", comment: "")).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     MacSettingsIntroCard(id: "session-settings", title: NSLocalizedString("会话设置", comment: ""),
-                                         details: NSLocalizedString("会话系统提示词、主题提示和增强提示词分别保存在当前会话中，不会修改全局提示词。首选模型优先于工具栏的全局选择；选择“跟随全局模型”可取消绑定。模型暂时不可用时保留绑定，本轮按核心规则回退到全局模型。三个隔离开关独立控制记忆、工具和全局提示词，角色卡与世界书不受影响。向导只修改草稿，点击保存后生效；会话在其他位置变化后需要重新打开编辑器。", comment: ""),
+                                         details: NSLocalizedString("首选模型优先于工具栏的全局选择；选择“跟随全局模型”可取消绑定。工具隔离设置保存在当前会话中。向导只修改草稿，点击保存后生效。", comment: ""),
                                          documentID: "macos-workspace")
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
@@ -71,15 +60,10 @@ struct MacSessionEditor: View {
                 ] : [
                     .readOnly("editing_mode", label: NSLocalizedString("编辑方式", comment: ""), value: { .string(NSLocalizedString("修改后需要保存", comment: "")) }),
                     .string("name", label: NSLocalizedString("名称", comment: ""), allowsEmpty: false, get: { draft.name }, set: { draft.name = $0 }),
-                    .string("system_prompt", label: NSLocalizedString("会话系统提示词", comment: ""), get: { draft.systemPrompt ?? "" }, set: { optionalText(\.systemPrompt).wrappedValue = $0 }),
-                    .string("topic_prompt", label: NSLocalizedString("主题提示", comment: ""), get: { draft.topicPrompt ?? "" }, set: { optionalText(\.topicPrompt).wrappedValue = $0 }),
-                    .string("enhanced_prompt", label: NSLocalizedString("增强提示词", comment: ""), get: { draft.enhancedPrompt ?? "" }, set: { optionalText(\.enhancedPrompt).wrappedValue = $0 }),
                     .string("preferred_model", label: NSLocalizedString("首选模型", comment: ""), allowedValues: workspace.sessionModelCatalog.guideIDs,
                             get: { draft.preferredModelIdentifier ?? "" }, set: { optionalText(\.preferredModelIdentifier).wrappedValue = $0 }),
                     .readOnly("available_models", label: NSLocalizedString("模型", comment: ""), value: { workspace.sessionModelCatalog.guideValue }),
-                    .bool("memory_isolation", label: NSLocalizedString("隔离记忆上下文", comment: ""), get: { draft.memoryContextIsolationEnabled }, set: { draft.memoryContextIsolationEnabled = $0 }),
-                    .bool("tool_isolation", label: NSLocalizedString("隔离工具上下文", comment: ""), get: { draft.toolContextIsolationEnabled }, set: { draft.toolContextIsolationEnabled = $0 }),
-                    .bool("prompt_isolation", label: NSLocalizedString("隔离全局系统提示词", comment: ""), get: { draft.globalSystemPromptIsolationEnabled }, set: { draft.globalSystemPromptIsolationEnabled = $0 })
+                    .bool("tool_isolation", label: NSLocalizedString("隔离工具上下文", comment: ""), get: { draft.toolContextIsolationEnabled }, set: { draft.toolContextIsolationEnabled = $0 })
                 ]
             )
         }

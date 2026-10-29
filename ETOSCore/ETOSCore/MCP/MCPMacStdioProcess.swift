@@ -209,8 +209,7 @@ final class MCPMacStdioProcess: @unchecked Sendable {
     }
 
     static func workingDirectory(_ path: String) -> URL {
-        // /home/etos 是既有数据库省略 cwd 时的默认值，不修改其序列化表示。
-        if path.isEmpty || path == "/home/etos" {
+        if path.isEmpty {
             return FileManager.default.homeDirectoryForCurrentUser
         }
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)

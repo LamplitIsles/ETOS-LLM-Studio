@@ -13,7 +13,7 @@ extension Persistence {
             // 文件替换已开始，取消不能跳过迁移检查或把提交留在一半。
             let url = try access.url(for: path, checkingCancellation: false)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            if url.lastPathComponent == "chat-store.sqlite" {
+            if url.lastPathComponent == "runtime-store.sqlite" {
                 let store = try PersistenceGRDBStore(chatsDirectory: url.deletingLastPathComponent(), configuration: configuration, schedulesMaintenance: false)
                 try store.dbPool.close()
             } else {

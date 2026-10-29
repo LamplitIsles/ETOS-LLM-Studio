@@ -36,7 +36,6 @@ extension PersistenceGRDBStore {
                 try rebuildUsageAnalyticsRollups(db, dayKeys: [event.dayKey])
             }
             if didInsert {
-                WatchDatabaseSyncService.markDatabaseChanged(.chat)
                 NotificationCenter.default.post(name: .usageAnalyticsStoreDidChange, object: nil)
             }
         } catch {
@@ -51,7 +50,6 @@ extension PersistenceGRDBStore {
                 try db.execute(sql: "DELETE FROM usage_daily_totals")
                 try db.execute(sql: "DELETE FROM usage_request_events")
             }
-            WatchDatabaseSyncService.markDatabaseChanged(.chat)
             NotificationCenter.default.post(name: .usageAnalyticsStoreDidChange, object: nil)
         } catch {
             logger.error("清空用量统计失败: \(error.localizedDescription)")
@@ -85,7 +83,6 @@ extension PersistenceGRDBStore {
                 return removedEvents
             }
             if removedEvents > 0 {
-                WatchDatabaseSyncService.markDatabaseChanged(.chat)
                 NotificationCenter.default.post(name: .usageAnalyticsStoreDidChange, object: nil)
             }
             return removedEvents

@@ -15,11 +15,11 @@ struct MacSettingsView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section {
-                    rows([.models, .conversation, .prompts, .output, .display, .sync])
+                    rows([.models, .conversation, .output, .display, .sync])
                 }
                 Section(NSLocalizedString("拓展能力", comment: "")) {
-                    rows([.tools, .pulse, .usage, .memory, .mcp, .skills, .shortcuts,
-                          .roleplay, .worldbook, .speech, .tts, .browser, .extended])
+                    rows([.tools, .pulse, .usage, .mcp, .skills, .shortcuts,
+                          .roleplay, .speech, .tts, .browser, .extended])
                 }
                 Section(NSLocalizedString("设置", comment: "")) {
                     rows([.general, .security, .guide, .about])
@@ -72,23 +72,20 @@ struct MacSettingsView: View {
         switch destination {
         case .models: MacProviderListView(isActive: available)
         case .conversation: MacCoreSettingsView(page: .conversation, isActive: available)
-        case .prompts: MacCoreSettingsView(page: .prompts, isActive: available)
         case .output: MacCoreSettingsView(page: .output, isActive: available)
         case .display: MacDisplaySettingsView(isActive: available)
         case .sync: syncSettings
         case .tools: MacToolCenterView(isActive: available)
         case .pulse: MacDailyPulseView(model: workspace.dailyPulse, isEmbeddedInSettings: true)
         case .usage: MacUsageAnalyticsView(isActive: available)
-        case .memory: MacMemorySystemView(isActive: available)
         case .mcp: MacMCPListView(isActive: available)
         case .skills: MacSkillsView(isActive: available, model: workspace.skills)
         case .shortcuts: MacShortcutToolsView(isActive: available, model: workspace.shortcutTools)
         case .roleplay: MacRoleplayLibraryView(model: workspace.roleplayModel)
-        case .worldbook: MacWorldbookListView(model: workspace.worldbookModel)
         case .speech: MacSpeechInputSettingsView(model: workspace.speechInput, isActive: available)
         case .tts: MacTTSSettingsView(model: workspace.tts, isActive: available)
         case .browser:
-            MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.temporaryChatMemoryMode != nil,
+            MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.isTemporaryChat,
                            isActive: available, model: workspace.browser)
         case .extended: MacExtendedFeaturesView(isActive: available)
         case .general: generalSettings

@@ -447,8 +447,6 @@ public struct AgentRuntimeContext: Codable, Equatable, Sendable {
     /// 浏览器数据 profile 在 Run 开始时冻结，后续设置只影响新的 Agent Run。
     public let browserDataProfile: BrowserAgentDataProfile?
     /// Agent 专用提示词与其他运行配置一起冻结，避免运行中编辑影响后续工具续写。
-    public let promptProfileID: UUID?
-    public let promptContent: String?
     /// Skill 包摘要与脚本哈希在 Run 开始时冻结，读取或执行都不能借更新后的包扩权。
     public let skillSnapshots: [SkillRunSnapshot]?
     public let executorDeviceID: String
@@ -473,8 +471,6 @@ public struct AgentRuntimeContext: Codable, Equatable, Sendable {
         selectedMCPServerConfigurations: [MCPServerConfiguration]? = nil,
         browserSessionID: UUID?,
         browserDataProfile: BrowserAgentDataProfile? = nil,
-        promptProfileID: UUID? = nil,
-        promptContent: String? = nil,
         skillSnapshots: [SkillRunSnapshot]? = nil,
         executorDeviceID: String,
         mode: LocalAgentMode,
@@ -497,8 +493,6 @@ public struct AgentRuntimeContext: Codable, Equatable, Sendable {
         self.selectedMCPServerConfigurations = selectedMCPServerConfigurations
         self.browserSessionID = browserSessionID
         self.browserDataProfile = browserDataProfile
-        self.promptProfileID = promptProfileID
-        self.promptContent = promptContent
         self.skillSnapshots = skillSnapshots
         self.executorDeviceID = executorDeviceID
         self.mode = mode

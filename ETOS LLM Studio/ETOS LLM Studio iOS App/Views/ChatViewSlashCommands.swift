@@ -38,8 +38,6 @@ extension ChatView {
             presentSlashCommandDestination(.dailyPulse)
         case .usage:
             presentSlashCommandDestination(.usageAnalytics)
-        case .memory:
-            presentSlashCommandDestination(.memory)
         case .mcp:
             presentSlashCommandDestination(.mcp)
         case .skills:
@@ -48,14 +46,10 @@ extension ChatView {
             presentSlashCommandDestination(.shortcuts)
         case .roleplay:
             presentSlashCommandDestination(.roleplay)
-        case .worldbook:
-            presentSlashCommandDestination(.worldbook)
         case .features:
             presentSlashCommandDestination(.extendedFeatures)
         case .temporary:
             performTemporaryChatSlashCommand()
-        case .compact:
-            performContextCompressionSlashCommand()
         case .retry:
             guard viewModel.canQuickRetryLatestMessage else {
                 showUnavailableSlashCommandNotice(
@@ -90,19 +84,6 @@ extension ChatView {
             return
         }
         performTemporaryChatTap()
-    }
-
-    private func performContextCompressionSlashCommand() {
-        guard let session = viewModel.currentSession,
-              !session.isTemporary,
-              !viewModel.allMessagesForSession.isEmpty || continuationContext != nil else {
-            showUnavailableSlashCommandNotice(
-                NSLocalizedString("当前会话没有可以压缩的对话内容。", comment: "No conversation content to compress")
-            )
-            return
-        }
-        composerFocused = false
-        contextCompressionSourceSession = session
     }
 
     private func showUnavailableSlashCommandNotice(_ message: String) {

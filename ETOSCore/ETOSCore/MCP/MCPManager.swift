@@ -102,8 +102,6 @@ public final class MCPManager: ObservableObject {
     var routedPrompts: [String: RoutedPrompt] = [:]
     var debugBusyCount = 0
     var inFlightConnections: [UUID: Task<MCPClient, Error>] = [:]
-    var localStdioInstances: [MCPLocalStdioInstanceKey: MCPLocalStdioInstance] = [:]
-    var localStdioConnectionTasks: [MCPLocalStdioInstanceKey: Task<MCPLocalStdioInstance, Error>] = [:]
     var macStdioUsage: [UUID: MCPMacStdioUsage] = [:]
     var trackedToolCallTasks: [UUID: Task<JSONValue, Error>] = [:]
     var trackedToolCallObservers: [UUID: @Sendable (MCPProgressParams) -> Void] = [:]
@@ -207,7 +205,6 @@ public final class MCPManager: ObservableObject {
         let currentServersByID = Dictionary(uniqueKeysWithValues: servers.map { ($0.id, $0) })
         for (serverID, previous) in previousServersByID
         where currentServersByID[serverID] != previous {
-            removeLocalStdioInstances(for: serverID)
             if let current = currentServersByID[serverID], current.transport != previous.transport {
                 // 配置观察和手动保存统一撤销旧连接；先应用快照，再异步关闭客户端。
                 inFlightConnections[serverID]?.cancel()
@@ -294,7 +291,6 @@ public final class MCPManager: ObservableObject {
     }
 
     public func save(server: MCPServerConfiguration) {
-        removeLocalStdioInstances(for: server.id)
         guard var serverToSave = MCPServerConfigurationTransferService.materializeEnvironmentReferences(
             in: server
         ) else {
@@ -381,7 +377,6 @@ public final class MCPManager: ObservableObject {
     }
 
     public func delete(server: MCPServerConfiguration) {
-        removeLocalStdioInstances(for: server.id)
         persistResumptionToken(for: server.id)
         cancelTrackedToolCalls(for: server.id, reason: NSLocalizedString("服务器被删除", comment: "MCP server deleted cancellation reason"))
         cancelAutoConnectRetry(for: server.id, resetAttempts: true)
@@ -461,7 +456,6 @@ public final class MCPManager: ObservableObject {
     public func disconnect(server: MCPServerConfiguration) {
         mcpManagerLogger.info("断开 MCP 服务器：\(server.displayName, privacy: .public) (\(server.id.uuidString, privacy: .public))")
         autoConnectSuppressedServerIDs.insert(server.id)
-        removeLocalStdioInstances(for: server.id)
         persistResumptionToken(for: server.id)
         cancelTrackedToolCalls(for: server.id, reason: NSLocalizedString("服务器已断开", comment: "MCP server disconnected cancellation reason"))
         cancelAutoConnectRetry(for: server.id, resetAttempts: true)
@@ -578,40 +572,7 @@ public final class MCPManager: ObservableObject {
             $0.isBusy = true
         }
 
-        var approvedLocalLinuxCommandRuleIDs: Set<UUID> = []
-        if server.usesLocalLinuxStdio,
-           case .localStdio(let configuration) = server.transport,
-           AppConfigStore.boolValue(for: .localLinuxCommandSafetyEnabled) {
-            let command = configuration.command.trimmingCharacters(in: .whitespacesAndNewlines)
-            let request = LocalLinuxJobRequest(
-                executable: command,
-                arguments: [command] + configuration.arguments,
-                workingDirectory: configuration.workingDirectory,
-                timeoutSeconds: 0,
-                outputLimitBytes: 0
-            )
-            if let match = await LocalLinuxApprovalPolicy.shared.evaluate(
-                request: request,
-                kind: .localMCP,
-                isEnabled: true
-            ) {
-                switch match.action {
-                case .warn:
-                    break
-                case .confirm:
-                    // 本地 MCP 不会自动连接；用户在管理页点按“连接”即确认本次进程启动。
-                    approvedLocalLinuxCommandRuleIDs.insert(match.ruleID)
-                case .deny:
-                    throw LocalLinuxRuntimeError.commandDenied(
-                        ruleName: match.ruleName,
-                        matchedText: match.matchedText
-                    )
-                }
-            }
-        }
-        let transportBundle = server.makeSDKTransport(
-            approvedLocalLinuxCommandRuleIDs: approvedLocalLinuxCommandRuleIDs
-        )
+        let transportBundle = server.makeSDKTransport()
         if let resumptionTransport = transportBundle.streamControl as? MCPResumptionControllableTransport,
            let token = server.streamResumptionToken,
            !token.isEmpty {

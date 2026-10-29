@@ -53,7 +53,6 @@ extension ChatService {
         // 初始化和取消旧请求都会挂起，先固定用户提交时的来源与模型。
         let requestedSessionID = sessionID ?? currentSessionSubject.value?.id
         let requestedModel = runnableModel ?? detachedChatCompletionFallbackModel()
-        await waitForInitialPersistenceStateIfNeeded()
         try Task.checkCancellation()
 
         let trimmedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)

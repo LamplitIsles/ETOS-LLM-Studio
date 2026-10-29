@@ -37,8 +37,6 @@ public enum Persistence {
     static let auxiliaryConfigBlobKeys: Set<String> = [
         "providers",
         "providers_v1",
-        "worldbooks",
-        "worldbooks_v1",
         "shortcut_tools",
         "shortcut_tools_v1",
         "feedback_tickets",
@@ -48,12 +46,6 @@ public enum Persistence {
         "mcp_servers_records_v1",
         "roleplay_library_v1",
         "roleplay_variables_v1"
-    ]
-    static let auxiliaryMemoryBlobKeys: Set<String> = [
-        "memory_raw_memories",
-        "memory_raw_memories_v1",
-        "conversation_user_profile",
-        "conversation_user_profile_v1"
     ]
     static var grdbEnabledOverrideForTests: Bool?
     static var requestLogRetentionLimitOverride: Int?
@@ -97,10 +89,6 @@ public enum Persistence {
         var failedKinds: [LaunchDatabaseKind] = []
         var missingBackupKinds: [LaunchDatabaseKind] = []
 
-        var needsChatFTSRebuild: Bool {
-            restoredKinds.contains(.chat)
-        }
-
         var hasPendingRecoveryRequest: Bool {
             !recoverableKinds.isEmpty
         }
@@ -118,83 +106,9 @@ public enum Persistence {
         }
     }
 
-    public enum LegacyJSONMigrationStage: String, Sendable {
-        case preparing
-        case importingSessions
-        case completed
-    }
-
-    public struct LegacyJSONMigrationStatus: Sendable {
-        public let hasLegacyArtifacts: Bool
-        public let importCompleted: Bool
-        public let cleanupCompleted: Bool
-        public let requiresImportDecision: Bool
-        public let requiresCleanupDecision: Bool
-        public let estimatedLegacyBytes: Int64
-        public let estimatedSessionCount: Int
-
-        public var estimatedLegacyMegabytes: Double {
-            guard estimatedLegacyBytes > 0 else { return 0 }
-            return Double(estimatedLegacyBytes) / 1_048_576
-        }
-    }
-
-    public struct LegacyJSONMigrationProgress: Sendable {
-        public let stage: LegacyJSONMigrationStage
-        public let processedSessions: Int
-        public let totalSessions: Int
-        public let importedMessages: Int
-        public let estimatedTotalBytes: Int64
-        public let processedBytes: Int64
-        public let currentSessionName: String?
-
-        public var fractionCompleted: Double {
-            if estimatedTotalBytes > 0 {
-                return min(1, max(0, Double(processedBytes) / Double(estimatedTotalBytes)))
-            }
-            guard totalSessions > 0 else { return stage == .completed ? 1 : 0 }
-            return min(1, max(0, Double(processedSessions) / Double(totalSessions)))
-        }
-    }
-
-    public struct LegacyJSONMigrationResult: Sendable {
-        public let importedSessions: Int
-        public let importedMessages: Int
-        public let hadLegacyArtifacts: Bool
-        public let cleanupAttempted: Bool
-        public let cleanupSucceeded: Bool
-    }
-
-    public enum LegacyJSONMigrationError: LocalizedError {
-        case grdbUnavailable
-        case importFailed(String)
-        case cleanupFailed(String)
-
-        public var errorDescription: String? {
-            switch self {
-            case .grdbUnavailable:
-                return NSLocalizedString(
-                    "当前无法访问 SQLite 数据库，暂时不能执行 JSON 迁移。",
-                    comment: "Legacy JSON migration database unavailable"
-                )
-            case .importFailed(let reason):
-                return String(
-                    format: NSLocalizedString("迁移失败：%@", comment: "Legacy JSON migration failure"),
-                    reason
-                )
-            case .cleanupFailed(let reason):
-                return String(
-                    format: NSLocalizedString("清理失败：%@", comment: "Legacy JSON cleanup failure"),
-                    reason
-                )
-            }
-        }
-    }
-
     enum LaunchDatabaseKind: CaseIterable, Sendable {
         case chat
         case config
-        case memory
 
         var requestIdentifier: String {
             switch self {
@@ -202,19 +116,15 @@ public enum Persistence {
                 return "chat"
             case .config:
                 return "config"
-            case .memory:
-                return "memory"
             }
         }
 
         var displayName: String {
             switch self {
             case .chat:
-                return "聊天数据库"
+                return "运行时数据库"
             case .config:
                 return "配置数据库"
-            case .memory:
-                return "记忆数据库"
             }
         }
 
@@ -225,14 +135,11 @@ public enum Persistence {
 
     enum AuxiliaryStoreKind: String {
         case config = "config-store.sqlite"
-        case memory = "memory-store.sqlite"
 
         var loggerCategory: String {
             switch self {
             case .config:
                 return "PersistenceAuxConfig"
-            case .memory:
-                return "PersistenceAuxMemory"
             }
         }
     }

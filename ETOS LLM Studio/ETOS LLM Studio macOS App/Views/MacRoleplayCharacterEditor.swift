@@ -39,7 +39,6 @@ struct MacRoleplayCharacterEditor: View {
                     Button(NSLocalizedString("新增开场白", comment: "")) { draft.greetings.append(MacRoleplayGreetingDraft(number: draft.greetings.count + 1)) }
                 }
                 textSection(NSLocalizedString("示例对话", comment: ""), text: $draft.character.messageExamples)
-                textSection(NSLocalizedString("系统提示词", comment: ""), text: $draft.character.systemPrompt)
                 textSection(NSLocalizedString("历史后指令", comment: ""), text: $draft.character.postHistoryInstructions)
                 textSection(NSLocalizedString("创作者备注", comment: ""), text: $draft.character.creatorNotes)
                 Section {
@@ -75,7 +74,6 @@ struct MacRoleplayCharacterEditor: View {
                     .string("scenario", label: NSLocalizedString("场景", comment: ""), get: { draft.character.scenario }, set: { draft.character.scenario = $0 }),
                     .string("first_message", label: NSLocalizedString("首条消息", comment: ""), get: { draft.character.firstMessage }, set: { draft.character.firstMessage = $0 }),
                     .string("examples", label: NSLocalizedString("示例对话", comment: ""), get: { draft.character.messageExamples }, set: { draft.character.messageExamples = $0 }),
-                    .string("system_prompt", label: NSLocalizedString("系统提示词", comment: ""), get: { draft.character.systemPrompt }, set: { draft.character.systemPrompt = $0 }),
                     .string("post_history", label: NSLocalizedString("历史后指令", comment: ""), get: { draft.character.postHistoryInstructions }, set: { draft.character.postHistoryInstructions = $0 }),
                     .string("creator_notes", label: NSLocalizedString("创作者备注", comment: ""), get: { draft.character.creatorNotes }, set: { draft.character.creatorNotes = $0 }),
                     .readOnly("greetings", label: NSLocalizedString("候选开场白", comment: ""), value: { .int(draft.greetings.count) }),

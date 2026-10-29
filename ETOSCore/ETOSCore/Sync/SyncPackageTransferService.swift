@@ -255,25 +255,6 @@ public enum SyncPackageTransferService {
             })
         }
 
-        if package.options.contains(.sessions) {
-            descriptors.append(contentsOf: package.sessionTags.map {
-                SyncRecordDescriptor(
-                    type: .sessionTag,
-                    recordID: $0.id.uuidString,
-                    checksum: checksum(for: $0),
-                    updatedAt: $0.updatedAt
-                )
-            })
-            descriptors.append(contentsOf: package.sessions.map {
-                SyncRecordDescriptor(
-                    type: .session,
-                    recordID: $0.session.id.uuidString,
-                    checksum: checksum(for: $0),
-                    updatedAt: latestTimestamp(for: $0, fallback: generatedAt)
-                )
-            })
-        }
-
         if package.options.contains(.backgrounds) {
             descriptors.append(contentsOf: package.backgrounds.map {
                 SyncRecordDescriptor(
@@ -283,27 +264,6 @@ public enum SyncPackageTransferService {
                     updatedAt: generatedAt
                 )
             })
-        }
-
-        if package.options.contains(.memories) {
-            descriptors.append(contentsOf: package.memories.map {
-                SyncRecordDescriptor(
-                    type: .memory,
-                    recordID: $0.id.uuidString,
-                    checksum: checksum(for: $0),
-                    updatedAt: generatedAt
-                )
-            })
-            if let profile = package.conversationUserProfile {
-                descriptors.append(
-                    SyncRecordDescriptor(
-                        type: .memory,
-                        recordID: SyncEngine.conversationUserProfileRecordID,
-                        checksum: checksum(for: profile),
-                        updatedAt: profile.updatedAt
-                    )
-                )
-            }
         }
 
         if package.options.contains(.mcpServers) {
@@ -354,17 +314,6 @@ public enum SyncPackageTransferService {
             descriptors.append(contentsOf: package.shortcutTools.map {
                 SyncRecordDescriptor(
                     type: .shortcutTool,
-                    recordID: $0.id.uuidString,
-                    checksum: checksum(for: $0),
-                    updatedAt: generatedAt
-                )
-            })
-        }
-
-        if package.options.contains(.worldbooks) {
-            descriptors.append(contentsOf: package.worldbooks.map {
-                SyncRecordDescriptor(
-                    type: .worldbook,
                     recordID: $0.id.uuidString,
                     checksum: checksum(for: $0),
                     updatedAt: generatedAt
@@ -460,12 +409,6 @@ public enum SyncPackageTransferService {
         return data.sha256Hex
     }
 
-    private static func latestTimestamp(for session: SyncedSession, fallback: Date) -> Date {
-        session.messages
-            .compactMap { $0.requestedAt }
-            .max() ?? fallback
-    }
-
     private static func writeExportEnvelope(
         _ package: SyncPackage,
         exportedAt: Date,
@@ -522,19 +465,12 @@ public enum SyncPackageTransferService {
             try writeEncodedField("sourcePlatform", sourcePlatform, to: writer, encoder: encoder, firstField: &firstField)
         }
         try writeArrayField("providers", package.providers, to: writer, encoder: encoder, firstField: &firstField)
-        try writeArrayField("sessionTags", package.sessionTags, to: writer, encoder: encoder, firstField: &firstField)
-        try writeArrayField("sessions", package.sessions, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("backgrounds", package.backgrounds, to: writer, encoder: encoder, firstField: &firstField)
-        try writeArrayField("memories", package.memories, to: writer, encoder: encoder, firstField: &firstField)
-        if let conversationUserProfile = package.conversationUserProfile {
-            try writeEncodedField("conversationUserProfile", conversationUserProfile, to: writer, encoder: encoder, firstField: &firstField)
-        }
         try writeArrayField("mcpServers", package.mcpServers, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("audioFiles", package.audioFiles, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("imageFiles", package.imageFiles, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("skills", package.skills, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("shortcutTools", package.shortcutTools, to: writer, encoder: encoder, firstField: &firstField)
-        try writeArrayField("worldbooks", package.worldbooks, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("feedbackTickets", package.feedbackTickets, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("dailyPulseRuns", package.dailyPulseRuns, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("dailyPulseFeedbackHistory", package.dailyPulseFeedbackHistory, to: writer, encoder: encoder, firstField: &firstField)
@@ -550,9 +486,6 @@ public enum SyncPackageTransferService {
         }
         if let appStorageSnapshot = package.appStorageSnapshot {
             try writeEncodedField("appStorageSnapshot", appStorageSnapshot, to: writer, encoder: encoder, firstField: &firstField)
-        }
-        if let globalSystemPrompt = package.globalSystemPrompt {
-            try writeEncodedField("globalSystemPrompt", globalSystemPrompt, to: writer, encoder: encoder, firstField: &firstField)
         }
         try writer.write("}")
     }

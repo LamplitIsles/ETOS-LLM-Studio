@@ -22,7 +22,6 @@ public enum MCPBuiltInAppToolServer {
 
     private static let serverIDs: [AppToolCatalogCategory: UUID] = [
         .interaction: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0001")!,
-        .memory: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0002")!,
         .file: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0003")!,
         .database: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0004")!,
         .custom: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0005")!,
@@ -36,7 +35,7 @@ public enum MCPBuiltInAppToolServer {
     ]
 
     public static var categories: [AppToolCatalogCategory] {
-        [.interaction, .conversation, .memory, .file, .database, .custom, .linux, .browser, .deviceOperations, .mediaEnvironment, .visionLanguage]
+        [.interaction, .conversation, .file, .database, .custom, .linux, .browser, .deviceOperations, .mediaEnvironment, .visionLanguage]
     }
 
     public static func serverID(for category: AppToolCatalogCategory) -> UUID {
@@ -195,8 +194,6 @@ public enum MCPBuiltInAppToolServer {
             return NSLocalizedString("内建交互工具", comment: "Built-in app tool interaction MCP server name")
         case .conversation:
             return NSLocalizedString("内建会话协作", comment: "Built-in conversation MCP server name")
-        case .memory:
-            return NSLocalizedString("内建记忆操作", comment: "Built-in app tool memory MCP server name")
         case .file:
             return NSLocalizedString("内建文件操作", comment: "Built-in app tool file MCP server name")
         case .database:
@@ -228,8 +225,6 @@ public enum MCPBuiltInAppToolServer {
             return NSLocalizedString("提供文本回显、输入草稿填充与反馈工单提交等本地交互工具。", comment: "Built-in app tool interaction MCP server notes")
         case .conversation:
             return NSLocalizedString("提供创建、联系、读取、等待和停止长期协作会话，以及按需查询可用模型的工具。", comment: "Built-in conversation MCP server notes")
-        case .memory:
-            return NSLocalizedString("提供长期记忆的查看、编辑、归档与恢复工具。", comment: "Built-in app tool memory MCP server notes")
         case .file:
             #if os(macOS)
             return NSLocalizedString("mac.shell.files.help", value: "Relative paths and app:// access the app's Documents. Native Shell commands use macOS paths and permissions.", comment: "")

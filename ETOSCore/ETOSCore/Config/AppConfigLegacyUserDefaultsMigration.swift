@@ -30,7 +30,6 @@ enum AppConfigLegacyUserDefaultsMigration {
             migrationLock.unlock()
         }
 
-        GlobalSystemPromptStore.migrateLegacyUserDefaultsToDatabase()
         ChatAppearanceProfileStore.migrateLegacyUserDefaultsToAppConfig()
 
         var existingKeys = Set(Persistence.loadAllAppConfigs().map { $0.key })
@@ -45,8 +44,6 @@ enum AppConfigLegacyUserDefaultsMigration {
             if AppConfigKey(rawValue: key) != nil
                 || rawSettingKeys.contains(key)
                 || aliasedRawSettingKeys.contains(key)
-                || key == GlobalSystemPromptStore.entriesStorageKey
-                || key == GlobalSystemPromptStore.selectedEntryIDStorageKey
                 || key == ChatAppearanceProfileStore.configurationStorageKey
                 || key.hasPrefix("requestBodyControls.state.model.")
                 || key.hasPrefix("requestBodyControls.state.signature.")
@@ -121,18 +118,10 @@ enum AppConfigLegacyUserDefaultsMigration {
         from defaults: UserDefaults,
         existingKeys: inout Set<String>
     ) {
-        let syncGlobalPromptLegacy = defaults.object(forKey: AppConfigKey.syncGlobalPrompt.rawValue)
         for key in AppConfigKey.allCases {
             migrateAppConfigKey(key, from: defaults, existingKeys: &existingKeys)
         }
 
-        if !existingKeys.contains(AppConfigKey.syncAppStorage.rawValue),
-           defaults.object(forKey: AppConfigKey.syncAppStorage.rawValue) == nil,
-           let object = syncGlobalPromptLegacy,
-           let legacy = appConfigValue(from: object, for: .syncAppStorage),
-           write(legacy, forRawKey: AppConfigKey.syncAppStorage.rawValue) {
-            existingKeys.insert(AppConfigKey.syncAppStorage.rawValue)
-        }
     }
 
     private static func migrateAppConfigKey(

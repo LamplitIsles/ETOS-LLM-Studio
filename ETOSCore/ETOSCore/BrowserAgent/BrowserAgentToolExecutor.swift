@@ -68,8 +68,7 @@ public actor BrowserAgentToolExecutor {
         runID: UUID,
         triggeringMessageID: UUID?,
         toolCallID: String,
-        selectedMCPServerIDs: [UUID],
-        allowCompanionDelegation: Bool = true
+        selectedMCPServerIDs: [UUID]
     ) async throws -> String {
         guard !isSuspendedForDataOperation else { throw CancellationError() }
         #if canImport(WebKit) && (canImport(UIKit) || os(macOS)) && !os(watchOS)
@@ -90,19 +89,6 @@ public actor BrowserAgentToolExecutor {
             )
         }
 
-        #if os(watchOS)
-        if allowCompanionDelegation,
-           AppConfigStore.boolValue(for: .browserAgentDelegateToIPhone) {
-            return try await BrowserAgentCompanionRelay.shared.execute(
-                argumentsJSON: argumentsJSON,
-                sessionID: sessionID,
-                runID: runID,
-                triggeringMessageID: triggeringMessageID,
-                toolCallID: toolCallID,
-                selectedMCPServerIDs: selectedMCPServerIDs
-            )
-        }
-        #endif
 
         let conversationRun = Persistence.loadConversationRun(id: runID)
         let dataProfile = conversationRun?.requestConfiguration.browserDataProfile

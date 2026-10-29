@@ -15,8 +15,7 @@ extension ChatService {
         runnableModel: RunnableModel,
         onContentDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> ChatMessage {
-        guard !LocalModelProviderBridge.isLocalRunnableModel(runnableModel),
-              let adapter = adapters[runnableModel.effectiveAPIFormat] else {
+        guard let adapter = adapters[runnableModel.effectiveAPIFormat] else {
             throw GuideError.missingRunnableModel
         }
 

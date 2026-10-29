@@ -35,24 +35,6 @@ extension ChatService {
         }
     }
 
-    func scheduleConversationMemoryUpdateIfNeeded(for sessionID: UUID, enableMemory: Bool) {
-        guard enableMemory else { return }
-        guard isConversationMemoryEnabled() else { return }
-        guard let session = conversationSession(withID: sessionID),
-              !session.isTemporary,
-              !session.isEmbeddedSubagent else {
-            return
-        }
-        guard !session.isMemoryContextIsolationActive else { return }
-        let messagesSnapshot = ChatResponseAttemptSupport.visibleMessages(from: messagesSnapshot(for: sessionID))
-        Task { [weak self] in
-            await self?.performConversationMemoryUpdateIfNeeded(
-                for: sessionID,
-                messages: messagesSnapshot
-            )
-        }
-    }
-
     private func performReasoningSummaryIfNeeded(for messageID: UUID, in sessionID: UUID, reasoning: String) async {
         guard let runnableModel = resolvedReasoningSummaryModel() else { return }
 
@@ -119,175 +101,6 @@ extension ChatService {
         } catch {
             logger.error("原子保存思考摘要失败：\(error.localizedDescription)")
         }
-    }
-
-    private func performConversationMemoryUpdateIfNeeded(for sessionID: UUID, messages: [ChatMessage]) async {
-        let conversationalMessages = normalizedConversationMessagesForSummary(from: messages)
-        guard !conversationalMessages.isEmpty else { return }
-
-        let userTurnCount = conversationalMessages.filter { $0.role == .user }.count
-        let roundThreshold = resolvedConversationMemoryRoundThreshold()
-        guard userTurnCount >= roundThreshold else {
-            return
-        }
-
-        if let existingSummary = ConversationMemoryManager.loadSessionSummary(for: sessionID) {
-            let minInterval = resolvedConversationMemorySummaryMinIntervalMinutes()
-            if minInterval > 0 {
-                let elapsed = Date().timeIntervalSince(existingSummary.updatedAt)
-                if elapsed < Double(minInterval) * 60 {
-                    return
-                }
-            }
-        }
-
-        let summaryContext = makeConversationSummaryContext(from: conversationalMessages)
-        guard !summaryContext.isEmpty else { return }
-        let summarySystemPrompt = BuiltInPromptStore.render(.conversationSummarySystem)
-        let summaryUserPrompt = BuiltInPromptStore.render(
-            .conversationSummaryUser,
-            variables: ["conversation": summaryContext]
-        )
-
-        do {
-            let rawSummary = try await generateDetachedChatCompletion(
-                systemPrompt: summarySystemPrompt,
-                userPrompt: summaryUserPrompt,
-                temperature: 0.2,
-                runnableModel: resolvedConversationSummaryModel(),
-                requestSource: .conversationSummary,
-                sessionID: sessionID
-            )
-            let summary = sanitizeConversationMemoryText(rawSummary, maxLength: 240)
-            guard !summary.isEmpty else { return }
-            ConversationMemoryManager.saveSessionSummary(
-                sessionID: sessionID,
-                summary: summary,
-                updatedAt: Date()
-            )
-            await updateConversationProfileIfNeeded(sessionID: sessionID, latestSummary: summary)
-        } catch {
-            logger.warning("异步会话摘要生成失败: \(error.localizedDescription)")
-        }
-    }
-
-    private func updateConversationProfileIfNeeded(sessionID: UUID, latestSummary: String) async {
-        guard isConversationProfileDailyUpdateEnabled() else { return }
-        guard ConversationMemoryManager.shouldUpdateUserProfile(on: Date()) else { return }
-
-        let existingProfile = ConversationMemoryManager.loadUserProfile()
-        let existingProfileText = existingProfile?.promptRepresentation ?? ""
-        let profileSystemPrompt = BuiltInPromptStore.render(.conversationProfileUpdateSystem)
-        let profileUserPrompt = BuiltInPromptStore.render(
-            .conversationProfileUpdateUser,
-            variables: [
-                "existing_profile": existingProfileText.isEmpty ? NSLocalizedString("（暂无）", comment: "Conversation profile empty placeholder") : existingProfileText,
-                "summary": latestSummary
-            ]
-        )
-
-        do {
-            let rawProfile = try await generateDetachedChatCompletion(
-                systemPrompt: profileSystemPrompt,
-                userPrompt: profileUserPrompt,
-                temperature: 0.2,
-                runnableModel: resolvedConversationSummaryModel(),
-                requestSource: .conversationProfile,
-                sessionID: sessionID
-            )
-            guard var generatedProfile = ConversationMemoryManager.decodeGeneratedProfile(
-                rawProfile,
-                updatedAt: Date(),
-                sourceSessionID: sessionID
-            ) else { return }
-            if generatedProfile.facts.isEmpty, let existingProfile, !existingProfile.facts.isEmpty {
-                generatedProfile = ConversationUserProfile(
-                    content: generatedProfile.content,
-                    updatedAt: generatedProfile.updatedAt,
-                    sourceSessionID: sessionID,
-                    facts: existingProfile.facts
-                )
-            }
-            try ConversationMemoryManager.saveUserProfile(generatedProfile)
-        } catch {
-            logger.warning("异步用户画像更新失败: \(error.localizedDescription)")
-        }
-    }
-
-    func deduplicateConversationUserProfileIfNeeded(sessionID: UUID) async {
-        guard let profile = ConversationMemoryManager.loadUserProfile(),
-              profile.needsLLMDedup else {
-            return
-        }
-        guard let runnableModel = resolvedConversationSummaryModel() else { return }
-
-        let systemPrompt = BuiltInPromptStore.render(.conversationProfileDedupSystem)
-        let userPrompt = BuiltInPromptStore.render(
-            .conversationProfileDedupUser,
-            variables: ["profile": profile.promptRepresentation]
-        )
-
-        do {
-            let rawProfile = try await generateDetachedChatCompletion(
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: 0.2,
-                runnableModel: runnableModel,
-                requestSource: .conversationProfile,
-                sessionID: sessionID
-            )
-            guard var generatedProfile = ConversationMemoryManager.decodeGeneratedProfile(
-                rawProfile,
-                updatedAt: Date(),
-                sourceSessionID: profile.sourceSessionID
-            ) else { return }
-            if generatedProfile.facts.isEmpty, !profile.facts.isEmpty {
-                generatedProfile = ConversationUserProfile(
-                    content: generatedProfile.content,
-                    updatedAt: generatedProfile.updatedAt,
-                    sourceSessionID: profile.sourceSessionID,
-                    facts: profile.facts
-                )
-            }
-            try ConversationMemoryManager.saveUserProfile(generatedProfile)
-        } catch {
-            logger.warning("用户画像同步去重失败: \(error.localizedDescription)")
-        }
-    }
-
-    private func normalizedConversationMessagesForSummary(from messages: [ChatMessage]) -> [ChatMessage] {
-        messages.compactMap { message in
-            guard message.role == .user || message.role == .assistant else { return nil }
-            let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            var normalized = message
-            normalized.content = trimmed
-            return normalized
-        }
-    }
-
-    private func makeConversationSummaryContext(from messages: [ChatMessage], messageLimit: Int = 12) -> String {
-        let slice = messages.suffix(max(1, messageLimit))
-        let lines = slice.map { message -> String in
-            let roleText = message.role == .user
-                ? NSLocalizedString("用户", comment: "Conversation summary user role label")
-                : NSLocalizedString("助手", comment: "Conversation summary assistant role label")
-            let compact = sanitizeConversationMemoryText(message.content, maxLength: 2_000)
-            return "\(roleText): \(compact)"
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func sanitizeConversationMemoryText(_ text: String, maxLength: Int? = nil) -> String {
-        let normalized = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’"))
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        guard let maxLength else { return normalized }
-        guard normalized.count > maxLength else { return normalized }
-        let cutIndex = normalized.index(normalized.startIndex, offsetBy: maxLength)
-        return String(normalized[..<cutIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func escapeXMLText(_ value: String) -> String {
@@ -404,19 +217,6 @@ extension ChatService {
             isStreaming: false,
             requestedAt: Date()
         )
-
-        if LocalModelProviderBridge.isLocalRunnableModel(targetModel) {
-            guard audioAttachments.isEmpty, imageAttachments.isEmpty, fileAttachments.isEmpty else {
-                throw DetachedCompletionError.unsupportedAttachments
-            }
-            return try await generateDetachedLocalLLMCompletion(
-                runnableModel: targetModel,
-                requestMessages: requestMessages,
-                temperature: temperature,
-                requestLogContext: requestContext,
-                responseValidator: responseValidator
-            )
-        }
 
         guard let adapter = adapters[targetModel.effectiveAPIFormat] else {
             throw DetachedCompletionError.unsupportedAdapter
@@ -541,53 +341,6 @@ extension ChatService {
             : activatedChatModels.first
     }
 
-    func buildMemoryQueryContext(from messages: [ChatMessage], fallbackUserMessage: ChatMessage?) -> String? {
-        let window = latestTwoRounds(from: messages)
-        let lines = window.compactMap { message -> String? in
-            let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            switch message.role {
-            case .user:
-                return "\(NSLocalizedString("用户", comment: "Memory query user role label")): \(trimmed)"
-            case .assistant:
-                return "\(NSLocalizedString("助手", comment: "Memory query assistant role label")): \(trimmed)"
-            default:
-                return nil
-            }
-        }
-        if !lines.isEmpty {
-            return lines.joined(separator: "\n")
-        }
-        return fallbackUserMessage?.content.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func latestTwoRounds(from messages: [ChatMessage]) -> [ChatMessage] {
-        var collected: [ChatMessage] = []
-        var userCount = 0
-        var assistantCount = 0
-
-        for message in messages.reversed() {
-            switch message.role {
-            case .user:
-                if userCount < 2 {
-                    collected.append(message)
-                    userCount += 1
-                }
-            case .assistant:
-                if assistantCount < 2 {
-                    collected.append(message)
-                    assistantCount += 1
-                }
-            default:
-                continue
-            }
-            if userCount >= 2 && assistantCount >= 2 {
-                break
-            }
-        }
-        return collected.reversed()
-    }
-
     func generateAndApplySessionTitle(for sessionID: UUID, firstUserMessage: ChatMessage) async {
         let isAutoNamingEnabled = await MainActor.run {
             AppConfigStore.shared.enableAutoSessionNaming
@@ -641,7 +394,6 @@ extension ChatService {
                 }
 
                 chatSessionsSubject.send(currentSessions)
-                Persistence.saveChatSessions(currentSessions)
                 logger.info("成功生成并应用新标题: '\(newTitle)'")
             }
         } catch {

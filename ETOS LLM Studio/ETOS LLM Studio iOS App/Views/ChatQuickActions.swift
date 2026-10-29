@@ -154,7 +154,6 @@ extension ChatView {
             ChatQuickActionFolderPanel(
                 actions: selectedChatQuickActions,
                 isTemporaryChatEnabled: isTemporaryChatEnabled,
-                temporaryChatMemoryMode: temporaryChatMemoryMode,
                 isTemporaryChatToggleAvailable: isQuickActionAvailable(.temporaryChat),
                 isPresented: isChatQuickActionFolderPresented,
                 collapsedSize: navBarIconSize,
@@ -184,8 +183,7 @@ extension ChatView {
 
     func singleQuickActionSystemImage(for action: ChatQuickAction) -> String {
         action.systemImage(
-            isTemporaryChatEnabled: isTemporaryChatEnabled,
-            memoryMode: temporaryChatMemoryMode
+            isTemporaryChatEnabled: isTemporaryChatEnabled
         )
     }
 
@@ -193,15 +191,7 @@ extension ChatView {
         if action == .temporaryChat {
             guard isQuickActionAvailable(action) else { return }
             performTemporaryChatTap()
-        } else if action == .contextCompression {
-            guard let session = viewModel.currentSession,
-                  !session.isTemporary,
-                  !viewModel.allMessagesForSession.isEmpty || continuationContext != nil else { return }
-            contextCompressionSourceSession = session
         } else {
-            if action == .localTerminal {
-                localTerminalInitialJobID = nil
-            }
             navigationDestination = action
         }
     }
@@ -219,96 +209,23 @@ extension ChatView {
     }
 
     func performTemporaryChatTap() {
-        let preferredMode: TemporaryChatMemoryMode = appConfig.temporaryChatMemoryEnabled
-            ? .enabled
-            : .isolated
-        let outcome = viewModel.performTemporaryChatTap(
-            preferredMemoryMode: preferredMode,
-            canEnable: isQuickActionAvailable(.temporaryChat)
-        )
-
-        let notice: ChatTransientNotice
-        switch outcome {
-        case .enabled(let memoryMode):
-            isTemporaryChatEnabled = true
-            temporaryChatMemoryMode = memoryMode
-            notice = ChatTransientNotice(
-                message: temporaryChatEnabledMessage(for: memoryMode),
-                systemImage: ChatQuickAction.temporaryChat.systemImage(
-                    isTemporaryChatEnabled: true,
-                    memoryMode: memoryMode
-                ),
-                tint: .accentColor
-            )
-        case .memoryModeChanged(let memoryMode):
-            appConfig.temporaryChatMemoryEnabled = memoryMode.isMemoryEnabled
-            isTemporaryChatEnabled = true
-            temporaryChatMemoryMode = memoryMode
-            notice = ChatTransientNotice(
-                message: temporaryChatMemoryModeChangedMessage(for: memoryMode),
-                systemImage: ChatQuickAction.temporaryChat.systemImage(
-                    isTemporaryChatEnabled: true,
-                    memoryMode: memoryMode
-                ),
-                tint: .accentColor
-            )
-        case .disabled:
-            isTemporaryChatEnabled = false
-            notice = ChatTransientNotice(
-                message: NSLocalizedString("临时对话已关闭", comment: "临时对话状态提示"),
-                systemImage: "eye",
-                tint: .secondary
-            )
-        case .unavailable:
-            return
-        }
-
-        showChatTransientNotice(
-            notice
-        )
+        guard isQuickActionAvailable(.temporaryChat) else { return }
+        viewModel.enableTemporaryChat()
+        refreshTemporaryChatState()
     }
 
     func refreshTemporaryChatState() {
         isTemporaryChatEnabled = viewModel.isTemporaryChatEnabled(for: viewModel.currentSession?.id)
-        if let memoryMode = viewModel.temporaryChatMemoryMode(for: viewModel.currentSession?.id) {
-            temporaryChatMemoryMode = memoryMode
-        }
-    }
-
-    private func temporaryChatEnabledMessage(for memoryMode: TemporaryChatMemoryMode) -> String {
-        switch memoryMode {
-        case .enabled:
-            return NSLocalizedString(
-                "临时对话已开启，可使用记忆。2 秒内再点可切换模式。",
-                comment: "开启允许记忆的临时对话提示"
-            )
-        case .isolated:
-            return NSLocalizedString(
-                "临时对话已开启，已隔离记忆。2 秒内再点可切换模式。",
-                comment: "开启隔离记忆的临时对话提示"
-            )
-        }
-    }
-
-    private func temporaryChatMemoryModeChangedMessage(for memoryMode: TemporaryChatMemoryMode) -> String {
-        switch memoryMode {
-        case .enabled:
-            return NSLocalizedString("临时对话已切换为可使用记忆", comment: "临时对话允许记忆提示")
-        case .isolated:
-            return NSLocalizedString("临时对话已切换为记忆隔离", comment: "临时对话隔离记忆提示")
-        }
     }
 
     func isQuickActionAvailable(_ action: ChatQuickAction) -> Bool {
         if action == .browser {
             return viewModel.currentSession != nil
-        } else if action == .localTerminal {
-            return appConfig.localLinuxEnabled && viewModel.currentSession != nil
         }
         guard action == .temporaryChat else { return true }
         return TemporaryChatToggleAvailability.isAvailable(
             isTemporaryChatEnabled: isTemporaryChatEnabled,
-            hasConversationStarted: !viewModel.allMessagesForSession.isEmpty || continuationContext != nil
+            hasConversationStarted: !viewModel.allMessagesForSession.isEmpty
         )
     }
 
@@ -322,7 +239,7 @@ extension ChatView {
     @ViewBuilder
     func quickActionDestinationView(for action: ChatQuickAction) -> some View {
         switch action {
-        case .temporaryChat, .contextCompression:
+        case .temporaryChat:
             EmptyView()
         case .settings:
             SettingsView()
@@ -332,8 +249,6 @@ extension ChatView {
             DailyPulseView().environmentObject(viewModel)
         case .usageAnalytics:
             UsageAnalyticsView()
-        case .memory:
-            LongTermMemoryFeatureView().environmentObject(viewModel)
         case .mcp:
             MCPIntegrationView()
         case .agentSkills:
@@ -342,14 +257,10 @@ extension ChatView {
             ShortcutIntegrationView()
         case .roleplay:
             RoleplaySettingsView().environmentObject(viewModel)
-        case .worldbook:
-            WorldbookSettingsView().environmentObject(viewModel)
         case .extendedFeatures:
             ExtendedFeaturesView().environmentObject(viewModel)
         case .browser:
             BrowserAgentFeatureView(sessionID: viewModel.currentSession?.id)
-        case .localTerminal:
-            LocalLinuxTerminalView(initialJobID: localTerminalInitialJobID)
         }
     }
 }
@@ -364,7 +275,6 @@ private struct ChatQuickActionFolderPanel: View {
 
     let actions: [ChatQuickAction]
     let isTemporaryChatEnabled: Bool
-    let temporaryChatMemoryMode: TemporaryChatMemoryMode
     let isTemporaryChatToggleAvailable: Bool
     let isPresented: Bool
     let collapsedSize: CGFloat
@@ -523,8 +433,7 @@ private struct ChatQuickActionFolderPanel: View {
 
     private func systemImage(for action: ChatQuickAction) -> String {
         action.systemImage(
-            isTemporaryChatEnabled: isTemporaryChatEnabled,
-            memoryMode: temporaryChatMemoryMode
+            isTemporaryChatEnabled: isTemporaryChatEnabled
         )
     }
 }

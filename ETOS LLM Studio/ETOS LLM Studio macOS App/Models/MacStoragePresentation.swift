@@ -22,17 +22,15 @@ struct MacStorageOverview: Sendable {
     let root: MacStorageLocation
     let other: MacStorageLocation
     let categories: [Category]
-    let total: String, cache: String, orphanDescription: String
+    let total: String, cache: String
     let totalBytes: Int64, cacheBytes: Int64, otherBytes: Int64
-    let orphanCount: Int
     let guideCategories: JSONValue
 
-    init(breakdown: StorageBreakdown, orphans: StorageUtility.OrphanedDataCount, root: URL) {
+    init(breakdown: StorageBreakdown, root: URL) {
         self.root = MacStorageLocation(title: NSLocalizedString("根目录", comment: ""), url: root, isRoot: true)
         other = MacStorageLocation(title: NSLocalizedString("其他文件", comment: ""), url: root, onlyOther: true)
         totalBytes = breakdown.totalSize; cacheBytes = breakdown.cacheSize; otherBytes = breakdown.otherSize
         total = StorageUtility.formatSize(totalBytes); cache = StorageUtility.formatSize(cacheBytes)
-        orphanDescription = orphans.description; orphanCount = orphans.total
         categories = StorageCategory.allCases.map { category in
             Category(id: category.rawValue, title: category.displayName,
                 size: StorageUtility.formatSize(breakdown.categorySize[category] ?? 0), symbol: category.systemImage,
@@ -45,7 +43,7 @@ struct MacStorageOverview: Sendable {
     static func load() throws -> Self {
         let breakdown = StorageUtility.getStorageBreakdown()
         try Task.checkCancellation()
-        return Self(breakdown: breakdown, orphans: StorageUtility.countAllOrphanedData(), root: StorageUtility.documentsDirectory)
+        return Self(breakdown: breakdown, root: StorageUtility.documentsDirectory)
     }
 }
 

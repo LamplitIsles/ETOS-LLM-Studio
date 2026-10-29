@@ -160,7 +160,6 @@ extension MCPManager {
         inFlightConnectionTokens.removeAll()
         for server in servers {
             cancelTrackedToolCalls(for: server.id, reason: NSLocalizedString("服务器已断开", comment: ""))
-            removeLocalStdioInstances(for: server.id)
             let client = removeConnectionArtifacts(for: server.id)
             await client?.disconnect()
         }

@@ -44,24 +44,6 @@ struct LocalDebugDiscoveryTests {
         discovery.stop()
     }
 
-    @Test("显式捕获确认只处理指定记录，旧记录确认不能作用于新队首")
-    func captureConfirmationUsesRequestID() async throws {
-        let server = LocalDebugServer(insertSession: { _, _ in Issue.record("忽略操作不得写入会话") })
-        _ = await server.handleOpenAICapture(["request": ["model": "first", "messages": [["role": "user", "content": "内容一"]]]])
-        let first = try #require(server.pendingOpenAIRequest?.id)
-        _ = await server.handleOpenAICapture(["request": ["model": "second", "messages": [["role": "user", "content": "内容二"]]]])
-        server.resolvePendingOpenAIRequest(id: first, save: false)
-        await server.waitForPendingOperations()
-        let next = try #require(server.pendingOpenAIRequest?.id)
-        #expect(next != first && server.pendingOpenAIQueueCount == 1)
-        server.resolvePendingOpenAIRequest(id: first, save: false)
-        await server.waitForPendingOperations()
-        #expect(server.pendingOpenAIRequest?.id == next && server.pendingOpenAIQueueCount == 1)
-        server.resolvePendingOpenAIRequest(id: next, save: false)
-        await server.waitForPendingOperations()
-        #expect(server.pendingOpenAIRequest == nil && server.pendingOpenAIQueueCount == 0)
-    }
-
     private func fixture() -> LocalDebugDiscoveredServer {
         LocalDebugDiscoveredServer(id: "fixture", name: "调试服务", host: "debug.test", port: 7654, lastSeenAt: Date(timeIntervalSince1970: 0))
     }

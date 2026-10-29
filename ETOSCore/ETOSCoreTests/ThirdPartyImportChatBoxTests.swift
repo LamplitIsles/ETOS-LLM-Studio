@@ -174,9 +174,7 @@ struct ThirdPartyImportChatBoxTests {
         )
 
         #expect(prepared.package.options.contains(.providers))
-        #expect(prepared.package.options.contains(.sessions))
         #expect(prepared.package.providers.count == 2)
-        #expect(prepared.package.sessions.count == 3)
         #expect(prepared.warnings.contains(where: { $0.contains("Chatbox AI") }))
 
         let openAI = try #require(prepared.package.providers.first { $0.name == "OpenAI" })
@@ -192,28 +190,6 @@ struct ThirdPartyImportChatBoxTests {
         #expect(claude.apiFormat == "anthropic")
         #expect(claude.baseURL == "https://claude.example.com/v1")
 
-        let mainSession = try #require(prepared.package.sessions.first { $0.session.name == "ChatBox 测试会话" })
-        #expect(mainSession.messages.count == 3)
-        #expect(mainSession.messages[0].role == .system)
-        #expect(mainSession.messages[1].content.contains("图片里的文字"))
-        #expect(mainSession.messages[1].content.contains("notes.txt"))
-        #expect(mainSession.messages[1].content.contains("https://example.com"))
-
-        let assistant = mainSession.messages[2]
-        #expect(assistant.content.contains("回答正文"))
-        #expect(assistant.content.contains("search"))
-        #expect(assistant.reasoningContent == "推理片段")
-        #expect(assistant.tokenUsage?.promptTokens == 12)
-        #expect(assistant.tokenUsage?.completionTokens == 4)
-        #expect(assistant.tokenUsage?.thinkingTokens == 3)
-        #expect(assistant.tokenUsage?.cacheReadTokens == 2)
-        #expect(assistant.tokenUsage?.totalTokens == 16)
-        #expect(assistant.responseMetrics?.timeToFirstToken == 0.25)
-        #expect(assistant.modelReference?.providerName == "OpenAI")
-        #expect(assistant.modelReference?.modelDisplayName == "GPT-4o")
-
-        #expect(prepared.package.sessions.contains { $0.session.name == "ChatBox 测试会话 - 历史线程" })
-        #expect(prepared.package.sessions.contains { $0.session.name == "ChatBox 测试会话 - ChatBox 分支 1" })
     }
 
     @Test("ChatBox 字符串化 settings 和 session 值也能解析")
@@ -256,9 +232,6 @@ struct ThirdPartyImportChatBoxTests {
 
         #expect(prepared.package.providers.count == 1)
         #expect(prepared.package.providers[0].apiKeys == ["sk-stringified"])
-        #expect(prepared.package.sessions.count == 1)
-        #expect(prepared.package.sessions[0].session.name == "字符串化会话")
-        #expect(prepared.package.sessions[0].messages[0].content == "从字符串恢复")
     }
 
     private func makeTemporaryDirectory() -> URL {

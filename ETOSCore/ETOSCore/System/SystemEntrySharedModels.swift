@@ -298,44 +298,28 @@ public struct ETOSRunSnapshot: Codable, Equatable, Identifiable, Sendable {
 public struct ETOSWidgetSnapshot: Codable, Equatable, Sendable {
     public let updatedAt: Date
     public let recentRuns: [ETOSRunSnapshot]
-    public let recentSessions: [ETOSSessionSummary]
     public let dailyPulseTitle: String?
 
     public init(
         updatedAt: Date = Date(),
         recentRuns: [ETOSRunSnapshot],
-        recentSessions: [ETOSSessionSummary] = [],
         dailyPulseTitle: String? = nil
     ) {
         self.updatedAt = updatedAt
         self.recentRuns = Array(recentRuns.prefix(5))
-        self.recentSessions = Array(recentSessions.prefix(10))
         self.dailyPulseTitle = dailyPulseTitle.map { String($0.prefix(80)) }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case updatedAt, recentRuns, recentSessions, dailyPulseTitle
+        case updatedAt, recentRuns, dailyPulseTitle
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         recentRuns = Array(try container.decode([ETOSRunSnapshot].self, forKey: .recentRuns).prefix(5))
-        recentSessions = Array(
-            try container.decodeIfPresent([ETOSSessionSummary].self, forKey: .recentSessions)?.prefix(10) ?? []
-        )
         dailyPulseTitle = try container.decodeIfPresent(String.self, forKey: .dailyPulseTitle)
             .map { String($0.prefix(80)) }
-    }
-}
-
-public struct ETOSSessionSummary: Codable, Equatable, Identifiable, Sendable {
-    public let id: UUID
-    public let name: String
-
-    public init(id: UUID, name: String) {
-        self.id = id
-        self.name = String(name.prefix(80))
     }
 }
 

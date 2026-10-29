@@ -79,26 +79,10 @@ public actor LocalAgentRuntimeContextManager {
         }
         #if os(macOS)
         let mountIDs: [UUID] = []
-        #else
-        // 探测失败不是撤销授权：保留本机已授权且启用的目录，执行前由租约入口重试恢复。
-        // 若只收集 available，暂时离线的目录会被静默漏掉，Shell 可能写入同名裸挂载点。
-        let mountIDs = Persistence.loadLocalLinuxMounts()
-            .filter { $0.isEnabled && $0.bookmark != nil }
-            .map(\.id)
-            .sorted { $0.uuidString < $1.uuidString }
         #endif
         let conversationRun = Persistence.loadConversationRun(id: runID)
         let resolvedRootRunID = rootRunID ?? conversationRun?.rootRunID ?? runID
         let resolvedParentRunID = parentRunID ?? conversationRun?.parentRunID
-        let promptProfile = await LocalAgentPromptStore.shared.activeProfile()
-        #if os(macOS)
-        // 同步来的自定义说明保持原样；每次 Run 补充真实平台，避免模型把 Mac 当作 Alpine。
-        let platformInstructions = LocalAgentPromptStore.defaultContent
-        let promptContent = promptProfile.content == platformInstructions
-            ? promptProfile.content : promptProfile.content + "\n\n" + platformInstructions
-        #else
-        let promptContent = promptProfile.content
-        #endif
         let skillState = await MainActor.run {
             (
                 names: SkillManager.shared.chatToolsEnabled
@@ -131,8 +115,6 @@ public actor LocalAgentRuntimeContextManager {
             selectedMCPServerConfigurations: selectedMCPConfigurations,
             browserSessionID: browserSessionID ?? sessionID,
             browserDataProfile: Persistence.browserAgentDataProfile(sessionID: sessionID),
-            promptProfileID: promptProfile.id,
-            promptContent: promptContent,
             skillSnapshots: skillSnapshots,
             executorDeviceID: executorDeviceID,
             mode: mode

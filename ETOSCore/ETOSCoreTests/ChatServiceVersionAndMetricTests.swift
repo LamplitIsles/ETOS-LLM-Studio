@@ -46,12 +46,8 @@ extension ChatServiceTests {
             content: "请先成功一次",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -70,12 +66,8 @@ extension ChatServiceTests {
             originalAssistant,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -122,12 +114,8 @@ extension ChatServiceTests {
             firstUser,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 10,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -170,12 +158,8 @@ extension ChatServiceTests {
             assistantMessage,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -219,12 +203,8 @@ extension ChatServiceTests {
             errorMessage,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -270,12 +250,8 @@ extension ChatServiceTests {
             errorMessage,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -346,12 +322,8 @@ extension ChatServiceTests {
             errorMessage,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 10,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 

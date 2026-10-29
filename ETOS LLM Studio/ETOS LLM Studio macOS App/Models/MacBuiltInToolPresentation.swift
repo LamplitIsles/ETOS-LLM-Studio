@@ -11,12 +11,6 @@ struct MacBuiltInToolPresentation: Identifiable, Sendable {
     init(state: ToolCatalogBuiltInToolState) {
         self.state = state
         switch state.kind {
-        case .memoryWrite:
-            title = NSLocalizedString("记忆系统写入", comment: "")
-            description = NSLocalizedString("允许模型调用 save_memory，将有长期价值的信息写入记忆。", comment: "")
-        case .memorySearch:
-            title = NSLocalizedString("记忆系统主动检索", comment: "")
-            description = NSLocalizedString("允许模型调用 search_memory，在回答前主动检索记忆。", comment: "")
         case .widgetCard:
             title = NSLocalizedString("显示网页卡片", comment: "")
             description = NSLocalizedString("允许模型调用 show_widget，在对话中渲染 HTML 网页卡片。", comment: "")
@@ -32,14 +26,8 @@ struct MacBuiltInToolPresentation: Identifiable, Sendable {
         }
         switch state.statusReason {
         case .enabled:
-            status = state.kind == .memorySearch
-                ? String(format: NSLocalizedString("已允许主动检索，Top K = %d。", comment: ""), state.memoryTopK)
-                : NSLocalizedString("已启用", comment: "")
+            status = NSLocalizedString("已启用", comment: "")
         case .isolatedBySession: status = NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "")
-        case .memoryDisabled: status = NSLocalizedString("记忆系统总开关已关闭。", comment: "")
-        case .memoryWriteDisabled: status = NSLocalizedString("当前未允许写入新的记忆。", comment: "")
-        case .activeRetrievalDisabled: status = NSLocalizedString("当前未允许主动检索。", comment: "")
-        case .zeroTopK: status = NSLocalizedString("当前 Top K 为 0，聊天时不会暴露检索工具。", comment: "")
         case .widgetDisabled, .askUserInputDisabled, .getSystemTimeDisabled: status = NSLocalizedString("未启用", comment: "")
         @unknown default: status = NSLocalizedString("未启用", comment: "")
         }
@@ -68,7 +56,6 @@ extension ToolCatalogBuiltInToolKind {
         case .widgetCard: .showWidget
         case .askUserInput: .askUserInput
         case .getSystemTime: .getSystemTime
-        case .memoryWrite, .memorySearch: nil
         @unknown default: nil
         }
     }

@@ -2,15 +2,14 @@ import ETOSCore
 import Foundation
 
 enum MacStorageMutation: Sendable {
-    case cache, orphans, files([MacStorageFile])
+    case cache, files([MacStorageFile])
 
     var kind: String {
-        switch self { case .cache: "cache"; case .orphans: "orphans"; case .files: "files" }
+        switch self { case .cache: "cache"; case .files: "files" }
     }
     var title: String {
         switch self {
         case .cache: NSLocalizedString("清理所有缓存", comment: "")
-        case .orphans: NSLocalizedString("清理孤立数据", comment: "")
         case .files: NSLocalizedString("删除", comment: "")
         }
     }
@@ -21,8 +20,6 @@ enum MacStorageMutation: Sendable {
         case .cache:
             let result = StorageUtility.clearCacheFiles()
             return String(format: NSLocalizedString("已删除 %d 个语音文件和 %d 个图片文件。", comment: ""), result.audioDeleted, result.imageDeleted)
-        case .orphans:
-            return String(format: NSLocalizedString("已清理：%@", comment: ""), StorageUtility.cleanupAllOrphans().description)
         case .files(let files):
             let manager = FileManager.default
             // 在删除任何文件之前检查整组原件；数据库维护等待期间的变化不能被旧确认覆盖。

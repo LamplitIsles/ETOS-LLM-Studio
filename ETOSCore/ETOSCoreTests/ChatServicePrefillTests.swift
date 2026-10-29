@@ -16,7 +16,7 @@ extension ChatServiceTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         let service = streaming ? ChatService(
-            adapters: ["openai-compatible": streamAdapter], memoryManager: memoryManager,
+            adapters: ["openai-compatible": streamAdapter],
             urlSession: URLSession(configuration: configuration)
         ) : chatService!
         service.setSelectedModel(dummyModel)
@@ -33,8 +33,7 @@ extension ChatServiceTests {
 
         await service.retryMessage(
             original, aiTemperature: 0, aiTopP: 1,
-            systemPrompt: "系统提示", maxChatHistory: 0, enableStreaming: streaming,
-            enhancedPrompt: "尾部提示", enableMemory: false, enableMemoryWrite: false,
+            maxChatHistory: 0, enableStreaming: streaming,
             includeSystemTime: true, systemTimeInjectionPosition: .tail,
             prefill: true
         )

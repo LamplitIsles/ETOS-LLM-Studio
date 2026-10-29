@@ -35,13 +35,8 @@ private struct PendingChatSendPayload: Sendable {
     let content: String
     let aiTemperature: Double
     let aiTopP: Double
-    let systemPrompt: String
     let maxChatHistory: Int
     let enableStreaming: Bool
-    let enhancedPrompt: String?
-    let enableMemory: Bool
-    let enableMemoryWrite: Bool
-    let enableMemoryActiveRetrieval: Bool
     let includeSystemTime: Bool
     let systemTimeInjectionPosition: SystemTimeInjectionPosition
     let enablePeriodicTimeLandmark: Bool
@@ -104,13 +99,8 @@ final class ChatViewModel: ObservableObject {
     @Published var activatedConversationModelsByProviderID: [UUID: [RunnableModel]] = [:]
     @Published var activatedConversationModelLayoutsByProviderID: [UUID: RunnableModelPickerLayout] = [:]
     @Published var activatedChatModels: [RunnableModel] = []
-    @Published var memories: [MemoryItem] = []
-    @Published var conversationSessionSummaries: [ConversationSessionSummary] = []
-    @Published var conversationUserProfile: ConversationUserProfile?
-    @Published var selectedEmbeddingModel: RunnableModel?
     @Published var selectedTitleGenerationModel: RunnableModel?
     @Published var selectedDailyPulseModel: RunnableModel?
-    @Published var selectedConversationSummaryModel: RunnableModel?
     @Published var selectedReasoningSummaryModel: RunnableModel?
     @Published var selectedOCRModel: RunnableModel?
     @Published var reasoningExpandedState: [UUID: Bool] = [:]
@@ -119,8 +109,6 @@ final class ChatViewModel: ObservableObject {
     @Published var isSendingMessage: Bool = false
     @Published var isSendDelayPending: Bool = false
     let sendSubmissionState = ChatSendSubmissionState()
-    @Published var globalSystemPromptEntries: [GlobalSystemPromptEntry] = []
-    @Published var selectedGlobalSystemPromptEntryID: UUID?
     @Published var speechModels: [RunnableModel] = []
     @Published var selectedSpeechModel: RunnableModel?
     @Published var latestAssistantMessageID: UUID?
@@ -149,12 +137,6 @@ final class ChatViewModel: ObservableObject {
     @Published var showAttachmentPicker: Bool = false
     @Published var showImagePicker: Bool = false
     @Published var showAudioRecorder: Bool = false
-    @Published var showDimensionMismatchAlert: Bool = false
-    @Published var dimensionMismatchMessage: String = ""
-    @Published var showMemoryEmbeddingErrorAlert: Bool = false
-    @Published var memoryEmbeddingErrorMessage: String = ""
-    @Published var memoryRetryStoppedNoticeMessage: String?
-    @Published var memoryEmbeddingProgress: MemoryEmbeddingProgress?
     @Published var activeAskUserInputRequest: AppToolAskUserInputRequest?
     @Published var externalDocumentImportErrorMessage: String?
     
@@ -208,9 +190,6 @@ final class ChatViewModel: ObservableObject {
     @Published var aiTopPEnabled: Bool = AppConfigStore.shared.aiTopPEnabled {
         didSet { AppConfigStore.shared.aiTopPEnabled = aiTopPEnabled }
     }
-    @Published var systemPrompt: String = AppConfigStore.shared.systemPrompt {
-        didSet { AppConfigStore.shared.systemPrompt = systemPrompt }
-    }
     @Published var maxChatHistory: Int = AppConfigStore.shared.maxChatHistory {
         didSet { AppConfigStore.shared.maxChatHistory = maxChatHistory }
     }
@@ -249,36 +228,6 @@ final class ChatViewModel: ObservableObject {
     @Published var enableAutoSessionNaming: Bool = AppConfigStore.shared.enableAutoSessionNaming {
         didSet { AppConfigStore.shared.enableAutoSessionNaming = enableAutoSessionNaming }
     }
-    @Published var enableMemory: Bool = AppConfigStore.shared.enableMemory {
-        didSet { AppConfigStore.shared.enableMemory = enableMemory }
-    }
-    @Published var enableMemoryWrite: Bool = AppConfigStore.shared.enableMemoryWrite {
-        didSet { AppConfigStore.shared.enableMemoryWrite = enableMemoryWrite }
-    }
-    @Published var enableMemoryActiveRetrieval: Bool = AppConfigStore.shared.enableMemoryActiveRetrieval {
-        didSet { AppConfigStore.shared.enableMemoryActiveRetrieval = enableMemoryActiveRetrieval }
-    }
-    @Published var enableConversationMemoryAsync: Bool = AppConfigStore.shared.enableConversationMemoryAsync {
-        didSet { AppConfigStore.shared.enableConversationMemoryAsync = enableConversationMemoryAsync }
-    }
-    @Published var conversationMemoryRecentLimit: Int = AppConfigStore.shared.conversationMemoryRecentLimit {
-        didSet { AppConfigStore.shared.conversationMemoryRecentLimit = conversationMemoryRecentLimit }
-    }
-    @Published var conversationMemoryRoundThreshold: Int = AppConfigStore.shared.conversationMemoryRoundThreshold {
-        didSet { AppConfigStore.shared.conversationMemoryRoundThreshold = conversationMemoryRoundThreshold }
-    }
-    @Published var conversationMemorySummaryMinIntervalMinutes: Int = AppConfigStore.shared.conversationMemorySummaryMinIntervalMinutes {
-        didSet { AppConfigStore.shared.conversationMemorySummaryMinIntervalMinutes = conversationMemorySummaryMinIntervalMinutes }
-    }
-    @Published var enableConversationProfileDailyUpdate: Bool = AppConfigStore.shared.enableConversationProfileDailyUpdate {
-        didSet { AppConfigStore.shared.enableConversationProfileDailyUpdate = enableConversationProfileDailyUpdate }
-    }
-    @Published var enableReasoningSummary: Bool = AppConfigStore.shared.enableReasoningSummary {
-        didSet { AppConfigStore.shared.enableReasoningSummary = enableReasoningSummary }
-    }
-    @Published var enableLiquidGlass: Bool = AppConfigStore.shared.enableLiquidGlass {
-        didSet { AppConfigStore.shared.enableLiquidGlass = enableLiquidGlass }
-    }
     @Published var enableChatTopBlurFade: Bool = AppConfigStore.shared.enableChatTopBlurFade {
         didSet { AppConfigStore.shared.enableChatTopBlurFade = enableChatTopBlurFade }
     }
@@ -294,17 +243,11 @@ final class ChatViewModel: ObservableObject {
     @Published var speechModelIdentifier: String = AppConfigStore.shared.speechModelIdentifier {
         didSet { AppConfigStore.shared.speechModelIdentifier = speechModelIdentifier }
     }
-    @Published var memoryEmbeddingModelIdentifier: String = AppConfigStore.shared.memoryEmbeddingModelIdentifier {
-        didSet { AppConfigStore.shared.memoryEmbeddingModelIdentifier = memoryEmbeddingModelIdentifier }
-    }
     @Published var titleGenerationModelIdentifier: String = AppConfigStore.shared.titleGenerationModelIdentifier {
         didSet { AppConfigStore.shared.titleGenerationModelIdentifier = titleGenerationModelIdentifier }
     }
     @Published var dailyPulseModelIdentifier: String = AppConfigStore.shared.dailyPulseModelIdentifier {
         didSet { AppConfigStore.shared.dailyPulseModelIdentifier = dailyPulseModelIdentifier }
-    }
-    @Published var conversationSummaryModelIdentifier: String = AppConfigStore.shared.conversationSummaryModelIdentifier {
-        didSet { AppConfigStore.shared.conversationSummaryModelIdentifier = conversationSummaryModelIdentifier }
     }
     @Published var reasoningSummaryModelIdentifier: String = AppConfigStore.shared.reasoningSummaryModelIdentifier {
         didSet { AppConfigStore.shared.reasoningSummaryModelIdentifier = reasoningSummaryModelIdentifier }
@@ -367,10 +310,6 @@ final class ChatViewModel: ObservableObject {
         incrementalHistoryBatchSize
     }
 
-    var isMemoryEmbeddingInProgress: Bool {
-        memoryEmbeddingProgress?.phase == .running
-    }
-
     var remainingHistoryCount: Int {
         max(0, historyWindow?.lowerBound ?? 0)
     }
@@ -398,11 +337,8 @@ final class ChatViewModel: ObservableObject {
     var messageStateByID: [UUID: ChatMessageRenderState] = [:]
     var autoReasoningPreviewMessageIDs: Set<UUID> = []
     var userControlledReasoningPreviewMessageIDs: Set<UUID> = []
-    var isPersistingGlobalSystemPrompts = false
     var backgroundDisplayTarget = DisplayImageTarget(size: .zero, scale: 1)
     let blurredBackgroundImageCache = NSCache<NSString, UIImage>()
-    var globalSystemPromptReloadTask: Task<Void, Never>?
-    var conversationMemoryReloadTask: Task<Void, Never>?
     var backgroundBlurTask: Task<Void, Never>?
     var isApplicationActive: Bool = true
     var pendingReplyNotificationContextBySessionID: [UUID: PendingBackgroundReplyNotificationContext] = [:]
@@ -413,10 +349,6 @@ final class ChatViewModel: ObservableObject {
     var dispatchingToolSupplementSessionIDs: Set<UUID> = []
     var lastNotifiedAssistantMarker: AssistantReplyMarker?
     var lastAutoPlayedAssistantMessageID: UUID?
-    var lastMemoryEmbeddingErrorSignature: String = ""
-    var lastMemoryEmbeddingErrorDate: Date = .distantPast
-    let memoryEmbeddingErrorAlertCooldown: TimeInterval = 8
-    var memoryRetryStoppedNoticeTask: Task<Void, Never>?
     var pendingSendDelayTask: Task<Void, Never>?
     private var pendingSendDelayPayload: PendingChatSendPayload?
     let iso8601Formatter = ISO8601DateFormatter()
@@ -445,7 +377,6 @@ final class ChatViewModel: ObservableObject {
             )
         }
         self.backgroundImages = ConfigLoader.loadBackgroundImages()
-        reloadGlobalSystemPromptEntries()
         
         setupSubscriptions()
         registerLifecycleObservers()
@@ -503,13 +434,8 @@ final class ChatViewModel: ObservableObject {
             content: userMessageContent,
             aiTemperature: aiTemperature,
             aiTopP: aiTopP,
-            systemPrompt: systemPrompt,
             maxChatHistory: maxChatHistory,
             enableStreaming: enableStreaming,
-            enhancedPrompt: currentSession?.enhancedPrompt,
-            enableMemory: enableMemory,
-            enableMemoryWrite: enableMemoryWrite,
-            enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
             includeSystemTime: includeSystemTimeInPrompt,
             systemTimeInjectionPosition: systemTimeInjectionPosition,
             enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -568,13 +494,8 @@ final class ChatViewModel: ObservableObject {
                 content: payload.content,
                 aiTemperature: payload.aiTemperature,
                 aiTopP: payload.aiTopP,
-                systemPrompt: payload.systemPrompt,
                 maxChatHistory: payload.maxChatHistory,
                 enableStreaming: payload.enableStreaming,
-                enhancedPrompt: payload.enhancedPrompt,
-                enableMemory: payload.enableMemory,
-                enableMemoryWrite: payload.enableMemoryWrite,
-                enableMemoryActiveRetrieval: payload.enableMemoryActiveRetrieval,
                 includeSystemTime: payload.includeSystemTime,
                 systemTimeInjectionPosition: payload.systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: payload.enablePeriodicTimeLandmark,
@@ -708,17 +629,6 @@ final class ChatViewModel: ObservableObject {
 
     private func applyIncomingDocumentPayload(_ payload: IncomingDocumentImportPayload) throws {
         switch payload {
-        case .localModel(let tempFileURL, let suggestedFileName, let displayName):
-            do {
-                _ = try LocalModelStore.shared.registerDownloadedModel(
-                    fileAt: tempFileURL,
-                    suggestedFileName: suggestedFileName,
-                    displayName: displayName
-                )
-            } catch {
-                try? FileManager.default.removeItem(at: tempFileURL)
-                throw error
-            }
         case .image(let data, let mimeType, let fileName):
             pendingImageAttachments.append(ImageAttachment(
                 data: data,
@@ -744,51 +654,6 @@ final class ChatViewModel: ObservableObject {
     /// 设置音频附件
     func setAudioAttachment(_ attachment: AudioAttachment) {
         pendingAudioAttachment = attachment
-    }
-    
-    func addGlobalSystemPromptEntry() {
-        let entry = GlobalSystemPromptEntry(title: "", content: "", updatedAt: Date())
-        globalSystemPromptEntries.insert(entry, at: 0)
-        persistGlobalSystemPromptEntries(selectedEntryID: entry.id)
-    }
-
-    func selectGlobalSystemPromptEntry(_ entryID: UUID?) {
-        persistGlobalSystemPromptEntries(selectedEntryID: entryID)
-    }
-
-    func updateSelectedGlobalSystemPromptTitle(_ title: String) {
-        guard let selectedID = selectedGlobalSystemPromptEntryID,
-              let index = globalSystemPromptEntries.firstIndex(where: { $0.id == selectedID }) else { return }
-        updateGlobalSystemPromptEntry(
-            id: selectedID,
-            title: title,
-            content: globalSystemPromptEntries[index].content
-        )
-    }
-
-    func updateSelectedGlobalSystemPromptContent(_ content: String) {
-        guard let selectedID = selectedGlobalSystemPromptEntryID,
-              let index = globalSystemPromptEntries.firstIndex(where: { $0.id == selectedID }) else { return }
-        updateGlobalSystemPromptEntry(
-            id: selectedID,
-            title: globalSystemPromptEntries[index].title,
-            content: content
-        )
-    }
-
-    func updateGlobalSystemPromptEntry(id: UUID, title: String, content: String) {
-        guard let index = globalSystemPromptEntries.firstIndex(where: { $0.id == id }) else { return }
-        globalSystemPromptEntries[index].title = title
-        globalSystemPromptEntries[index].content = content
-        globalSystemPromptEntries[index].updatedAt = Date()
-        persistGlobalSystemPromptEntries(selectedEntryID: selectedGlobalSystemPromptEntryID)
-    }
-
-    func deleteGlobalSystemPromptEntry(id: UUID) {
-        guard let index = globalSystemPromptEntries.firstIndex(where: { $0.id == id }) else { return }
-        globalSystemPromptEntries.remove(at: index)
-        let fallbackSelection = (selectedGlobalSystemPromptEntryID == id) ? globalSystemPromptEntries.first?.id : selectedGlobalSystemPromptEntryID
-        persistGlobalSystemPromptEntries(selectedEntryID: fallbackSelection)
     }
     
     func appendTranscribedText(_ text: String) {
@@ -865,13 +730,8 @@ final class ChatViewModel: ObservableObject {
             await chatService.retryLastMessage(
                 aiTemperature: aiTemperature,
                 aiTopP: aiTopP,
-                systemPrompt: systemPrompt,
                 maxChatHistory: maxChatHistory,
                 enableStreaming: enableStreaming,
-                enhancedPrompt: currentSession?.enhancedPrompt,
-                enableMemory: enableMemory,
-                enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                 includeSystemTime: includeSystemTimeInPrompt,
                 systemTimeInjectionPosition: systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -884,7 +744,6 @@ final class ChatViewModel: ObservableObject {
 }
 
 private enum IncomingDocumentImportPayload: Sendable {
-    case localModel(tempFileURL: URL, suggestedFileName: String, displayName: String)
     case image(data: Data, mimeType: String, fileName: String)
     case audio(data: Data, mimeType: String, format: String, fileName: String)
     case file(data: Data, mimeType: String, fileName: String)
@@ -901,15 +760,6 @@ nonisolated private enum IncomingDocumentImportCoordinator {
             }
 
             let fileName = normalizedFileName(for: url)
-            if isGGUFModel(url) {
-                let tempURL = try copyToTemporaryFile(url, fileName: fileName)
-                return .localModel(
-                    tempFileURL: tempURL,
-                    suggestedFileName: fileName,
-                    displayName: url.deletingPathExtension().lastPathComponent
-                )
-            }
-
             let data = try Data(contentsOf: url)
             let mimeType = resolvedMimeType(for: url)
             if isImage(url) {
@@ -930,25 +780,6 @@ nonisolated private enum IncomingDocumentImportCoordinator {
     private static func normalizedFileName(for url: URL) -> String {
         let trimmedFileName = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedFileName.isEmpty ? "ImportedFile" : trimmedFileName
-    }
-
-    private static func copyToTemporaryFile(_ sourceURL: URL, fileName: String) throws -> URL {
-        let tempDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("IncomingDocuments", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        let destinationURL = tempDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-            .appendingPathComponent(fileName, isDirectory: false)
-        try FileManager.default.createDirectory(
-            at: destinationURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-        return destinationURL
-    }
-
-    private static func isGGUFModel(_ url: URL) -> Bool {
-        url.pathExtension.caseInsensitiveCompare("gguf") == .orderedSame
     }
 
     private static func isImage(_ url: URL) -> Bool {

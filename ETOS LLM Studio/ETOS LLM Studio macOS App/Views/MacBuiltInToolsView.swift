@@ -36,9 +36,7 @@ struct MacBuiltInToolsView: View {
         .searchable(text: $model.query, prompt: Text(NSLocalizedString("搜索工具", comment: "")))
         .disabled(!active)
         .task { await model.start(); updateIsolation() }
-        .onChange(of: workspace.currentSession?.isMemoryContextIsolationActive) { _, _ in updateIsolation() }
         .onChange(of: workspace.currentSession?.isToolContextIsolationActive) { _, _ in updateIsolation() }
-        .onChange(of: workspace.temporaryChatMemoryMode) { _, _ in updateIsolation() }
         .guidePageContext(
             descriptor: GuidePageDescriptor(id: GuidePageID(rawValue: "mac-built-in-tools-\(model.epoch)"),
                 title: NSLocalizedString("内置工具", comment: ""), documents: [GuideDocumentReference(id: "settings-tools", title: "Tool Center")]),
@@ -50,8 +48,7 @@ struct MacBuiltInToolsView: View {
     }
 
     private func updateIsolation() {
-        model.setIsolation(memory: (workspace.currentSession?.isMemoryContextIsolationActive ?? false) || workspace.temporaryChatMemoryMode == .isolated,
-                           tools: workspace.currentSession?.isToolContextIsolationActive ?? false)
+        model.setIsolation(tools: workspace.currentSession?.isToolContextIsolationActive ?? false)
     }
 }
 
@@ -59,7 +56,6 @@ private struct MacBuiltInToolDetail: View {
     let kind: ToolCatalogBuiltInToolKind
     let isActive: Bool
     @ObservedObject var model: MacBuiltInToolsModel
-    @ObservedObject private var config = AppConfigStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var error: String?
     private var row: MacBuiltInToolPresentation? { model.allRows[kind] }
@@ -100,10 +96,6 @@ private struct MacBuiltInToolDetail: View {
                         return GuideActionExecution(message: NSLocalizedString("已保存配置。", comment: ""))
                     }
                 )
-            } else {
-                form.guideSettingsPageContext(id: pageID, title: title,
-                    documents: [GuideDocumentReference(id: "settings-memory", title: "Memory System"), GuideDocumentReference(id: "settings-tools", title: "Tool Center")],
-                    isActive: active, settings: memorySettings)
             }
         }
         .onChange(of: model.epoch) { _, _ in dismiss() }
@@ -128,16 +120,6 @@ private struct MacBuiltInToolDetail: View {
                             catch { if token == model.epoch { self.error = error.localizedDescription } }
                         }
                     }))
-                } else {
-                    Toggle(NSLocalizedString("启用记忆系统", comment: ""), isOn: $config.enableMemory)
-                    if kind == .memoryWrite {
-                        Toggle(NSLocalizedString("允许写入新的记忆", comment: ""), isOn: $config.enableMemoryWrite).disabled(!config.enableMemory)
-                    } else if kind == .memorySearch {
-                        Toggle(NSLocalizedString("主动检索", comment: ""), isOn: $config.enableMemoryActiveRetrieval).disabled(!config.enableMemory)
-                        Stepper(value: $config.memoryTopK, in: 0...Int.max) {
-                            LabeledContent(NSLocalizedString("检索数量 (Top K)", comment: ""), value: String(config.memoryTopK))
-                        }
-                    }
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
             } header: { Text(NSLocalizedString("启用状态", comment: "")) }
@@ -147,17 +129,4 @@ private struct MacBuiltInToolDetail: View {
         .disabled(!active)
     }
 
-    private var memorySettings: [GuidePageSetting] {
-        var fields: [GuidePageSetting] = [
-            .bool("memory_enabled", label: NSLocalizedString("启用记忆系统", comment: ""), get: { config.enableMemory }, set: { config.enableMemory = $0 }),
-            .readOnly("available_in_session", label: NSLocalizedString("当前状态", comment: ""), value: { .bool(row?.state.isAvailableInCurrentSession ?? false) })
-        ]
-        if kind == .memoryWrite {
-            fields.append(.bool("memory_write", label: NSLocalizedString("允许写入新的记忆", comment: ""), get: { config.enableMemoryWrite }, set: { config.enableMemoryWrite = $0 }))
-        } else if kind == .memorySearch {
-            fields.append(.bool("active_retrieval", label: NSLocalizedString("主动检索", comment: ""), get: { config.enableMemoryActiveRetrieval }, set: { config.enableMemoryActiveRetrieval = $0 }))
-            fields.append(.integer("top_k", label: NSLocalizedString("检索数量 (Top K)", comment: ""), range: 0...Int.max, get: { config.memoryTopK }, set: { config.memoryTopK = $0 }))
-        }
-        return fields
-    }
 }

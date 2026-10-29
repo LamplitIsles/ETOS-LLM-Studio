@@ -156,9 +156,6 @@ extension Persistence {
                 joined
             ))
         }
-        if result.needsChatFTSRebuild {
-            parts.append(NSLocalizedString("聊天检索索引已重新构建。", comment: "Launch backup FTS rebuild message"))
-        }
         return parts.joined(separator: "\n")
     }
 
@@ -240,10 +237,6 @@ extension Persistence {
             hasScheduledLaunchBackupPoint = false
             launchBackupAndRecoveryLock.unlock()
             bootstrapGRDBStoreOnLaunch()
-            if result.needsChatFTSRebuild {
-                activeGRDBStore()?.rebuildMessagesFTSIndex()
-            }
-
             let message = makeLaunchRecoveryNotice(from: result)
                 ?? NSLocalizedString("启动备份已恢复。", comment: "Launch backup restored")
             setLaunchRecoveryNotice(message)
@@ -264,11 +257,9 @@ extension Persistence {
     private static func databaseURL(for kind: LaunchDatabaseKind) -> URL {
         switch kind {
         case .chat:
-            return getChatsDirectory().appendingPathComponent("chat-store.sqlite", isDirectory: false)
+            return getChatsDirectory().appendingPathComponent("runtime-store.sqlite", isDirectory: false)
         case .config:
             return auxiliaryStoreDatabaseURL(for: .config)
-        case .memory:
-            return auxiliaryStoreDatabaseURL(for: .memory)
         }
     }
 
@@ -471,7 +462,7 @@ extension Persistence {
         switch kind {
         case .chat:
             try createChatLaunchBackupWithoutFTS(sourceURL: sourceURL, destinationURL: tempBackupURL)
-        case .config, .memory:
+        case .config:
             try copySQLiteDatabase(sourceURL: sourceURL, destinationURL: tempBackupURL)
         }
 

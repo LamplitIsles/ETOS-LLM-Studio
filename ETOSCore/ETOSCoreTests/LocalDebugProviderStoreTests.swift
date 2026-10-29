@@ -56,7 +56,7 @@ struct LocalDebugProviderStoreTests {
         let fixture = try DebugProviderFixture()
         defer { fixture.close() }
         let server = LocalDebugServer()
-        let originalModel = Model(modelName: "fixture", displayName: "旧名称", isActivated: false, prompt: "保留提示词")
+        let originalModel = Model(modelName: "fixture", displayName: "旧名称", isActivated: false)
         let otherModel = Model(modelName: "other", isActivated: true)
         let provider = Provider(name: "提供商", baseURL: "", apiKeys: ["fixture"], apiFormat: "openai-compatible", models: [originalModel, otherModel])
         try fixture.store.write { try ConfigLoader.replaceProvidersInRelationalStore($0, providers: [provider]) }

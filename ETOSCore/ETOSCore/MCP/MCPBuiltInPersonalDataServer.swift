@@ -16,18 +16,6 @@ public enum MCPBuiltInPersonalDataServer {
     public static let endpoint = "builtin://personal-data"
     private static let nativeToolsMigrationFlagKey = "mcp.personalDataNativeToolsDisabled.v1"
 
-    #if os(watchOS)
-    private static let unavailableToolIDs: Set<String> = [
-        "calendar.create_event", "calendar.update_event", "calendar.delete_event",
-        "reminder.create_reminder", "reminder.update_reminder", "reminder.delete_reminder",
-        "contacts.create", "contacts.update", "contacts.delete",
-        "photos.search", "photos.export_asset", "photos.save_asset",
-        "photos.create_album", "photos.add_to_album"
-    ]
-    #else
-    private static let unavailableToolIDs: Set<String> = []
-    #endif
-
     private static let legacyToolIDs = [
         "health.list_types",
         "health.query_samples",
@@ -47,10 +35,6 @@ public enum MCPBuiltInPersonalDataServer {
 
     public static var toolIDs: [String] {
         legacyToolIDs + MCPNativePersonalDataToolDefinitions.toolIDs
-    }
-
-    static func isToolAvailableOnCurrentPlatform(_ toolID: String) -> Bool {
-        !unavailableToolIDs.contains(toolID)
     }
 
     public static func isBuiltInPersonalDataServer(_ server: MCPServerConfiguration) -> Bool {
@@ -255,8 +239,7 @@ public enum MCPBuiltInPersonalDataServer {
             )
         ] + MCPNativePersonalDataToolDefinitions.descriptions
 
-        // 配置仍保留完整工具 ID，运行时目录只公布当前平台真正能执行的能力。
-        return descriptions.filter { isToolAvailableOnCurrentPlatform($0.toolId) }
+        return descriptions
     }
 
     static func objectSchema(
@@ -501,8 +484,7 @@ actor MCPBuiltInPersonalDataServerEngine {
               let name = params["name"] as? String else {
             return errorToolResult(message: "Missing tool name")
         }
-        guard MCPBuiltInPersonalDataServer.toolIDs.contains(name),
-              MCPBuiltInPersonalDataServer.isToolAvailableOnCurrentPlatform(name) else {
+        guard MCPBuiltInPersonalDataServer.toolIDs.contains(name) else {
             return errorToolResult(message: "Unknown built-in personal data tool: \(name)")
         }
         let arguments = params["arguments"] as? [String: Any] ?? [:]

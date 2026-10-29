@@ -14,14 +14,10 @@ extension Notification.Name {
 
 enum SystemEntryRoute: Identifiable {
     case browser
-    case terminal
-    case memory(MemoryItem?)
 
     var id: String {
         switch self {
         case .browser: return "browser"
-        case .terminal: return "terminal"
-        case .memory(let memory): return "memory-\(memory?.id.uuidString ?? "library")"
         }
     }
 }
@@ -230,22 +226,8 @@ enum SystemEntryURLRouter {
             } else if destination == "daily-pulse" {
                 NotificationCenter.default.post(name: .requestOpenDailyPulse, object: nil)
                 return true
-            } else if destination == "memory" {
-                let memoryID = components.count > 1 ? UUID(uuidString: components[1]) : nil
-                let memory: MemoryItem? = if let memoryID {
-                    await Task.detached(priority: .userInitiated) {
-                        await MemoryManager.shared.getAllMemories().first { $0.id == memoryID }
-                    }.value
-                } else {
-                    nil
-                }
-                NotificationCenter.default.post(name: .requestSystemEntryRoute, object: SystemEntryRoute.memory(memory))
-                return true
             } else if destination == "browser" {
                 NotificationCenter.default.post(name: .requestSystemEntryRoute, object: SystemEntryRoute.browser)
-                return true
-            } else if destination == "terminal" {
-                NotificationCenter.default.post(name: .requestSystemEntryRoute, object: SystemEntryRoute.terminal)
                 return true
             } else if destination == "app" {
                 // Web Clip 只需将 App 带到前台，保留用户上次停留的界面即可。

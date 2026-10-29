@@ -11,7 +11,7 @@ import Foundation
 extension ThirdPartyImportService {
     static func parseRikkaHub(fileURL: URL) throws -> ParsedPayload {
         var warnings: [String] = [
-            NSLocalizedString("RikkaHub 备份当前仅支持读取 settings.json 中的提供商配置，会话内容暂未解析。", comment: "RikkaHub import limitation warning")
+            NSLocalizedString("RikkaHub 导入读取 settings.json 中的提供商配置。", comment: "RikkaHub import limitation warning")
         ]
 
         let settings: [String: Any]
@@ -41,7 +41,6 @@ extension ThirdPartyImportService {
 
         return ParsedPayload(
             providers: dedupeProviders(providers),
-            sessions: [],
             warnings: warnings
         )
     }

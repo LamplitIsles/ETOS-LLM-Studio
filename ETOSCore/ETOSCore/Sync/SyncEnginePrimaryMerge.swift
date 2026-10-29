@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 本文件承载同步导入时的 Provider、会话与背景文件顶层合并入口。
+// 本文件承载同步导入时的 Provider 与背景文件顶层合并入口。
 // ============================================================================
 
 import Foundation
@@ -102,108 +102,6 @@ extension SyncEngine {
     }
 
     // MARK: - Sessions
-
-    static func mergeSessions(
-        _ incoming: [SyncedSession],
-        chatService: ChatService,
-        sourcePlatform: String? = nil
-    ) -> (imported: Int, skipped: Int) {
-        guard !incoming.isEmpty else { return (0, 0) }
-
-        var sessions = chatService.chatSessionsSubject.value
-        var messagesBySessionID: [UUID: [ChatMessage]] = [:]
-        var imported = 0
-        var skipped = 0
-
-        for payload in incoming {
-            var session = payload.session
-            session.isTemporary = false
-            // 同步包可能来自仍保存“正文 + 多附件”复合消息的旧端。
-            // 先归一化为当前原子消息结构，避免首次导入落库拆分后，重复同步被误判成新分支。
-            let incomingMessages = payload.messages.flatMap(ChatMessageAtomicContentSupport.atomized)
-
-            let incomingHash = computeSessionContentHash(session: session, messages: incomingMessages)
-            if containsSessionHash(
-                incomingHash,
-                sessions: sessions,
-                messagesBySessionID: &messagesBySessionID
-            ) {
-                skipped += 1
-                continue
-            }
-
-            if let candidateIndex = sessionMergeCandidateIndex(for: session, localSessions: sessions) {
-                let localSession = sessions[candidateIndex]
-                let localMessages = messagesForSession(
-                    localSession.id,
-                    cache: &messagesBySessionID
-                )
-
-                if shouldForkParallelSession(
-                    localMessages: localMessages,
-                    incomingMessages: incomingMessages
-                ) {
-                    session = makeForkedSession(
-                        from: session,
-                        sourcePlatform: sourcePlatform,
-                        existingSessions: sessions
-                    )
-                    let forkedMessages = cloneMessagesForFork(incomingMessages)
-                    Persistence.saveMessages(forkedMessages, for: session.id)
-                    sessions.insert(session, at: 0)
-                    messagesBySessionID[session.id] = forkedMessages
-                    imported += 1
-                    continue
-                }
-
-                switch mergeSessionDeep(
-                    localSession: localSession,
-                    localMessages: localMessages,
-                    incomingSession: session,
-                    incomingMessages: incomingMessages
-                ) {
-                case .unchanged((let mergedSession, let mergedMessages)):
-                    sessions[candidateIndex] = mergedSession
-                    messagesBySessionID[mergedSession.id] = mergedMessages
-                    skipped += 1
-                    continue
-                case .merged((let mergedSession, let mergedMessages)):
-                    sessions[candidateIndex] = mergedSession
-                    messagesBySessionID[mergedSession.id] = mergedMessages
-                    Persistence.saveMessages(mergedMessages, for: mergedSession.id)
-                    imported += 1
-                    continue
-                case .conflict:
-                    break
-                }
-            }
-
-            if sessions.firstIndex(where: { $0.id == session.id }) != nil
-                || sessions.first(where: { $0.isEquivalentIgnoringSyncSuffix(to: session) }) != nil {
-                session = makeNewSession(from: session)
-            }
-
-            Persistence.saveMessages(incomingMessages, for: session.id)
-            sessions.insert(session, at: 0)
-            messagesBySessionID[session.id] = incomingMessages
-            imported += 1
-        }
-
-        if imported > 0 {
-            Persistence.saveChatSessions(sessions)
-            chatService.chatSessionsSubject.send(sessions)
-            if let current = chatService.currentSessionSubject.value,
-               let updatedCurrent = sessions.first(where: { $0.id == current.id }) {
-                chatService.currentSessionSubject.send(updatedCurrent)
-            } else if chatService.currentSessionSubject.value == nil {
-                chatService.currentSessionSubject.send(sessions.first)
-            }
-        }
-
-        return (imported, skipped)
-    }
-
-    // MARK: - Backgrounds
 
     static func mergeBackgrounds(_ incoming: [SyncedBackground]) -> (imported: Int, skipped: Int) {
         guard !incoming.isEmpty else { return (0, 0) }

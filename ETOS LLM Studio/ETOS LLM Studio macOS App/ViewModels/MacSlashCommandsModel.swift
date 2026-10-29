@@ -63,7 +63,7 @@ final class MacSlashCommandsModel: ObservableObject {
     }
 
     func replace(_ commands: [CustomChatSlashCommand], original: CustomChatSlashCommandSnapshot, expectedEpoch: UUID) async throws {
-        guard canWrite, epoch == expectedEpoch else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch else { throw MacWorkspaceWriteError.busy }
         isWorking = true; error = nil
         let task = Task { [weak self] in
             await AppConfigStore.shared.flushPendingWrites()

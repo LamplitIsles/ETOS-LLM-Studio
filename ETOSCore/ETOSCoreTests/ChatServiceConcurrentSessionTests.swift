@@ -43,7 +43,6 @@ struct ChatServiceConcurrentSessionTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": ConcurrentSessionMockAdapter()],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -61,12 +60,8 @@ struct ChatServiceConcurrentSessionTests {
                 content: "A",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: false,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -83,12 +78,8 @@ struct ChatServiceConcurrentSessionTests {
                 content: "B",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: false,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -152,7 +143,6 @@ struct ChatServiceConcurrentSessionTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": ConcurrentSessionMockAdapter()],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(service.activatedRunnableModels.first)
@@ -170,12 +160,8 @@ struct ChatServiceConcurrentSessionTests {
                 content: "A",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: false,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -190,12 +176,8 @@ struct ChatServiceConcurrentSessionTests {
                 content: "B",
                 aiTemperature: 0,
                 aiTopP: 1,
-                systemPrompt: "",
                 maxChatHistory: 5,
                 enableStreaming: false,
-                enhancedPrompt: nil,
-                enableMemory: false,
-                enableMemoryWrite: false,
                 includeSystemTime: false
             )
         }
@@ -209,8 +191,8 @@ struct ChatServiceConcurrentSessionTests {
         ControlledSessionURLProtocol.release(marker: "A")
         await taskA.value
 
-        let sessionAMessages = Persistence.loadMessages(for: sessionA.id)
-        let sessionBMessages = Persistence.loadMessages(for: sessionB.id)
+        let sessionAMessages = service.messagesSnapshot(for: sessionA.id)
+        let sessionBMessages = service.messagesSnapshot(for: sessionB.id)
 
         let assistantRepliesA = sessionAMessages
             .filter { $0.role == .assistant }

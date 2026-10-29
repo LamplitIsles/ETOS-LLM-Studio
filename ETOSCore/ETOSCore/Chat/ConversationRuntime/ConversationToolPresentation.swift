@@ -37,12 +37,12 @@ public enum ConversationToolPresentationLoader {
         guard !targetIDs.isEmpty else { return [] }
 
         return targetIDs.compactMap { sessionID in
-            guard let session = Persistence.loadChatSession(id: sessionID),
+            guard let session = ChatService.shared.chatSessionsSubject.value.first(where: { $0.id == sessionID }),
                   !session.isEmbeddedSubagent else {
                 return nil
             }
             let run = Persistence.loadLatestConversationRun(sessionID: sessionID)
-            let replyPreview = Persistence.loadMessages(for: sessionID)
+            let replyPreview = ChatService.shared.messagesSnapshot(for: sessionID)
                 .last(where: { message in
                     message.role == .assistant
                         && !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

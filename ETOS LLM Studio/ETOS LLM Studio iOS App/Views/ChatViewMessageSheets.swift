@@ -334,7 +334,7 @@ struct MessageActionSheet: View {
             } header: {
                 Text(fileName)
             } footer: {
-                Text(NSLocalizedString("重新解析会替换已保存的结果，之后发送和压缩上下文都会使用新内容。", comment: "Video analysis retry footer"))
+                Text(NSLocalizedString("重新解析会替换已保存的结果，之后发送时会使用新内容。", comment: "Video analysis retry footer"))
             }
         }
     }
@@ -711,22 +711,6 @@ struct SessionPickerInfoSheet: View {
                     }
                 }
 
-                if let topic = payload.session.topicPrompt, !topic.isEmpty {
-                    Section(NSLocalizedString("主题提示", comment: "")) {
-                        Text(topic)
-                            .etFont(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if let enhanced = payload.session.enhancedPrompt, !enhanced.isEmpty {
-                    Section(NSLocalizedString("增强提示词", comment: "")) {
-                        Text(enhanced)
-                            .etFont(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
                 Section(NSLocalizedString("唯一标识", comment: "")) {
                     Text(payload.session.id.uuidString)
                         .etFont(.footnote.monospaced())
@@ -756,7 +740,6 @@ struct SessionPickerRow: View {
     let onSelect: () -> Void
     let onRename: () -> Void
     let onBranch: (Bool) -> Void
-    let onCompress: () -> Void
     let onDeleteLastMessage: () -> Void
     let onDelete: () -> Void
     let onCancelRename: () -> Void
@@ -854,13 +837,6 @@ struct SessionPickerRow: View {
         }
 
         Button {
-            onCompress()
-        } label: {
-            Label(NSLocalizedString("压缩为续聊", comment: "Context compression session action"), systemImage: "rectangle.compress.vertical")
-        }
-        .disabled(session.isTemporary)
-
-        Button {
             onDeleteLastMessage()
         } label: {
             Label(NSLocalizedString("删除最后一条消息", comment: ""), systemImage: "delete.backward")
@@ -933,7 +909,7 @@ struct SessionPickerRow: View {
         if let searchSummary, !searchSummary.isEmpty {
             return searchSummary
         }
-        return session.topicPrompt
+        return nil
     }
 
     private func commit() {

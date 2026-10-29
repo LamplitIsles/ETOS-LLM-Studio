@@ -251,7 +251,7 @@ extension ChatView {
                 currentSessionID: currentSessionIDSnapshot,
                 currentSessionMessages: currentMessagesSnapshot,
                 messageLoader: { sessionID in
-                    Persistence.loadMessages(for: sessionID)
+                    ChatService.shared.messagesSnapshot(for: sessionID)
                 }
             )
             DispatchQueue.main.async {
@@ -372,9 +372,6 @@ extension ChatView {
                 viewModel.setCurrentSession(newSession)
                 dismissSessionPickerAfterSelection()
             },
-            onCompress: {
-                presentContextCompression(for: session)
-            },
             onDeleteLastMessage: {
                 viewModel.deleteLastMessage(for: session)
             },
@@ -407,16 +404,6 @@ extension ChatView {
         )
     }
 
-    func presentContextCompression(for session: ChatSession) {
-        guard !session.isTemporary else { return }
-        if activeChatPickerSheet == .session {
-            pendingContextCompressionSourceSession = session
-            activeChatPickerSheet = nil
-        } else {
-            contextCompressionSourceSession = session
-        }
-    }
-
     func sessionPickerSearchResultRow(_ result: SessionHistorySearchResult) -> some View {
         let isCurrent = result.sessionID == viewModel.currentSession?.id
         let isRunning = viewModel.runningSessionIDs.contains(result.sessionID)
@@ -444,10 +431,6 @@ extension ChatView {
         switch source {
         case .sessionName:
             return NSLocalizedString("标题", comment: "")
-        case .topicPrompt:
-            return NSLocalizedString("主题提示", comment: "")
-        case .enhancedPrompt:
-            return NSLocalizedString("增强提示词", comment: "")
         case .userMessage:
             return NSLocalizedString("用户消息", comment: "")
         case .assistantMessage:

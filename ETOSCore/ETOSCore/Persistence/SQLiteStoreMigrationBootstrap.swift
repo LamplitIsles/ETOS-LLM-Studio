@@ -14,13 +14,10 @@ public enum SQLiteStoreMigrationBootstrap {
     public static func migrateJSONStoresIfNeeded() {
         Persistence.bootstrapGRDBStoreOnLaunch()
 
-        _ = WorldbookStore.shared.loadWorldbooks()
         _ = ShortcutToolStore.loadTools()
         _ = FeedbackStore.loadTickets()
         _ = ConfigLoader.loadProviders()
         _ = MCPServerStore.loadServers()
-        _ = MemoryRawStore().loadMemories()
-        _ = ConversationMemoryManager.loadUserProfile()
 
         logger.info("已触发启动期 JSON→SQLite 迁移检查。")
     }
@@ -84,8 +81,7 @@ public final class AppLaunchStateMachine: ObservableObject {
 
             let warmupSignpost = TelemetrySignpost.begin(.serviceWarmup)
             await Task.detached(priority: .userInitiated) {
-                let chatService = ChatService.shared
-                await chatService.waitForInitialPersistenceStateIfNeeded()
+                _ = ChatService.shared
             }.value
             TelemetrySignpost.end(warmupSignpost)
 

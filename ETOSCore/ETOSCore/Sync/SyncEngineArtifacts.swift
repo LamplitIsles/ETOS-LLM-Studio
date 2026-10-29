@@ -176,15 +176,12 @@ extension SyncEngine {
 
     static func mergeAppStorage(
         _ snapshotData: Data?,
-        legacyGlobalSystemPrompt: String?,
         userDefaults: UserDefaults
     ) async -> (imported: Int, skipped: Int) {
         var incomingSnapshot: [String: Any] = [:]
 
         if let snapshotData, let decoded = decodeAppStorageSnapshot(snapshotData) {
             incomingSnapshot = decoded
-        } else if let legacyGlobalSystemPrompt {
-            incomingSnapshot[legacyGlobalSystemPromptKey] = legacyGlobalSystemPrompt
         } else {
             return (0, 1)
         }
@@ -193,10 +190,7 @@ extension SyncEngine {
             return (0, 0)
         }
 
-        let normalized = normalizedAppConfigSnapshot(
-            incomingSnapshot,
-            legacyGlobalSystemPrompt: legacyGlobalSystemPrompt
-        )
+        let normalized = normalizedAppConfigSnapshot(incomingSnapshot)
         let currentSnapshot = collectAppStorageSnapshot(userDefaults: userDefaults)
         var imported = 0
         var skipped = normalized.skipped
@@ -216,9 +210,6 @@ extension SyncEngine {
         if !acceptedSnapshot.isEmpty {
             await AppConfigStore.shared.apply(snapshot: acceptedSnapshot)
             await reloadAppConfigBackedManagersIfNeeded(changedKeys: Set(acceptedSnapshot.keys))
-        }
-        if let prompt = normalized.snapshot[AppConfigKey.systemPrompt.rawValue] as? String {
-            GlobalSystemPromptStore.saveActiveSystemPrompt(prompt)
         }
 
         return (imported, skipped)
@@ -283,22 +274,11 @@ extension SyncEngine {
     }
 
     static func normalizedAppConfigSnapshot(
-        _ snapshot: [String: Any],
-        legacyGlobalSystemPrompt: String?
+        _ snapshot: [String: Any]
     ) -> (snapshot: [String: Any], skipped: Int) {
-        var remainingSnapshot = snapshot
-        let legacyPromptResult = extractLegacyGlobalSystemPrompt(
-            from: &remainingSnapshot,
-            fallback: legacyGlobalSystemPrompt
-        )
-        if let prompt = legacyPromptResult.prompt,
-           remainingSnapshot[AppConfigKey.systemPrompt.rawValue] == nil {
-            remainingSnapshot[AppConfigKey.systemPrompt.rawValue] = prompt
-        }
-
         var normalizedSnapshot: [String: Any] = [:]
-        var skipped = legacyPromptResult.skipped
-        for (rawKey, value) in remainingSnapshot {
+        var skipped = 0
+        for (rawKey, value) in snapshot {
             guard isCandidateAppStorageKey(rawKey),
                   let key = AppConfigKey(rawValue: rawKey),
                   key.participatesInSync,
@@ -310,32 +290,6 @@ extension SyncEngine {
             normalizedSnapshot[rawKey] = normalizedValue
         }
         return (normalizedSnapshot, skipped)
-    }
-
-    static func extractLegacyGlobalSystemPrompt(
-        from snapshot: inout [String: Any],
-        fallback: String?
-    ) -> (prompt: String?, skipped: Int) {
-        let entriesData = snapshot.removeValue(forKey: GlobalSystemPromptStore.entriesStorageKey) as? Data
-        let selectedRawID = snapshot.removeValue(forKey: GlobalSystemPromptStore.selectedEntryIDStorageKey) as? String
-        var skipped = 0
-        if entriesData != nil {
-            skipped += 1
-        }
-        if selectedRawID != nil {
-            skipped += 1
-        }
-
-        if let entriesData,
-           let entries = try? JSONDecoder().decode([GlobalSystemPromptEntry].self, from: entriesData) {
-            let selectedID = selectedRawID.flatMap(UUID.init(uuidString:))
-            let selectedEntry = selectedID.flatMap { id in entries.first { $0.id == id } } ?? entries.first
-            if let selectedEntry {
-                return (selectedEntry.content, skipped)
-            }
-        }
-
-        return (snapshot[legacyGlobalSystemPromptKey] as? String ?? fallback, skipped)
     }
 
     static func normalizedAppConfigValue(_ value: Any, for key: AppConfigKey) -> Any? {

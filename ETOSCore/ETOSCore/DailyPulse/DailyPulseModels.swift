@@ -312,9 +312,7 @@ public enum DailyPulseGenerationError: LocalizedError {
 internal struct DailyPulseGenerationInput: Sendable {
     let focusText: String
     let curationText: String
-    let globalSystemPrompt: String
     let sessionExcerpts: [DailyPulseSessionExcerpt]
-    let memories: [String]
     let requestLogSummary: String
     let activeTasks: [DailyPulseTask]
     let preferenceProfile: DailyPulsePreferenceProfile
@@ -323,9 +321,7 @@ internal struct DailyPulseGenerationInput: Sendable {
     init(
         focusText: String,
         curationText: String,
-        globalSystemPrompt: String = "",
         sessionExcerpts: [DailyPulseSessionExcerpt],
-        memories: [String],
         requestLogSummary: String,
         activeTasks: [DailyPulseTask],
         preferenceProfile: DailyPulsePreferenceProfile,
@@ -333,9 +329,7 @@ internal struct DailyPulseGenerationInput: Sendable {
     ) {
         self.focusText = focusText
         self.curationText = curationText
-        self.globalSystemPrompt = globalSystemPrompt
         self.sessionExcerpts = sessionExcerpts
-        self.memories = memories
         self.requestLogSummary = requestLogSummary
         self.activeTasks = activeTasks
         self.preferenceProfile = preferenceProfile
@@ -345,9 +339,7 @@ internal struct DailyPulseGenerationInput: Sendable {
     var hasUsableContext: Bool {
         !focusText.isEmpty
             || !curationText.isEmpty
-            || !globalSystemPrompt.isEmpty
             || !sessionExcerpts.isEmpty
-            || !memories.isEmpty
             || !requestLogSummary.isEmpty
             || !activeTasks.isEmpty
             || preferenceProfile.hasSignals
@@ -360,13 +352,10 @@ internal struct DailyPulseGenerationInput: Sendable {
                 [excerpt.name, excerpt.lastActivityAt.map(DailyPulseManager.promptTimestampString) ?? ""] + excerpt.lines
             }
             .joined(separator: "|")
-        let memoryDigest = memories.joined(separator: "|")
         return [
             focusText,
             curationText,
-            globalSystemPrompt,
             sessionDigest,
-            memoryDigest,
             requestLogSummary,
             activeTasks
                 .map { "\($0.title)|\($0.details)|\($0.isCompleted ? "done" : "pending")" }

@@ -89,7 +89,7 @@ struct MCPMacStdioProcessTests {
             MCPLocalStdioConfiguration.self,
             from: Data(#"{"command":"cat"}"#.utf8)
         )
-        #expect(configuration.workingDirectory == "/home/etos")
+        #expect(configuration.workingDirectory == "")
         #expect(MCPMacStdioProcess.workingDirectory(configuration.workingDirectory)
             == FileManager.default.homeDirectoryForCurrentUser)
         #expect(try MCPMacStdioProcess.resolveExecutable(

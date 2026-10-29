@@ -79,8 +79,7 @@ struct MacRoleplayBindingDraft: Sendable {
         self.sessionID = sessionID
         self.original = original
         originalReferences = .dictionary([
-            "character_ids": .array((original?.characterIDs ?? []).map { .string($0.uuidString) }),
-            "additional_worldbook_ids": .array((original?.additionalWorldbookIDs ?? []).map { .string($0.uuidString) })
+            "character_ids": .array((original?.characterIDs ?? []).map { .string($0.uuidString) })
         ])
         characterID = original?.characterIDs.first?.uuidString ?? ""
         personaID = (original == nil ? preferredPersonaID : original?.personaID)?.uuidString ?? ""

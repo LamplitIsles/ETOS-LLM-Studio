@@ -190,14 +190,12 @@ public final class CloudSyncManager: ObservableObject {
 
         observeRealtimeSyncNotification(.cloudSyncLocalDataDidChange, reason: "localData")
         observeRealtimeSyncNotification(.providerConfigurationDidChange, reason: "providers")
-        observeRealtimeSyncNotification(.conversationMemoryDidChange, reason: "memories")
         observeRealtimeSyncNotification(.feedbackTicketsUpdated, reason: "feedback")
         observeRealtimeSyncNotification(.syncBackgroundsUpdated, reason: "backgrounds")
         observeRealtimeSyncNotification(.syncFontsUpdated, reason: "fonts")
         observeRealtimeSyncNotification(.syncDailyPulseUpdated, reason: "dailyPulse")
         observeRealtimeSyncNotification(.syncUsageStatsUpdated, reason: "usageStats")
         observeRealtimeSyncNotification(.usageAnalyticsStoreDidChange, reason: "usageAnalytics")
-        observeRealtimeSyncNotification(.globalSystemPromptStoreDidChange, reason: "systemPrompt")
     }
 
     public func scheduleRealtimeSyncIfEnabled(reason: String) {
@@ -467,7 +465,6 @@ public final class CloudSyncManager: ObservableObject {
 
     func buildLocalSnapshot(options: SyncOptions) async -> SyncLocalSnapshot {
         if options.contains(.dailyPulse) { await DailyPulseManager.flushPendingPersistence() }
-        await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
         let buildSnapshot = snapshotBuilder
         return await runOnSnapshotBuildQueue {
             buildSnapshot(options)
@@ -733,17 +730,12 @@ public final class CloudSyncManager: ObservableObject {
         var options: SyncOptions = []
         var sourcePlatform: String?
         var providers: [Provider] = []
-        var sessionTags: [SessionTag] = []
-        var sessions: [SyncedSession] = []
         var backgrounds: [SyncedBackground] = []
-        var memories: [MemoryItem] = []
-        var conversationUserProfile: ConversationUserProfile?
         var mcpServers: [MCPServerConfiguration] = []
         var audioFiles: [SyncedAudio] = []
         var imageFiles: [SyncedImage] = []
         var skills: [SyncedSkillBundle] = []
         var shortcutTools: [ShortcutToolDefinition] = []
-        var worldbooks: [Worldbook] = []
         var feedbackTickets: [FeedbackTicket] = []
         var dailyPulseRuns: [DailyPulseRun] = []
         var dailyPulseFeedbackHistory: [DailyPulseFeedbackEvent] = []
@@ -754,24 +746,18 @@ public final class CloudSyncManager: ObservableObject {
         var fontFiles: [SyncedFontFile] = []
         var fontRouteConfigurationData: Data?
         var appStorageValues: [String: Any] = [:]
-        var globalSystemPrompt: String?
 
         for record in records.sorted(by: { $0.payload.updatedAt < $1.payload.updatedAt }) {
             let package = record.payload.package
             options.formUnion(package.options)
             sourcePlatform = package.sourcePlatform ?? sourcePlatform
             providers.append(contentsOf: package.providers)
-            sessionTags.append(contentsOf: package.sessionTags)
-            sessions.append(contentsOf: package.sessions)
             backgrounds.append(contentsOf: package.backgrounds)
-            memories.append(contentsOf: package.memories)
-            conversationUserProfile = package.conversationUserProfile ?? conversationUserProfile
             mcpServers.append(contentsOf: package.mcpServers)
             audioFiles.append(contentsOf: package.audioFiles)
             imageFiles.append(contentsOf: package.imageFiles)
             skills.append(contentsOf: package.skills)
             shortcutTools.append(contentsOf: package.shortcutTools)
-            worldbooks.append(contentsOf: package.worldbooks)
             feedbackTickets.append(contentsOf: package.feedbackTickets)
             dailyPulseRuns.append(contentsOf: package.dailyPulseRuns)
             dailyPulseFeedbackHistory.append(contentsOf: package.dailyPulseFeedbackHistory)
@@ -785,24 +771,18 @@ public final class CloudSyncManager: ObservableObject {
                let values = SyncEngine.decodeAppStorageSnapshot(data) {
                 appStorageValues.merge(values, uniquingKeysWith: { _, incoming in incoming })
             }
-            globalSystemPrompt = package.globalSystemPrompt ?? globalSystemPrompt
         }
 
         return SyncPackage(
             options: options,
             sourcePlatform: sourcePlatform,
             providers: providers,
-            sessionTags: sessionTags,
-            sessions: sessions,
             backgrounds: backgrounds,
-            memories: memories,
-            conversationUserProfile: conversationUserProfile,
             mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
             shortcutTools: shortcutTools,
-            worldbooks: worldbooks,
             feedbackTickets: feedbackTickets,
             dailyPulseRuns: dailyPulseRuns,
             dailyPulseFeedbackHistory: dailyPulseFeedbackHistory,
@@ -814,8 +794,7 @@ public final class CloudSyncManager: ObservableObject {
             fontRouteConfigurationData: fontRouteConfigurationData,
             appStorageSnapshot: appStorageValues.isEmpty
                 ? nil
-                : SyncEngine.encodeAppStorageSnapshot(appStorageValues),
-            globalSystemPrompt: globalSystemPrompt
+                : SyncEngine.encodeAppStorageSnapshot(appStorageValues)
         )
     }
 
@@ -1012,15 +991,12 @@ enum CloudSyncManagerError: LocalizedError {
 extension SyncMergeSummary {
     var hasAnyImportedChange: Bool {
         importedProviders > 0
-            || importedSessions > 0
             || importedBackgrounds > 0
-            || importedMemories > 0
             || importedMCPServers > 0
             || importedAudioFiles > 0
             || importedImageFiles > 0
             || importedSkills > 0
             || importedShortcutTools > 0
-            || importedWorldbooks > 0
             || importedFeedbackTickets > 0
             || importedDailyPulseRuns > 0
             || importedUsageEvents > 0
@@ -1032,12 +1008,8 @@ extension SyncMergeSummary {
     mutating func accumulate(_ other: SyncMergeSummary) {
         importedProviders += other.importedProviders
         skippedProviders += other.skippedProviders
-        importedSessions += other.importedSessions
-        skippedSessions += other.skippedSessions
         importedBackgrounds += other.importedBackgrounds
         skippedBackgrounds += other.skippedBackgrounds
-        importedMemories += other.importedMemories
-        skippedMemories += other.skippedMemories
         importedMCPServers += other.importedMCPServers
         skippedMCPServers += other.skippedMCPServers
         importedAudioFiles += other.importedAudioFiles
@@ -1048,8 +1020,6 @@ extension SyncMergeSummary {
         skippedSkills += other.skippedSkills
         importedShortcutTools += other.importedShortcutTools
         skippedShortcutTools += other.skippedShortcutTools
-        importedWorldbooks += other.importedWorldbooks
-        skippedWorldbooks += other.skippedWorldbooks
         importedFeedbackTickets += other.importedFeedbackTickets
         skippedFeedbackTickets += other.skippedFeedbackTickets
         importedDailyPulseRuns += other.importedDailyPulseRuns

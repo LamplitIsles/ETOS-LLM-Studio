@@ -16,22 +16,15 @@ extension SyncEngine {
     /// 包含每日脉冲时，异步调用方应先等待 DailyPulseManager.flushPendingPersistence()。
     public static func buildPackage(
         options: SyncOptions,
-        chatService: ChatService = .shared,
-        userDefaults: UserDefaults = .standard,
-        sessionIDs: Set<UUID>? = nil
+        userDefaults: UserDefaults = .standard
     ) -> SyncPackage {
         var providers: [Provider] = []
-        var sessionTags: [SessionTag] = []
-        var sessions: [SyncedSession] = []
         var backgrounds: [SyncedBackground] = []
-        var memories: [MemoryItem] = []
-        var conversationUserProfile: ConversationUserProfile?
         var mcpServers: [MCPServerConfiguration] = []
         var audioFiles: [SyncedAudio] = []
         var imageFiles: [SyncedImage] = []
         var skills: [SyncedSkillBundle] = []
         var shortcutTools: [ShortcutToolDefinition] = []
-        var worldbooks: [Worldbook] = []
         var feedbackTickets: [FeedbackTicket] = []
         var dailyPulseRuns: [DailyPulseRun] = []
         var dailyPulseFeedbackHistory: [DailyPulseFeedbackEvent] = []
@@ -42,8 +35,6 @@ extension SyncEngine {
         var fontFiles: [SyncedFontFile] = []
         var fontRouteConfigurationData: Data?
         var appStorageSnapshot: Data?
-        var legacyGlobalSystemPrompt: String?
-        var referencedAudioFileNames = Set<String>()
         var referencedImageFileNames = Set<String>()
         let roleplayCharacters = RoleplayStore.shared.loadCharacters()
         referencedImageFileNames.formUnion(roleplayCharacters.compactMap(\.avatarFileName))
@@ -52,33 +43,6 @@ extension SyncEngine {
 
         if options.contains(.providers) {
             providers = ConfigLoader.loadProviders()
-        }
-
-        if options.contains(.sessions) {
-            let allSessions = chatService.chatSessionsSubject.value.filter { session in
-                guard !session.isTemporary else { return false }
-                guard let sessionIDs else { return true }
-                return sessionIDs.contains(session.id)
-            }
-            let allTags = chatService.sessionTagsSubject.value
-            if let sessionIDs {
-                let referencedTagIDs = Set(allSessions.flatMap(\.tagIDs))
-                sessionTags = allTags.filter { referencedTagIDs.contains($0.id) && !sessionIDs.isEmpty }
-            } else {
-                sessionTags = allTags
-            }
-            for session in allSessions {
-                let messages = Persistence.loadMessages(for: session.id)
-                sessions.append(SyncedSession(session: session, messages: messages))
-                for message in messages {
-                    if let audioFileName = message.audioFileName {
-                        referencedAudioFileNames.insert(audioFileName)
-                    }
-                    if let imageFileNames = message.imageFileNames {
-                        referencedImageFileNames.formUnion(imageFileNames)
-                    }
-                }
-            }
         }
 
         if options.contains(.backgrounds) {
@@ -93,12 +57,6 @@ extension SyncEngine {
             }
         }
 
-        if options.contains(.memories) {
-            let rawStore = MemoryRawStore()
-            memories = rawStore.loadMemories()
-            conversationUserProfile = ConversationMemoryManager.loadUserProfile()
-        }
-
         if options.contains(.mcpServers) {
             mcpServers = MCPServerStore.loadServers()
         }
@@ -109,10 +67,6 @@ extension SyncEngine {
 
         if options.contains(.shortcutTools) {
             shortcutTools = ShortcutToolStore.loadTools()
-        }
-
-        if options.contains(.worldbooks) {
-            worldbooks = WorldbookStore.shared.loadWorldbooks()
         }
 
         if options.contains(.feedbackTickets) {
@@ -149,10 +103,9 @@ extension SyncEngine {
         if options.contains(.appStorage) {
             let snapshot = collectAppStorageSnapshot(userDefaults: userDefaults)
             appStorageSnapshot = encodeAppStorageSnapshot(snapshot)
-            legacyGlobalSystemPrompt = snapshot[legacyGlobalSystemPromptKey] as? String ?? ""
         }
 
-        var audioFileNamesToInclude = referencedAudioFileNames
+        var audioFileNamesToInclude = Set<String>()
         if options.contains(.audioFiles) {
             let directory = Persistence.getAudioDirectory()
             let fileManager = FileManager.default
@@ -190,17 +143,12 @@ extension SyncEngine {
             options: options,
             sourcePlatform: currentPlatformName,
             providers: providers,
-            sessionTags: sessionTags,
-            sessions: sessions,
             backgrounds: backgrounds,
-            memories: memories,
-            conversationUserProfile: conversationUserProfile,
             mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
             shortcutTools: shortcutTools,
-            worldbooks: worldbooks,
             feedbackTickets: feedbackTickets,
             dailyPulseRuns: dailyPulseRuns,
             dailyPulseFeedbackHistory: dailyPulseFeedbackHistory,
@@ -210,8 +158,7 @@ extension SyncEngine {
             usageStatsDayBundles: usageStatsDayBundles,
             fontFiles: fontFiles,
             fontRouteConfigurationData: fontRouteConfigurationData,
-            appStorageSnapshot: appStorageSnapshot,
-            globalSystemPrompt: legacyGlobalSystemPrompt
+            appStorageSnapshot: appStorageSnapshot
         )
     }
 
@@ -222,51 +169,13 @@ extension SyncEngine {
     public static func apply(
         package: SyncPackage,
         chatService: ChatService = .shared,
-        memoryManager: MemoryManager? = nil,
         userDefaults: UserDefaults = .standard
     ) async -> SyncMergeSummary {
         var summary = SyncMergeSummary.empty
-        var didMergeAudioFilesBeforeSessions = false
-        var didMergeImageFilesBeforeSessions = false
-        let shouldMergeSessionAudioFiles = package.options.contains(.sessions) && !package.audioFiles.isEmpty
-        let shouldMergeSessionImageFiles = package.options.contains(.sessions) && !package.imageFiles.isEmpty
-        let shouldMergeAudioFiles = package.options.contains(.audioFiles) || shouldMergeSessionAudioFiles
-        let shouldMergeImageFiles = package.options.contains(.imageFiles) || shouldMergeSessionImageFiles
-
         if package.options.contains(.providers) {
             let result = mergeProviders(package.providers, chatService: chatService)
             summary.importedProviders = result.imported
             summary.skippedProviders = result.skipped
-        }
-
-        if shouldMergeSessionAudioFiles {
-            let result = mergeAudioFiles(package.audioFiles)
-            summary.importedAudioFiles = result.imported
-            summary.skippedAudioFiles = result.skipped
-            didMergeAudioFilesBeforeSessions = true
-        }
-
-        if shouldMergeSessionImageFiles {
-            let result = mergeImageFiles(package.imageFiles)
-            summary.importedImageFiles = result.imported
-            summary.skippedImageFiles = result.skipped
-            didMergeImageFilesBeforeSessions = true
-        }
-
-        if package.options.contains(.sessions) {
-            let tagMerge = mergeSessionTags(package.sessionTags, chatService: chatService)
-            let sessionPayloads = remapSessionMediaReferences(
-                remapSessionTagReferences(package.sessions, idMapping: tagMerge.idMapping),
-                audioFiles: didMergeAudioFilesBeforeSessions ? package.audioFiles : [],
-                imageFiles: didMergeImageFilesBeforeSessions ? package.imageFiles : []
-            )
-            let result = mergeSessions(
-                sessionPayloads,
-                chatService: chatService,
-                sourcePlatform: package.sourcePlatform
-            )
-            summary.importedSessions = tagMerge.imported + result.imported
-            summary.skippedSessions = tagMerge.skipped + result.skipped
         }
 
         if package.options.contains(.backgrounds) {
@@ -276,14 +185,6 @@ extension SyncEngine {
             if result.imported > 0 {
                 NotificationCenter.default.post(name: .syncBackgroundsUpdated, object: nil)
             }
-        }
-
-        if package.options.contains(.memories) {
-            let manager = memoryManager ?? .shared
-            let memoryResult = await mergeMemories(package.memories, memoryManager: manager)
-            let profileResult = mergeConversationUserProfile(package.conversationUserProfile)
-            summary.importedMemories = memoryResult.imported + profileResult.imported
-            summary.skippedMemories = memoryResult.skipped + profileResult.skipped
         }
 
         if package.options.contains(.mcpServers) {
@@ -302,15 +203,6 @@ extension SyncEngine {
             let result = mergeShortcutTools(package.shortcutTools)
             summary.importedShortcutTools = result.imported
             summary.skippedShortcutTools = result.skipped
-        }
-
-        if package.options.contains(.worldbooks) {
-            let result = mergeWorldbooks(package.worldbooks)
-            summary.importedWorldbooks = result.imported
-            summary.skippedWorldbooks = result.skipped
-            if !result.idMapping.isEmpty {
-                remapWorldbookIDsInSessions(result.idMapping, chatService: chatService)
-            }
         }
 
         if package.options.contains(.feedbackTickets) {
@@ -345,13 +237,13 @@ extension SyncEngine {
             }
         }
 
-        if shouldMergeAudioFiles, !didMergeAudioFilesBeforeSessions {
+        if package.options.contains(.audioFiles) {
             let result = mergeAudioFiles(package.audioFiles)
             summary.importedAudioFiles = result.imported
             summary.skippedAudioFiles = result.skipped
         }
 
-        if shouldMergeImageFiles, !didMergeImageFilesBeforeSessions {
+        if package.options.contains(.imageFiles) {
             let result = mergeImageFiles(package.imageFiles)
             summary.importedImageFiles = result.imported
             summary.skippedImageFiles = result.skipped
@@ -380,7 +272,6 @@ extension SyncEngine {
         if package.options.contains(.appStorage) {
             let result = await mergeAppStorage(
                 package.appStorageSnapshot,
-                legacyGlobalSystemPrompt: package.globalSystemPrompt,
                 userDefaults: userDefaults
             )
             summary.importedAppStorageValues = result.imported

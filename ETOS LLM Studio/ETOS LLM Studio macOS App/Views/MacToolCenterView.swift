@@ -26,13 +26,10 @@ struct MacToolCenterView: View {
                     MacSkillsView(isActive: isActive, model: workspace.skills)
                 } label: { Label(NSLocalizedString("Agent Skills", comment: ""), systemImage: "books.vertical") }
                 NavigationLink {
-                    MacAgentPromptsView(isActive: isActive, model: workspace.agentPrompts)
-                } label: { Label(NSLocalizedString("Agent 提示词", comment: ""), systemImage: "text.bubble") }
-                NavigationLink {
                     MacShellView(isActive: isActive, model: workspace.linux)
                 } label: { Label(NSLocalizedString("mac.shell.title", value: "Local Shell", comment: ""), systemImage: "terminal") }
                 NavigationLink {
-                    MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.temporaryChatMemoryMode != nil,
+                    MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.isTemporaryChat,
                                    isActive: isActive && workspace.canManageLocalModels, model: workspace.browser)
                 } label: { Label(NSLocalizedString("浏览器", comment: ""), systemImage: "safari") }
             }

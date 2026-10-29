@@ -245,47 +245,6 @@ struct AppToolManagerExecutionTests {
         #expect(mutateParameterSchema["items"] as? [String: Any] != nil)
     }
 
-    @MainActor
-    @Test("当前会话文件路径命中时应触发会话刷新判断")
-    func testShouldRefreshCurrentSessionMessagesWhenCurrentSessionFileMutated() {
-        let sessionID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-        let shouldRefresh = AppToolManager.shouldRefreshCurrentSessionMessages(
-            afterMutatingPaths: [
-                "Documents/ChatSessions/sessions/\(sessionID.uuidString.lowercased()).json",
-                "Documents/Other/file.txt"
-            ],
-            currentSessionID: sessionID
-        )
-        #expect(shouldRefresh)
-    }
-
-    @MainActor
-    @Test("旧版会话文件路径命中时也应触发会话刷新判断")
-    func testShouldRefreshCurrentSessionMessagesWhenLegacySessionFileMutated() {
-        let sessionID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-        let shouldRefresh = AppToolManager.shouldRefreshCurrentSessionMessages(
-            afterMutatingPaths: [
-                "ChatSessions/\(sessionID.uuidString).json"
-            ],
-            currentSessionID: sessionID
-        )
-        #expect(shouldRefresh)
-    }
-
-    @MainActor
-    @Test("非当前会话文件变更不应触发会话刷新判断")
-    func testShouldNotRefreshCurrentSessionMessagesForUnrelatedMutation() {
-        let sessionID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-        let shouldRefresh = AppToolManager.shouldRefreshCurrentSessionMessages(
-            afterMutatingPaths: [
-                "Documents/ChatSessions/sessions/FFFFFFFF-1111-2222-3333-444444444444.json",
-                "Documents/Memory/index.json"
-            ],
-            currentSessionID: sessionID
-        )
-        #expect(!shouldRefresh)
-    }
-
     @Test("沙盒工具操作会切到后台线程执行")
     func testSandboxOperationRunsOffMainThread() async throws {
         let isMainThread = try await AppToolManager.runSandboxFileOperationOffMainThread {

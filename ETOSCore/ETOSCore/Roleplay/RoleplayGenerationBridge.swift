@@ -53,12 +53,7 @@ extension ChatService {
             dictionary: dictionary,
             raw: raw,
             systemPrompts: builtins.system,
-            chatHistory: builtins.chatHistory,
-            fallbackSystemPrompt: resolved.characters
-                .map(\.systemPrompt)
-                .map { RoleplayMacroResolver.resolve($0, context: resolved.macroContext) }
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n\n")
+            chatHistory: builtins.chatHistory
         )
         let scriptIDs = resolved.binding.helperScriptsEnabled
             ? resolved.characters.flatMap { $0.helperScripts.filter(\.enabled).map(\.id) }
@@ -73,15 +68,9 @@ extension ChatService {
                 )
             }
         }
-        let templateWorldbooks = RoleplayRuntime.resolvedWorldbooks(
-            loadWorldbooks().filter { resolved.worldbookIDs.contains($0.id) },
-            macroContext: templateMacroContext
-        )
         requestMessages = await RoleplayPromptTemplateRenderer.renderMessages(
             requestMessages,
-            worldbooks: templateWorldbooks,
             chatHistory: transformedHistory,
-            regexRules: resolved.regexRules,
             macroContext: &templateMacroContext
         )
         try Task.checkCancellation()
@@ -112,63 +101,19 @@ extension ChatService {
         macroContext: inout RoleplayMacroContext
     ) async -> (system: [String: String], chatHistory: [ChatMessage]) {
         let character = resolved.characters.first
-        var books = RoleplayRuntime.resolvedWorldbooks(
-            loadWorldbooks().filter { resolved.worldbookIDs.contains($0.id) },
-            macroContext: macroContext
-        )
-        books = await RoleplayPromptTemplateRenderer.preprocessWorldbooks(
-            books,
-            messages: history,
-            regexRules: resolved.regexRules,
-            macroContext: &macroContext
-        )
-        var evaluated = await WorldbookEngine().evaluateAsync(.init(
-            sessionID: sessionID,
-            worldbooks: books,
-            messages: history,
-            personaDescription: resolved.persona?.description,
-            characterDescription: resolved.characters.first?.description,
-            characterPersonality: resolved.characters.first?.personality,
-            characterDepthPrompt: resolved.characters.first?.postHistoryInstructions,
-            scenario: resolved.characters.first?.scenario,
-            creatorNotes: resolved.characters.first?.creatorNotes
-        ))
-        evaluated = await RoleplayPromptTemplateRenderer.renderWorldbookEvaluation(
-            evaluated,
-            worldbooks: books,
-            chatHistory: history,
-            regexRules: resolved.regexRules,
-            macroContext: &macroContext
-        )
         let macro = macroContext
-        let outletValues = Dictionary(grouping: evaluated.outlet) {
-            $0.outletName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }.reduce(into: [String: String]()) { result, item in
-            let (name, entries) = item
-            guard !name.isEmpty else { return }
-            result[name] = entries.map(\.content).joined(separator: "\n")
-        }
         func resolvedText(_ raw: String) -> String {
-            RoleplayMacroResolver.resolveWorldbookOutlets(
-                RoleplayMacroResolver.resolve(raw, context: macro),
-                outlets: outletValues
-            )
+            RoleplayMacroResolver.resolve(raw, context: macro)
         }
         func overridden(_ key: String, fallback: String) -> String {
             overrides[key]?.roleplayString.map(resolvedText) ?? resolvedText(fallback)
         }
-        let dialogueExamples = [
-            evaluated.emTop.map(\.content).joined(separator: "\n"),
-            character?.messageExamples ?? "",
-            evaluated.emBottom.map(\.content).joined(separator: "\n")
-        ].map(resolvedText).filter { !$0.isEmpty }.joined(separator: "\n")
+        let dialogueExamples = resolvedText(character?.messageExamples ?? "")
         let system: [String: String] = [
-            "world_info_before": overridden("world_info_before", fallback: evaluated.before.map(\.content).joined(separator: "\n")),
             "persona_description": overridden("persona_description", fallback: resolved.persona?.description ?? ""),
             "char_description": overridden("char_description", fallback: character?.description ?? ""),
             "char_personality": overridden("char_personality", fallback: character?.personality ?? ""),
             "scenario": overridden("scenario", fallback: character?.scenario ?? ""),
-            "world_info_after": overridden("world_info_after", fallback: evaluated.after.map(\.content).joined(separator: "\n")),
             "dialogue_examples": overridden("dialogue_examples", fallback: dialogueExamples)
         ]
         let chatOverride = overrides["chat_history"]?.roleplayDictionary ?? [:]
@@ -177,17 +122,10 @@ extension ChatService {
             message.content = resolvedText(message.content)
             return message
         }
-        if chatOverride["with_depth_entries"]?.roleplayBoolean != false {
-            generationHistory = injectAtDepthMessages(evaluated.atDepth, into: generationHistory)
-        }
         let authorNote = chatOverride["author_note"]?.roleplayString
             ?? character?.postHistoryInstructions
             ?? ""
-        let authorNoteBlock = [
-            evaluated.anTop.map(\.content).joined(separator: "\n"),
-            resolvedText(authorNote),
-            evaluated.anBottom.map(\.content).joined(separator: "\n")
-        ].filter { !$0.isEmpty }.joined(separator: "\n")
+        let authorNoteBlock = resolvedText(authorNote)
         if !authorNoteBlock.isEmpty {
             generationHistory.append(ChatMessage(role: .system, content: authorNoteBlock))
         }
@@ -201,12 +139,11 @@ struct RoleplayGenerationPromptAssembler {
         dictionary: [String: JSONValue],
         raw: Bool,
         systemPrompts: [String: String],
-        chatHistory: [ChatMessage],
-        fallbackSystemPrompt: String
+        chatHistory: [ChatMessage]
     ) -> [ChatMessage] {
         let defaultOrder = [
-            "world_info_before", "persona_description", "char_description", "char_personality",
-            "scenario", "world_info_after", "dialogue_examples", "chat_history", "user_input"
+            "persona_description", "char_description", "char_personality",
+            "scenario", "dialogue_examples", "chat_history", "user_input"
         ]
         let order = dictionary["ordered_prompts"]?.roleplayArray
             ?? dictionary["order"]?.roleplayArray
@@ -233,9 +170,6 @@ struct RoleplayGenerationPromptAssembler {
                       !content.isEmpty {
                 messages.append(ChatMessage(role: role, content: content))
             }
-        }
-        if !raw, !fallbackSystemPrompt.isEmpty {
-            messages.insert(ChatMessage(role: .system, content: fallbackSystemPrompt), at: 0)
         }
         if !raw, !messages.contains(where: { $0.role == .user }),
            let lastUser = chatHistory.last(where: { $0.role == .user }) {

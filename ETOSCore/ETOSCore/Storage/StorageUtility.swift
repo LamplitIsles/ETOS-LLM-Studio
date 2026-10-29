@@ -279,201 +279,19 @@ public enum StorageUtility {
         return (audioDeleted, imageDeleted)
     }
     
-    // MARK: - 孤立文件检测
-
-    /// 查找孤立的音频文件（无消息引用的音频文件）
-    public static func findOrphanedAudioFiles() -> [FileItem] {
-        let referencedFiles = Persistence.allReferencedAudioFileNames()
-        let allAudioFiles = listFiles(for: .audio)
-        return allAudioFiles.filter { !referencedFiles.contains($0.name) }
-    }
-
-    /// 查找孤立的图片文件（无消息引用的图片文件）
-    public static func findOrphanedImageFiles() -> [FileItem] {
-        let referencedFiles = Persistence.allReferencedImageFileNames()
-        let characters = RoleplayStore.shared.loadCharacters()
-        let roleplayAvatarFileNames = Set(
-            characters.compactMap(\.avatarFileName) +
-            characters.flatMap { $0.assets ?? [] }.compactMap(\.localFileName) +
-            RoleplayStore.shared.loadPersonas().compactMap(\.avatarFileName)
-        )
-        let allImageFiles = listFiles(for: .images)
-        return allImageFiles.filter {
-            !$0.isDirectory && !referencedFiles.contains($0.name) && !roleplayAvatarFileNames.contains($0.name)
-        }
-    }
-    
-    // MARK: - 幽灵会话检测（彩蛋功能）
-    
-    /// 幽灵会话 - 会话索引存在但对应会话数据文件不存在
-    public struct GhostSession: Identifiable {
-        public let id: UUID
-        public let name: String
-        
-        public init(id: UUID, name: String) {
-            self.id = id
-            self.name = name
-        }
-    }
-    
-    /// 查找幽灵会话（会话记录存在但无任何消息）
-    public static func findGhostSessions() -> [GhostSession] {
-        let ghostIDs = Persistence.sessionIDsWithoutMessageData()
-        guard !ghostIDs.isEmpty else { return [] }
-
-        let sessions = Persistence.loadChatSessions()
-        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-
-        return ghostIDs.compactMap { id in
-            guard let session = sessionsByID[id] else { return nil }
-            return GhostSession(id: id, name: session.name)
-        }
-    }
-
-    /// 清理幽灵会话，返回被清理的会话数量
-    public static func cleanupGhostSessions() -> Int {
-        let ghostSessions = findGhostSessions()
-        guard !ghostSessions.isEmpty else { return 0 }
-
-        var allSessions = Persistence.loadChatSessions()
-        let ghostIDs = Set(ghostSessions.map(\.id))
-        allSessions.removeAll { ghostIDs.contains($0.id) }
-        Persistence.saveChatSessions(allSessions)
-
-        logger.info("Cleaned up \(ghostSessions.count) ghost sessions")
-        return ghostSessions.count
-    }
-    
-    /// 获取关于幽灵会话的趣味消息（彩蛋文本）
-    public static func getGhostSessionEasterEggMessage(count: Int) -> String {
-        switch count {
-        case 0:
-            return NSLocalizedString("👻 一切正常！没有发现幽灵会话。", comment: "")
-        case 1:
-            return NSLocalizedString("👻 发现 1 个幽灵会话！看起来有人删除了消息文件但忘记清理会话记录了...", comment: "")
-        case 2...5:
-            return String(
-                format: NSLocalizedString("👻 发现 %d 个幽灵会话在四处游荡！它们的消息文件已经不在了，但记录还留着呢。", comment: ""),
-                locale: Locale.current,
-                count
-            )
-        case 6...10:
-            return String(
-                format: NSLocalizedString("👻 哇！%d 个幽灵会话！这里简直像是会话墓地。要不要驱个鬼？", comment: ""),
-                locale: Locale.current,
-                count
-            )
-        default:
-            return String(
-                format: NSLocalizedString("👻👻👻 天呐！发现了 %d 个幽灵会话！这里已经闹鬼了！建议立即清理。", comment: ""),
-                locale: Locale.current,
-                count
-            )
-        }
-    }
-    
-    /// 清理所有孤立文件
-    public static func cleanupOrphanedFiles() -> (audioDeleted: Int, imageDeleted: Int) {
-        let orphanedAudio = findOrphanedAudioFiles()
-        let orphanedImages = findOrphanedImageFiles()
-        
-        var audioDeleted = 0
-        var imageDeleted = 0
-        
-        for file in orphanedAudio {
-            do {
-                try deleteFile(at: file.url)
-                audioDeleted += 1
-            } catch {
-                logger.error("Failed to delete orphaned audio: \(error.localizedDescription)")
-            }
-        }
-        
-        for file in orphanedImages {
-            do {
-                try deleteFile(at: file.url)
-                imageDeleted += 1
-            } catch {
-                logger.error("Failed to delete orphaned image: \(error.localizedDescription)")
-            }
-        }
-        
-        logger.info("Cleaned up \(audioDeleted) orphaned audio and \(imageDeleted) orphaned image files")
-        return (audioDeleted, imageDeleted)
-    }
-    
-    // MARK: - 无效音频引用检测
-    
-    /// 无效音频引用 - 消息中引用了不存在的音频文件
-    public struct OrphanedAudioReference: Identifiable {
-        public let id: UUID
-        public let sessionID: UUID
-        public let sessionName: String
-        public let messageID: UUID
-        public let missingFile: String
-        
-        public init(sessionID: UUID, sessionName: String, messageID: UUID, missingFile: String) {
-            self.id = UUID()
-            self.sessionID = sessionID
-            self.sessionName = sessionName
-            self.messageID = messageID
-            self.missingFile = missingFile
-        }
-    }
-    
-    /// 查找消息中引用但文件不存在的音频
-    public static func findOrphanedAudioReferences() -> [OrphanedAudioReference] {
-        let audioDirectory = getDirectory(for: .audio)
-        let fileManager = FileManager.default
-        let allRefs = Persistence.allAudioReferencesWithSessionInfo()
-
-        return allRefs.compactMap { ref in
-            let audioFileURL = audioDirectory.appendingPathComponent(ref.audioFileName)
-            guard !fileManager.fileExists(atPath: audioFileURL.path) else { return nil }
-            return OrphanedAudioReference(
-                sessionID: ref.sessionID,
-                sessionName: ref.sessionName,
-                messageID: ref.messageID,
-                missingFile: ref.audioFileName
-            )
-        }
-    }
-
-    /// 清理消息中的无效音频引用，返回清理的引用数量
-    public static func cleanupOrphanedAudioReferences() -> Int {
-        let orphanedRefs = findOrphanedAudioReferences()
-        guard !orphanedRefs.isEmpty else { return 0 }
-
-        let messageIDs = orphanedRefs.map(\.messageID)
-        Persistence.clearAudioFileNames(messageIDs: messageIDs)
-
-        logger.info("Cleaned up \(orphanedRefs.count) orphaned audio references")
-        return orphanedRefs.count
-    }
-    
     // MARK: - 统一清理
     
     /// 清理摘要
     public struct CleanupSummary {
-        public let ghostSessionsCleaned: Int
         public let orphanedAudioFilesCleaned: Int
         public let orphanedImageFilesCleaned: Int
-        public let orphanedAudioReferencesCleaned: Int
         
         public var totalCleaned: Int {
-            ghostSessionsCleaned + orphanedAudioFilesCleaned + orphanedImageFilesCleaned + orphanedAudioReferencesCleaned
+            orphanedAudioFilesCleaned + orphanedImageFilesCleaned
         }
         
         public var description: String {
             var parts: [String] = []
-            if ghostSessionsCleaned > 0 {
-                parts.append(
-                    String(
-                        format: NSLocalizedString("%d 个幽灵会话", comment: "Cleaned ghost session count"),
-                        ghostSessionsCleaned
-                    )
-                )
-            }
             if orphanedAudioFilesCleaned > 0 {
                 parts.append(
                     String(
@@ -490,65 +308,28 @@ public enum StorageUtility {
                     )
                 )
             }
-            if orphanedAudioReferencesCleaned > 0 {
-                parts.append(
-                    String(
-                        format: NSLocalizedString("%d 个无效音频引用", comment: "Cleaned invalid audio reference count"),
-                        orphanedAudioReferencesCleaned
-                    )
-                )
-            }
             return parts.isEmpty
                 ? NSLocalizedString("没有需要清理的内容", comment: "No orphaned data needed cleanup")
                 : parts.joined(separator: NSLocalizedString("、", comment: "Localized list separator"))
         }
     }
     
-    /// 统一清理所有孤立数据
-    public static func cleanupAllOrphans() -> CleanupSummary {
-        let ghostSessions = cleanupGhostSessions()
-        let (audioFiles, imageFiles) = cleanupOrphanedFiles()
-        let audioRefs = cleanupOrphanedAudioReferences()
-        
-        let summary = CleanupSummary(
-            ghostSessionsCleaned: ghostSessions,
-            orphanedAudioFilesCleaned: audioFiles,
-            orphanedImageFilesCleaned: imageFiles,
-            orphanedAudioReferencesCleaned: audioRefs
-        )
-        
-        logger.info("统一清理完成: \(summary.description)")
-        return summary
-    }
-    
     /// 检测所有孤立数据的数量
     public struct OrphanedDataCount {
-        public let ghostSessions: Int
         public let orphanedAudioFiles: Int
         public let orphanedImageFiles: Int
-        public let orphanedAudioReferences: Int
         
-        public init(ghostSessions: Int = 0, orphanedAudioFiles: Int = 0, orphanedImageFiles: Int = 0, orphanedAudioReferences: Int = 0) {
-            self.ghostSessions = ghostSessions
+        public init(orphanedAudioFiles: Int = 0, orphanedImageFiles: Int = 0) {
             self.orphanedAudioFiles = orphanedAudioFiles
             self.orphanedImageFiles = orphanedImageFiles
-            self.orphanedAudioReferences = orphanedAudioReferences
         }
         
         public var total: Int {
-            ghostSessions + orphanedAudioFiles + orphanedImageFiles + orphanedAudioReferences
+            orphanedAudioFiles + orphanedImageFiles
         }
         
         public var description: String {
             var parts: [String] = []
-            if ghostSessions > 0 {
-                parts.append(
-                    String(
-                        format: NSLocalizedString("%d 个幽灵会话", comment: "Ghost session count"),
-                        ghostSessions
-                    )
-                )
-            }
             if orphanedAudioFiles > 0 {
                 parts.append(
                     String(
@@ -565,28 +346,10 @@ public enum StorageUtility {
                     )
                 )
             }
-            if orphanedAudioReferences > 0 {
-                parts.append(
-                    String(
-                        format: NSLocalizedString("%d 个无效音频引用", comment: "Invalid audio reference count"),
-                        orphanedAudioReferences
-                    )
-                )
-            }
             return parts.isEmpty
                 ? NSLocalizedString("无孤立数据", comment: "No orphaned data")
                 : parts.joined(separator: NSLocalizedString("、", comment: "Localized list separator"))
         }
-    }
-    
-    /// 统计所有孤立数据的数量（不执行清理）
-    public static func countAllOrphanedData() -> OrphanedDataCount {
-        return OrphanedDataCount(
-            ghostSessions: findGhostSessions().count,
-            orphanedAudioFiles: findOrphanedAudioFiles().count,
-            orphanedImageFiles: findOrphanedImageFiles().count,
-            orphanedAudioReferences: findOrphanedAudioReferences().count
-        )
     }
     
     // MARK: - JSON 文件预览
@@ -609,15 +372,10 @@ public enum StorageUtility {
 
     private static func invalidateRelatedCaches(for url: URL) {
         ETOSSharedWorkspaceFiles.notifyChange()
-        let worldbookDirectory = getDirectory(for: .worldbooks).standardizedFileURL.path
         let skillDirectory = getDirectory(for: .skills).standardizedFileURL.path
         let targetPath = url.standardizedFileURL.path
-        let isWorldbookPath = targetPath == worldbookDirectory || targetPath.hasPrefix(worldbookDirectory + "/")
         let isSkillPath = targetPath == skillDirectory || targetPath.hasPrefix(skillDirectory + "/")
 
-        if isWorldbookPath {
-            WorldbookStore.shared.invalidateCache()
-        }
         if isSkillPath {
             Task { @MainActor in
                 #if os(macOS)

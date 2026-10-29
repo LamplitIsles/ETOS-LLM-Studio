@@ -6,44 +6,42 @@ extension Persistence {
         let originalRoot = StorageUtility.documentsDirectory.standardizedFileURL
         let applicationRoot = originalRoot.resolvingSymlinksInPath()
         guard replacement.root.path == applicationRoot.path else { throw LocalDebugFileAccessError.invalidPath }
-        try MemoryManager.withCurrentInstancePausedForSnapshotRestore {
-            databaseReplacementLock.lock()
-            defer { databaseReplacementLock.unlock() }
-            let targets = snapshotRestoreTargetURLs()
-            let primaryURLs = [targets.chatStoreURL, targets.configStoreURL, targets.memoryStoreURL]
-            // 旧版辅助库位于 ChatSessions；验证不能漏掉启动时会迁移到新位置的库。
-            let legacyURLs = [targets.configStoreURL, targets.memoryStoreURL].map {
-                targets.chatStoreURL.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent)
+        databaseReplacementLock.lock()
+        defer { databaseReplacementLock.unlock() }
+        let targets = snapshotRestoreTargetURLs()
+        let primaryURLs = [targets.chatStoreURL, targets.configStoreURL]
+        // 旧版辅助库位于 ChatSessions；验证不能漏掉启动时会迁移到新位置的库。
+        let legacyURLs = [targets.configStoreURL].map {
+            targets.chatStoreURL.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent)
+        }
+        let databasePaths = (primaryURLs + legacyURLs).map { String($0.standardizedFileURL.path.dropFirst(originalRoot.path.count + 1)) }
+        guard !DatabaseEncryptionManager.shared.requiresManualUnlock else {
+            throw DatabaseEncryptionManager.DatabaseEncryptionError.passphraseUnavailable
+        }
+        let encrypted = databaseEncryptionHasStoredPassphrase()
+        func install(passphrase: Data?) throws {
+            try withClosedStoresForDatabaseReplacement {
+                try replacement.commit(prepare: {
+                    try validateDebugDocumentDatabases(in: replacement.incomingDirectory, paths: databasePaths, encrypted: encrypted, passphrase: passphrase)
+                }, validateInstalled: {
+                    try migrateDebugDocumentDatabases(in: replacement.root, paths: databasePaths, encrypted: encrypted, passphrase: passphrase)
+                })
+                resetLaunchBackupStateForSnapshotRestore()
             }
-            let databasePaths = (primaryURLs + legacyURLs).map { String($0.standardizedFileURL.path.dropFirst(originalRoot.path.count + 1)) }
-            guard !DatabaseEncryptionManager.shared.requiresManualUnlock else {
-                throw DatabaseEncryptionManager.DatabaseEncryptionError.passphraseUnavailable
-            }
-            let encrypted = databaseEncryptionHasStoredPassphrase()
-            func install(passphrase: Data?) throws {
-                try withClosedStoresForDatabaseReplacement {
-                    try replacement.commit(prepare: {
-                        try validateDebugDocumentDatabases(in: replacement.incomingDirectory, paths: databasePaths, encrypted: encrypted, passphrase: passphrase)
-                    }, validateInstalled: {
-                        try migrateDebugDocumentDatabases(in: replacement.root, paths: databasePaths, encrypted: encrypted, passphrase: passphrase)
-                    })
-                    resetLaunchBackupStateForSnapshotRestore()
+        }
+        do {
+            if encrypted {
+                guard let _ = try DatabaseEncryptionManager.shared.withPassphraseDataIfAvailable({ try install(passphrase: $0) }) else {
+                    throw DatabaseEncryptionManager.DatabaseEncryptionError.passphraseUnavailable
                 }
-            }
-            do {
-                if encrypted {
-                    guard let _ = try DatabaseEncryptionManager.shared.withPassphraseDataIfAvailable({ try install(passphrase: $0) }) else {
-                        throw DatabaseEncryptionManager.DatabaseEncryptionError.passphraseUnavailable
-                    }
-                } else { try install(passphrase: nil) }
-                bootstrapGRDBStoreOnLaunch()
-            } catch {
-                // 不在不完整回滚之后主动创建新库，恢复目录必须留给后续处理。
-                if let replacementError = error as? LocalDebugDocumentReplacementError,
-                   case .rollbackFailed = replacementError { throw error }
-                bootstrapGRDBStoreOnLaunch()
-                throw error
-            }
+            } else { try install(passphrase: nil) }
+            bootstrapGRDBStoreOnLaunch()
+        } catch {
+            // 不在不完整回滚之后主动创建新库，恢复目录必须留给后续处理。
+            if let replacementError = error as? LocalDebugDocumentReplacementError,
+               case .rollbackFailed = replacementError { throw error }
+            bootstrapGRDBStoreOnLaunch()
+            throw error
         }
     }
 

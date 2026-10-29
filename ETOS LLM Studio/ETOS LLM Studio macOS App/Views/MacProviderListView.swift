@@ -11,11 +11,6 @@ struct MacProviderListView: View {
         List {
             Section {
                 MacSettingsIntroCard(id: "providers", title: NSLocalizedString("使用说明", comment: ""), details: NSLocalizedString("添加提供商地址和 API Key 后，获取模型列表或手动添加模型。启用的聊天模型会出现在聊天窗口的模型选择器中。", comment: ""), documentID: "provider-model-basics")
-                NavigationLink {
-                    MacLocalModelLibraryView(isActive: isActive, library: workspace.localModels)
-                } label: {
-                    Label(NSLocalizedString("本地模型", comment: ""), systemImage: "internaldrive")
-                }
             }
             ForEach(workspace.providers) { provider in
                 Button { editingProvider = provider } label: {
@@ -95,9 +90,6 @@ private struct MacProviderEditor: View {
                     TextField(NSLocalizedString("名称", comment: ""), text: $draft.name)
                     TextField(NSLocalizedString("API 地址", comment: ""), text: $draft.baseURL)
                     Picker(NSLocalizedString("API 格式", comment: ""), selection: $draft.apiFormat) {
-                        if LocalModelProviderBridge.isLocalProvider(draft) {
-                            Text(NSLocalizedString("本地模型", comment: "")).tag(LocalModelProviderBridge.apiFormat)
-                        }
                         Text(NSLocalizedString("OpenAI 兼容", comment: "")).tag("openai-compatible")
                         Text(NSLocalizedString("OpenAI Responses", comment: "")).tag("openai-responses")
                         Text(NSLocalizedString("Anthropic", comment: "")).tag("anthropic")
@@ -128,25 +120,21 @@ private struct MacProviderEditor: View {
                     }
                     Button(NSLocalizedString("获取模型列表", comment: "")) { fetchModels() }
                         .disabled(isBusy)
-                    if !LocalModelProviderBridge.isLocalProvider(draft) {
-                        Button(NSLocalizedString("模型测试", comment: "")) {
-                            testPreparation = Task {
-                                do { testSource = try await prepareTestSource(model: nil) }
-                                catch { if !Task.isCancelled { self.error = error.localizedDescription } }
-                            }
-                        }.disabled(!workspace.canRunModelTests)
-                    }
+                    Button(NSLocalizedString("模型测试", comment: "")) {
+                        testPreparation = Task {
+                            do { testSource = try await prepareTestSource(model: nil) }
+                            catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+                        }
+                    }.disabled(!workspace.canRunModelTests)
                 } header: { Text(NSLocalizedString("模型", comment: "")) }
                 Section {
                     NavigationLink(NSLocalizedString("请求头 JSON", comment: "")) {
                         MacJSONDraftEditor(pageID: GuidePageID(rawValue: "mac-provider-headers-\(draft.id)"), title: NSLocalizedString("请求头 JSON", comment: ""), kind: .stringDictionary, text: $headers)
                     }
                 } header: { Text(NSLocalizedString("请求头 JSON", comment: "")) }
-                if !LocalModelProviderBridge.isLocalProvider(draft) {
-                    Section {
-                        NavigationLink(NSLocalizedString("独立代理", comment: "")) {
-                            MacProviderProxyView(proxy: $draft.proxyConfiguration, providerID: draft.id, isActive: !isBusy && didPrepare)
-                        }
+                Section {
+                    NavigationLink(NSLocalizedString("独立代理", comment: "")) {
+                        MacProviderProxyView(proxy: $draft.proxyConfiguration, providerID: draft.id, isActive: !isBusy && didPrepare)
                     }
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
@@ -162,7 +150,7 @@ private struct MacProviderEditor: View {
                 }
             }
             .sheet(item: $modelToEdit) { model in
-                MacModelEditor(model: model, providerAPIFormat: draft.apiFormat, supportsConnectivityTest: !LocalModelProviderBridge.isLocalProvider(draft), prepareTestSource: { model in
+                MacModelEditor(model: model, providerAPIFormat: draft.apiFormat, supportsConnectivityTest: true, prepareTestSource: { model in
                     try await prepareTestSource(model: model)
                 }) { updated in
                     if let index = draft.models.firstIndex(where: { $0.id == updated.id }) { draft.models[index] = updated }
@@ -184,7 +172,7 @@ private struct MacProviderEditor: View {
                 id: GuidePageID(rawValue: "mac-provider-\(draft.id)"), title: NSLocalizedString("提供商配置", comment: ""),
                 documents: [GuideDocumentReference(id: "provider-model-basics", title: "Provider and Model Basics")],
                 settings: [
-                    .readOnly("proxy_requires_navigation", label: NSLocalizedString("独立代理", comment: ""), value: { .bool(!LocalModelProviderBridge.isLocalProvider(draft)) }),
+                    .readOnly("proxy_requires_navigation", label: NSLocalizedString("独立代理", comment: ""), value: { .bool(true) }),
                     .readOnly("editing_mode", label: NSLocalizedString("编辑方式", comment: ""), value: { .string("draft_until_save") })
                 ] + (isBusy || !didPrepare || workspace.isRestoringData ? [] : [
                     .string("name", label: NSLocalizedString("名称", comment: ""), get: { draft.name }, set: { draft.name = $0 }),
@@ -203,7 +191,7 @@ private struct MacProviderEditor: View {
     }
 
     private func prepareTestSource(model: Model?) async throws -> MacModelConnectivitySource {
-        guard !isBusy, didPrepare, workspace.canRunModelTests, !LocalModelProviderBridge.isLocalProvider(draft) else { throw GuideError.pageChanged }
+        guard !isBusy, didPrepare, workspace.canRunModelTests else { throw GuideError.pageChanged }
         isBusy = true
         defer { isBusy = false }
         var provider = draft
@@ -237,7 +225,7 @@ private struct MacProviderEditor: View {
             return
         }
         var updated = draft
-        guard LocalModelProviderBridge.isLocalProvider(updated) || GuideModelSetupValidation.isValidRemoteBaseURL(updated.baseURL) else {
+        guard GuideModelSetupValidation.isValidRemoteBaseURL(updated.baseURL) else {
             error = NSLocalizedString("请输入有效的 API 地址。", comment: "")
             return
         }

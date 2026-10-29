@@ -10,26 +10,15 @@ import Foundation
 #if os(iOS) && canImport(UIKit)
 import UIKit
 #endif
-#if os(watchOS) && canImport(WatchKit)
-import WatchKit
-#endif
 
 actor MCPNativeDeviceStatusExecutor {
     func execute() async throws -> [String: Any] {
         let process = ProcessInfo.processInfo
-        #if os(watchOS)
-        let capacity = try? StorageUtility.documentsDirectory.resourceValues(forKeys: [
-            .volumeAvailableCapacityKey,
-            .volumeTotalCapacityKey
-        ])
-        let availableStorage: Any = capacity?.volumeAvailableCapacity ?? NSNull()
-        #else
         let capacity = try? StorageUtility.documentsDirectory.resourceValues(forKeys: [
             .volumeAvailableCapacityForImportantUsageKey,
             .volumeTotalCapacityKey
         ])
         let availableStorage: Any = capacity?.volumeAvailableCapacityForImportantUsage ?? NSNull()
-        #endif
         let device = await devicePayload()
         return [
             "platform": platformName,
@@ -49,9 +38,7 @@ actor MCPNativeDeviceStatusExecutor {
     }
 
     private var platformName: String {
-        #if os(watchOS)
-        return "watchOS"
-        #elseif os(iOS)
+        #if os(iOS)
         return "iOS"
         #else
         return "unknown"
@@ -62,18 +49,6 @@ actor MCPNativeDeviceStatusExecutor {
     private func devicePayload() -> [String: Any] {
         #if os(iOS) && canImport(UIKit)
         let device = UIDevice.current
-        device.isBatteryMonitoringEnabled = true
-        let battery: Any = device.batteryLevel >= 0 ? NSNumber(value: device.batteryLevel) : NSNull()
-        return [
-            "name": device.name,
-            "model": device.model,
-            "localized_model": device.localizedModel,
-            "system_name": device.systemName,
-            "system_version": device.systemVersion,
-            "battery_level": battery
-        ]
-        #elseif os(watchOS) && canImport(WatchKit)
-        let device = WKInterfaceDevice.current()
         device.isBatteryMonitoringEnabled = true
         let battery: Any = device.batteryLevel >= 0 ? NSNumber(value: device.batteryLevel) : NSNull()
         return [

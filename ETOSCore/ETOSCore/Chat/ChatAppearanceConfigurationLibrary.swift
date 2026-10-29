@@ -36,7 +36,6 @@ public actor ChatAppearanceConfigurationLibrary {
                 try Task.checkCancellation()
                 return try ChatAppearanceConfigurationTransaction.save(configuration, original: original, in: db)
             }
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
             NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
             return saved

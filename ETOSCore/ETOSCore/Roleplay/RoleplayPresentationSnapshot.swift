@@ -30,16 +30,14 @@ public struct RoleplayPresentationSnapshot: Sendable {
     public let variables: RoleplayVariableSnapshot
     private let resolved: ResolvedRoleplaySession?
     private let messages: [ChatMessage]
-    private let worldbooks: [Worldbook]
     private let baseURL: URL
     private let contentIdentity: Int
     private let historyIdentity: Int
     private let depths: [UUID: Int]
 
-    public init(sessionID: UUID, messages: [ChatMessage], worldbooks: [Worldbook], store: RoleplayStore = .shared) {
+    public init(sessionID: UUID, messages: [ChatMessage], store: RoleplayStore = .shared) {
         self.sessionID = sessionID
         self.messages = messages
-        self.worldbooks = worldbooks
         binding = store.binding(sessionID: sessionID)
         resolved = RoleplayRuntime.resolve(sessionID: sessionID, messages: messages, store: store, migrateLegacyValues: false)
         variables = resolved?.variables ?? store.variableSnapshot(sessionID: sessionID, migrateLegacyValues: false)
@@ -49,7 +47,6 @@ public struct RoleplayPresentationSnapshot: Sendable {
         hasher.combine(binding)
         hasher.combine(resolved?.characters)
         hasher.combine(resolved?.persona)
-        hasher.combine(worldbooks)
         contentIdentity = hasher.finalize()
         // 完成的消息内容、版本和索引变化会重建文档，流式占位的逐字变化不会反复重启脚本。
         historyIdentity = messages.filter { !$0.isReceivingStream }.hashValue
@@ -116,8 +113,6 @@ public struct RoleplayPresentationSnapshot: Sendable {
             userAvatarPath: persona?.avatarFileName ?? "", characterAvatarPath: character?.avatarFileName ?? "",
             characterAssets: character?.assets ?? [], regexRules: character?.regexRules ?? [], chatMessages: messages,
             variableSnapshot: variables, messageID: message.id, messageVersionIndex: version, documentID: documentID,
-            worldbooks: worldbooks, primaryWorldbookName: character?.embeddedWorldbookID.flatMap { id in worldbooks.first { $0.id == id }?.name },
-            additionalWorldbookNames: binding?.additionalWorldbookIDs.compactMap { id in worldbooks.first { $0.id == id }?.name } ?? [],
             scriptID: script?.id, scriptName: script?.name ?? "", scriptInfo: script?.info ?? "", scriptButtons: script?.buttons ?? [],
             scriptInitialVariables: initial)
         let variableUpdate = RoleplayHTMLDocumentFactory.makeVariableUpdateScript(variableSnapshot: variables, messageID: message.id,

@@ -110,7 +110,6 @@ extension ConfigLoader {
                         let pricing = $0.normalized(forAPIFormat: model.effectiveAPIFormat(providerAPIFormat: provider.apiFormat))
                         return pricing.isEffectivelyEmpty ? nil : encodeJSON(pricing)
                     },
-                    prompt: model.prompt,
                     sortIndex: modelIndex,
                     updatedAt: now
                 )
@@ -265,8 +264,7 @@ extension ConfigLoader {
                     requestBodyOverrideMode: requestBodyOverrideMode,
                     rawRequestBodyJSON: modelRow.rawRequestBodyJSON,
                     requestBodyControls: decodeJSON(modelRow.requestBodyControlsJSON, as: [ModelRequestBodyControl].self) ?? [],
-                    pricing: decodeJSON(modelRow.pricingJSON, as: ModelPricing.self),
-                    prompt: modelRow.prompt
+                    pricing: decodeJSON(modelRow.pricingJSON, as: ModelPricing.self)
                 )
                 if !hasStoredCapabilityShape {
                     model = model.applyingInferredCapabilityHints()

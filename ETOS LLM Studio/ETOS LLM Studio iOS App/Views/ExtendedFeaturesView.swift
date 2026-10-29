@@ -100,18 +100,6 @@ struct ExtendedFeaturesView: View {
 
             Section {
                 NavigationLink {
-                    LocalModelManagementView()
-                } label: {
-                    SettingsListIconLabel("本地模型", icon: .localModels)
-                }
-            } footer: {
-                Text(NSLocalizedString("管理本机 GGUF 权重、提供商开关与高级调参。", comment: "本地模型入口说明"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
                     ImageGenerationFeatureView()
                         .environmentObject(viewModel)
                 } label: {
@@ -224,117 +212,6 @@ struct ExtendedFeaturesView: View {
                     documents: [GuideDocumentReference(id: "settings-extended", title: "Extended Features")] + BatchGuideSupport.documents,
                     settings: [.readOnly("read_only", label: NSLocalizedString("使用说明", comment: ""), value: { .bool(true) })]
                 )
-            }
-        }
-    }
-}
-
-// MARK: - 记忆系统设置
-
-struct LongTermMemoryFeatureView: View {
-    @EnvironmentObject var viewModel: ChatViewModel
-    
-    @State private var isShowingIntroDetails = false
-    
-    var body: some View {
-        Form {
-            Section {
-                settingsIntroCard(
-                    title: NSLocalizedString("记忆系统", comment: "Memory system intro title"),
-                    summary: NSLocalizedString("让 AI 在多轮对话里持续记住你的偏好、背景与目标。", comment: "Memory system intro summary"),
-                    details: NSLocalizedString("记忆系统说明正文", comment: "Memory system intro details"),
-                    isExpanded: $isShowingIntroDetails
-                )
-            }
-
-            Section {
-                Toggle(NSLocalizedString("启用记忆功能", comment: "启用记忆功能开关"), isOn: $viewModel.enableMemory)
-            } footer: {
-                Text(NSLocalizedString("启用后，AI 会在响应前自动检索相关记忆，并可选择写入新的记忆片段。", comment: "启用记忆功能说明"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            
-            if viewModel.enableMemory {
-                Section {
-                    Toggle(NSLocalizedString("允许写入新的记忆", comment: "允许写入新记忆开关"), isOn: $viewModel.enableMemoryWrite)
-                } footer: {
-                    Text(NSLocalizedString("关闭后仅读取记忆，不会请求保存新内容。", comment: "关闭记忆写入说明"))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    Toggle(NSLocalizedString("启用异步跨对话记忆", comment: "启用异步跨对话记忆开关"), isOn: $viewModel.enableConversationMemoryAsync)
-
-                    if viewModel.enableConversationMemoryAsync {
-                        NavigationLink {
-                            ConversationMemorySettingsView()
-                                .environmentObject(viewModel)
-                        } label: {
-                            SettingsListIconLabel("跨对话记忆与画像", icon: .conversationMemory)
-                        }
-                    }
-                } header: {
-                    Text(NSLocalizedString("跨对话记忆", comment: "跨对话记忆分组"))
-                }
-                
-                Section {
-                    NavigationLink {
-                        MemorySettingsView().environmentObject(viewModel)
-                    } label: {
-                        SettingsListIconLabel("记忆库管理", icon: .memoryLibrary)
-                    }
-                }
-            }
-        }
-        .navigationTitle(NSLocalizedString("记忆系统", comment: "记忆系统页标题"))
-        .guideSettingsPageContext(
-            id: "settings-memory-system",
-            title: NSLocalizedString("记忆系统", comment: "记忆系统向导上下文标题"),
-            documents: [GuideDocumentReference(id: "settings-memory", title: "Memory System")],
-            settings: [
-                .bool("memory_enabled", label: NSLocalizedString("启用记忆功能", comment: "向导设置字段"), get: { viewModel.enableMemory }, set: { viewModel.enableMemory = $0 }),
-                .bool("memory_write_enabled", label: NSLocalizedString("允许写入新的记忆", comment: "向导设置字段"), get: { viewModel.enableMemoryWrite }, set: { viewModel.enableMemoryWrite = $0 }),
-                .bool("cross_conversation_memory_enabled", label: NSLocalizedString("启用异步跨对话记忆", comment: "向导设置字段"), get: { viewModel.enableConversationMemoryAsync }, set: { viewModel.enableConversationMemoryAsync = $0 })
-            ]
-        )
-    }
-
-    private func settingsIntroCard(
-        title: String,
-        summary: String,
-        details: String,
-        isExpanded: Binding<Bool>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(NSLocalizedString(title, comment: "设置介绍卡片标题"))
-                .etFont(.headline.weight(.semibold))
-            Text(NSLocalizedString(summary, comment: "设置介绍卡片摘要"))
-                .etFont(.subheadline)
-                .foregroundStyle(.secondary)
-            Button {
-                isExpanded.wrappedValue = true
-            } label: {
-                Text(NSLocalizedString("进一步了解…", comment: "设置介绍卡片展开按钮"))
-                    .etFont(.footnote.weight(.medium))
-                    .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
-        .sheet(isPresented: isExpanded) {
-            NavigationStack {
-                ScrollView {
-                    Text(NSLocalizedString(details, comment: "设置介绍卡片详情"))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
-                .navigationTitle(NSLocalizedString(title, comment: "设置介绍卡片详情标题"))
-                .navigationBarTitleDisplayMode(.inline)
             }
         }
     }

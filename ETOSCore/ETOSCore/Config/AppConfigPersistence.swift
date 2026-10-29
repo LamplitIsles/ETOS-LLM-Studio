@@ -163,10 +163,9 @@ extension AppConfigStore {
     @discardableResult
     public nonisolated static func persistStringArray(
         _ values: [String],
-        for key: AppConfigKey,
-        quickSync: Bool = true
+        for key: AppConfigKey
     ) -> Bool {
-        persistSynchronously(.text(encodeStringArray(values)), for: key, quickSync: quickSync)
+        persistSynchronously(.text(encodeStringArray(values)), for: key)
     }
 
     public nonisolated static func stringDictionaryValue(
@@ -204,39 +203,25 @@ extension AppConfigStore {
     @discardableResult
     public nonisolated static func persistStringDictionary(
         _ values: [String: String],
-        for key: AppConfigKey,
-        quickSync: Bool = true
+        for key: AppConfigKey
     ) -> Bool {
-        persistSynchronously(.text(encodeStringDictionary(values)), for: key, quickSync: quickSync)
+        persistSynchronously(.text(encodeStringDictionary(values)), for: key)
     }
 
     @discardableResult
     public nonisolated static func persistSynchronously(
         _ value: AppConfigValue,
-        for key: AppConfigKey,
-        quickSync: Bool = true
+        for key: AppConfigKey
     ) -> Bool {
         let normalizedValue = normalizedAppConfigValue(value, for: key)
         guard persist(normalizedValue, for: key) else { return false }
-        publishPersistedValue(normalizedValue, for: key, quickSync: quickSync)
+        publishPersistedValue(normalizedValue, for: key)
         return true
     }
 
     /// 已在数据库事务内提交的局部修改仍需更新缓存，并沿用原有同步通知。
-    nonisolated static func publishPersistedValue(_ normalizedValue: AppConfigValue, for key: AppConfigKey, quickSync: Bool = true) {
+    nonisolated static func publishPersistedValue(_ normalizedValue: AppConfigValue, for key: AppConfigKey) {
         snapshotCache.set(normalizedValue.anyValue, for: key)
-        if shouldTouchWatchConfigDatabase(for: key) {
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
-        }
-        #if canImport(WatchConnectivity)
-        if quickSync,
-           !shouldSkipQuickSyncForCurrentProcess,
-           key.participatesInSync {
-            Task { @MainActor in
-                WatchSyncManager.shared.performQuickSync(key: key.rawValue, value: normalizedValue.anyValue)
-            }
-        }
-        #endif
         if !shouldSkipRealtimeCloudSyncForCurrentProcess,
            key.participatesInSync {
             Task { @MainActor in
@@ -341,21 +326,17 @@ extension AppConfigStore {
     public func value(for key: AppConfigKey) -> AppConfigValue {
         switch key {
         case .syncProviders: return .bool(syncProviders)
-        case .syncSessions: return .bool(syncSessions)
         case .syncBackgrounds: return .bool(syncBackgrounds)
-        case .syncMemories: return .bool(syncMemories)
         case .syncMCPServers: return .bool(syncMCPServers)
         case .syncAudioFiles: return .bool(syncAudioFiles)
         case .syncImageFiles: return .bool(syncImageFiles)
         case .syncSkills: return .bool(syncSkills)
         case .syncShortcutTools: return .bool(syncShortcutTools)
-        case .syncWorldbooks: return .bool(syncWorldbooks)
         case .syncFeedbackTickets: return .bool(syncFeedbackTickets)
         case .syncDailyPulse: return .bool(syncDailyPulse)
         case .syncUsageStats: return .bool(syncUsageStats)
         case .syncFontFiles: return .bool(syncFontFiles)
         case .syncAppStorage: return .bool(syncAppStorage)
-        case .syncGlobalPrompt: return .bool(syncGlobalPrompt)
         case .syncAutoSyncEnabled: return .bool(syncAutoSyncEnabled)
         case .cloudSyncEnabled: return .bool(cloudSyncEnabled)
         case .cloudSyncAutoSyncEnabled: return .bool(cloudSyncAutoSyncEnabled)
@@ -371,8 +352,6 @@ extension AppConfigStore {
         case .modelOrderRunnableModels,
              .providerOrderIDs,
              .selectedRunnableModelID,
-             .lastActiveSessionID,
-             .lastAppBackgroundedAt,
              .appToolsChatToolsEnabled,
              .appToolsEnabledToolIDs,
              .appToolsKnownDefaultToolIDs,
@@ -389,17 +368,12 @@ extension AppConfigStore {
              .configLoaderToolCapabilityMigrated,
              .feedbackAPIBaseURL,
              .localDebugLastServerAddress,
-             .browserAgentDelegateToIPhone,
-             .memoryAutoConsolidationState:
+             .browserAgentDelegateToIPhone:
             return Self.cachedValue(for: key) ?? key.defaultValue
         case .appLockEnabled: return .bool(appLockEnabled)
         case .appLockTimeoutSeconds: return .integer(appLockTimeoutSeconds)
         case .appLockBiometricEnabled: return .bool(appLockBiometricEnabled)
         case .databaseEncryptionEnabled: return .bool(databaseEncryptionEnabled)
-        case .localModelsEnabled: return .bool(localModelsEnabled)
-        case .localModelPerformanceMonitorEnabled: return .bool(localModelPerformanceMonitorEnabled)
-        case .localModelCacheEnabled: return .bool(localModelCacheEnabled)
-        case .localModelKVCacheEnabled: return .bool(localModelKVCacheEnabled)
         case .localLinuxEnabled: return .bool(localLinuxEnabled)
         case .localLinuxEnvironmentPrivacyEnabled: return .bool(localLinuxEnvironmentPrivacyEnabled)
         case .localLinuxCommandSafetyEnabled: return .bool(localLinuxCommandSafetyEnabled)
@@ -419,10 +393,7 @@ extension AppConfigStore {
         case .aiTopP: return .real(aiTopP)
         case .aiTemperatureEnabled: return .bool(aiTemperatureEnabled)
         case .aiTopPEnabled: return .bool(aiTopPEnabled)
-        case .systemPrompt: return .text(systemPrompt)
         case .maxChatHistory: return .integer(maxChatHistory)
-        case .enableContextCompressionReminder: return .bool(enableContextCompressionReminder)
-        case .contextCompressionReminderTokenThreshold: return .integer(contextCompressionReminderTokenThreshold)
         case .enableStreaming: return .bool(enableStreaming)
         case .maximumRequestRetries: return .integer(maximumRequestRetries)
         case .requestRetrySmartDetectionEnabled: return .bool(requestRetrySmartDetectionEnabled)
@@ -444,18 +415,6 @@ extension AppConfigStore {
         case .enableVideoAnalysisForNonNativeModels: return .bool(enableVideoAnalysisForNonNativeModels)
         case .videoAnalysisModelIdentifier: return .text(videoAnalysisModelIdentifier)
 
-        case .enableMemory: return .bool(enableMemory)
-        case .enableMemoryWrite: return .bool(enableMemoryWrite)
-        case .enableMemoryActiveRetrieval: return .bool(enableMemoryActiveRetrieval)
-        case .memoryTopK: return .integer(memoryTopK)
-        case .memorySendUpdateTime: return .bool(memorySendUpdateTime)
-        case .memoryReembeddingConcurrencyLimit: return .integer(memoryReembeddingConcurrencyLimit)
-        case .enableMemoryAutoConsolidation: return .bool(enableMemoryAutoConsolidation)
-        case .enableConversationMemoryAsync: return .bool(enableConversationMemoryAsync)
-        case .conversationMemoryRecentLimit: return .integer(conversationMemoryRecentLimit)
-        case .conversationMemoryRoundThreshold: return .integer(conversationMemoryRoundThreshold)
-        case .conversationMemorySummaryMinIntervalMinutes: return .integer(conversationMemorySummaryMinIntervalMinutes)
-        case .enableConversationProfileDailyUpdate: return .bool(enableConversationProfileDailyUpdate)
 
         case .speechModelIdentifier: return .text(speechModelIdentifier)
         case .ttsModelIdentifier: return .text(ttsModelIdentifier)
@@ -463,10 +422,8 @@ extension AppConfigStore {
         case .ttsCacheNetworkAudioForReplay: return .bool(ttsCacheNetworkAudioForReplay)
         case .ttsTextSelectionMode: return .text(ttsTextSelectionMode)
         case .ttsFilterCodeAndHTML: return .bool(ttsFilterCodeAndHTML)
-        case .memoryEmbeddingModelIdentifier: return .text(memoryEmbeddingModelIdentifier)
         case .titleGenerationModelIdentifier: return .text(titleGenerationModelIdentifier)
         case .dailyPulseModelIdentifier: return .text(dailyPulseModelIdentifier)
-        case .conversationSummaryModelIdentifier: return .text(conversationSummaryModelIdentifier)
         case .reasoningSummaryModelIdentifier: return .text(reasoningSummaryModelIdentifier)
         case .ocrModelIdentifier: return .text(ocrModelIdentifier)
         case .imageGenerationModelIdentifier: return .text(imageGenerationModelIdentifier)
@@ -521,8 +478,6 @@ extension AppConfigStore {
         case .guidePreferredModelIdentifier: return .text(guidePreferredModelIdentifier)
         case .iOSModelPickerGroupsByProvider: return .bool(iOSModelPickerGroupsByProvider)
         case .watchModelPickerGroupsByProvider: return .bool(watchModelPickerGroupsByProvider)
-        case .modelPickerPromptShortcutEnabled: return .bool(modelPickerPromptShortcutEnabled)
-        case .modelPickerWorldbookShortcutEnabled: return .bool(modelPickerWorldbookShortcutEnabled)
         case .iOSModelPickerExpandedGroupIDs:
             return .text(Self.encodeStringArray(iOSModelPickerExpandedGroupIDs.sorted()))
         case .watchModelPickerExpandedGroupIDs:
@@ -530,14 +485,10 @@ extension AppConfigStore {
         case .modelPickerFolderPathsByProvider:
             return .text(Self.encodeStringDictionary(modelPickerFolderPathsByProvider))
         case .chatQuickActionIDs: return .text(chatQuickActionIDs)
-        case .temporaryChatMemoryEnabled: return .bool(temporaryChatMemoryEnabled)
         case .enableSlashCommands: return .bool(enableSlashCommands)
         case .chatComposerStyle: return .text(chatComposerStyle)
         case .iOSHardwareKeyboardReturnSendsMessage: return .bool(iOSHardwareKeyboardReturnSendsMessage)
         case .chatComposerDraft: return .text(chatComposerDraft)
-        case .restoreLastSessionOnLaunch: return .bool(restoreLastSessionOnLaunch)
-        case .restoreLastSessionOnlyIfRecent: return .bool(restoreLastSessionOnlyIfRecent)
-        case .restoreLastSessionWithinMinutes: return .integer(restoreLastSessionWithinMinutes)
         case .providerDetailGroupByMainstream: return .bool(providerDetailGroupByMainstream)
         case .backgroundCropTarget: return .text(backgroundCropTarget)
         case .shortcutBridgeShortcutName: return .text(shortcutBridgeShortcutName)

@@ -77,19 +77,13 @@ struct ThirdPartyImportCherryTests {
         )
 
         #expect(prepared.package.options.contains(.providers))
-        #expect(prepared.package.options.contains(.sessions))
         #expect(prepared.package.providers.count == 1)
-        #expect(prepared.package.sessions.count == 1)
 
         let provider = prepared.package.providers[0]
         #expect(provider.apiFormat == "anthropic")
         #expect(provider.baseURL == "https://api.anthropic.com/v1")
         #expect(provider.models.count == 1)
 
-        let session = prepared.package.sessions[0]
-        #expect(session.session.name == "测试会话")
-        #expect(session.messages.count == 2)
-        #expect(session.messages[1].content == "你好，这里是 Cherry")
     }
 
     @Test("Cherry 的 openai-response 模式会保留为模型请求参数")

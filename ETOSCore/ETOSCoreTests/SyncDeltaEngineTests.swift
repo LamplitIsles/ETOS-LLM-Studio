@@ -187,20 +187,20 @@ struct SyncDeltaEngineTests {
             updatedAt: Date(timeIntervalSince1970: 1_050)
         )
 
-        // 用户暂时关闭 providers 选项，仅同步 sessions，不应产生 provider 删除墓碑。
-        let sessionsOnlyPackage = SyncPackage(options: [.sessions], sessions: [])
-        let sessionsOnlyManifest = SyncDeltaEngine.buildManifest(
-            from: sessionsOnlyPackage,
+        // 用户暂时关闭 providers 选项，仅同步 backgrounds，不应产生 provider 删除墓碑。
+        let backgroundsOnlyPackage = SyncPackage(options: [.backgrounds])
+        let backgroundsOnlyManifest = SyncDeltaEngine.buildManifest(
+            from: backgroundsOnlyPackage,
             channel: "delta-scope",
             userDefaults: defaults,
             generatedAt: Date(timeIntervalSince1970: 2_000)
         )
-        let sessionsOnlySnapshot = SyncLocalSnapshot(
-            package: sessionsOnlyPackage,
-            manifest: sessionsOnlyManifest
+        let backgroundsOnlySnapshot = SyncLocalSnapshot(
+            package: backgroundsOnlyPackage,
+            manifest: backgroundsOnlyManifest
         )
         let scopedDelta = SyncDeltaEngine.buildDelta(
-            localSnapshot: sessionsOnlySnapshot,
+            localSnapshot: backgroundsOnlySnapshot,
             remoteManifest: SyncManifest(options: [.providers], records: [providerRemoteRecord]),
             channel: "delta-scope",
             userDefaults: defaults,

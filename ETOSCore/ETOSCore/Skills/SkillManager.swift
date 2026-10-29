@@ -30,7 +30,6 @@ public final class SkillManager: ObservableObject {
         case readInstructions = "read_instructions"
         case listResources = "list_resources"
         case readResource = "read_resource"
-        case executeScript = "execute_script"
 
         static func resolveToolArgument(_ rawValue: String) -> SkillToolAction? {
             let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,8 +47,6 @@ public final class SkillManager: ObservableObject {
                 return .listResources
             case "read_resource", "readresource", "resource", "resource_content":
                 return .readResource
-            case "execute_script", "executescript", "execute":
-                return .executeScript
             default:
                 return nil
             }
@@ -800,8 +797,7 @@ public final class SkillManager: ObservableObject {
         } else {
             action = path.isEmpty ? .readInstructions : .readResource
         }
-        if action != .executeScript,
-           let sourceAgentRunID,
+        if let sourceAgentRunID,
            let runRecord = Persistence.loadLocalAgentRun(id: sourceAgentRunID) {
             guard let frozenSkill = runRecord.context.skillSnapshots?.first(where: { $0.skillName == name }) else {
                 throw SkillExecutionError.skillNotFrozen
@@ -815,32 +811,6 @@ public final class SkillManager: ObservableObject {
             guard currentDigest == frozenSkill.versionDigest else {
                 throw SkillExecutionError.skillChanged
             }
-        }
-        if action == .executeScript {
-            guard !path.isEmpty else {
-                throw SkillStoreError.saveFailed(
-                    NSLocalizedString("execute_script 必须提供 scripts/ 内的 path。", comment: "Skill execute script path required")
-                )
-            }
-            guard let sourceSessionID, let sourceAgentRunID, let sourceToolCallID else {
-                throw SkillExecutionError.agentContextRequired
-            }
-            let result = try await SkillScriptToolExecutor.shared.execute(
-                skillName: name,
-                relativePath: path,
-                arguments: args.arguments ?? [],
-                timeoutSeconds: args.timeoutSeconds,
-                outputLimitBytes: args.outputLimitBytes,
-                sessionID: sourceSessionID,
-                runID: sourceAgentRunID,
-                triggeringMessageID: triggeringMessageID,
-                toolCallID: sourceToolCallID
-            )
-            if let runRecord = Persistence.loadLocalAgentRun(id: sourceAgentRunID),
-               let frozenSkill = runRecord.context.skillSnapshots?.first(where: { $0.skillName == name }) {
-                await SkillAllowedToolRuntime.shared.activate(skill: frozenSkill, runID: sourceAgentRunID)
-            }
-            return result
         }
         let result = try await Task.detached(priority: .utility) {
             switch action {
@@ -878,8 +848,6 @@ public final class SkillManager: ObservableObject {
                 let content = try await SkillStore.loadSkillReadableResource(skillName: name, relativePath: path)
                 let normalizedPath = SkillResourcePolicy.normalizeRelativePath(path) ?? path
                 return Self.formatResourceContent(skillName: name, relativePath: normalizedPath, content: content)
-            case .executeScript:
-                preconditionFailure("execute_script 应在进入资源读取任务前处理。")
             }
         }.value
         if let sourceAgentRunID {

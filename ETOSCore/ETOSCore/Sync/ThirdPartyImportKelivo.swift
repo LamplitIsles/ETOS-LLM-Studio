@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 本文件负责解析 Kelivo 导出的提供商与会话数据。
+// 本文件负责解析 Kelivo 导出的提供商配置。
 // ============================================================================
 
 import Foundation
@@ -12,38 +12,25 @@ extension ThirdPartyImportService {
     static func parseKelivo(fileURL: URL) throws -> ParsedPayload {
         var warnings: [String] = []
         var settings = [String: Any]()
-        var chats = [String: Any]()
 
         if isDirectory(fileURL) {
             if let parsedSettings = findJSONInDirectory(fileURL, preferredNames: ["settings.json"]) {
                 settings = parsedSettings
             }
-            if let parsedChats = findJSONInDirectory(fileURL, preferredNames: ["chats.json"]) {
-                chats = parsedChats
-            }
         } else if let parsed = tryParseDictionaryJSON(from: fileURL) {
-            if parsed["conversations"] != nil || parsed["messages"] != nil {
-                chats = parsed
-            } else {
-                settings = parsed
-            }
+            settings = parsed
         } else if isLikelyCompressedBackup(fileURL) {
             throw ThirdPartyImportError.unsupportedBackupFormat(
-                reason: NSLocalizedString("当前版本暂不支持直接读取压缩包，请先解压后再导入 settings.json/chats.json。", comment: "Kelivo import compressed backup unsupported")
+                reason: NSLocalizedString("当前版本暂不支持直接读取压缩包，请先解压后再导入 settings.json。", comment: "Kelivo import compressed backup unsupported")
             )
         }
 
         let providers = parseKelivoProviders(settings)
-        let sessions = parseKelivoSessions(chats)
 
         if providers.isEmpty {
             warnings.append(NSLocalizedString("Kelivo 备份中未识别到 provider_configs。", comment: "Kelivo import missing provider configs warning"))
         }
-        if sessions.isEmpty {
-            warnings.append(NSLocalizedString("Kelivo 备份中未识别到 chats.json 会话。", comment: "Kelivo import missing chats warning"))
-        }
-
-        if providers.isEmpty && sessions.isEmpty {
+        if providers.isEmpty {
             throw ThirdPartyImportError.unsupportedBackupFormat(
                 reason: NSLocalizedString("未识别到 Kelivo 备份中的可导入数据。", comment: "Kelivo import no importable data")
             )
@@ -51,7 +38,6 @@ extension ThirdPartyImportService {
 
         return ParsedPayload(
             providers: dedupeProviders(providers),
-            sessions: sessions,
             warnings: warnings
         )
     }
@@ -151,101 +137,4 @@ extension ThirdPartyImportService {
         return result
     }
 
-    static func parseKelivoSessions(_ chats: [String: Any]) -> [SyncedSession] {
-        let conversations = normalizeJSONArray(chats["conversations"])
-        let messages = normalizeJSONArray(chats["messages"])
-
-        var messagesByConversationID: [String: [[String: Any]]] = [:]
-        for messageAny in messages {
-            guard let message = dictionary(messageAny),
-                  let conversationID = nonEmpty(string(message["conversationId"])) else {
-                continue
-            }
-            messagesByConversationID[conversationID, default: []].append(message)
-        }
-
-        var sessions: [SyncedSession] = []
-        sessions.reserveCapacity(conversations.count)
-
-        for (index, conversationAny) in conversations.enumerated() {
-            guard let conversation = dictionary(conversationAny) else { continue }
-            let conversationID = nonEmpty(string(conversation["id"])) ?? "kelivo-conversation-\(index)"
-            let title = nonEmpty(string(conversation["title"])) ?? String(
-                format: NSLocalizedString("Kelivo 对话 %d", comment: "Imported Kelivo conversation fallback name"),
-                index + 1
-            )
-            let rawMessages = messagesByConversationID[conversationID] ?? []
-            guard !rawMessages.isEmpty else { continue }
-
-            let sortedMessages = rawMessages.sorted {
-                let lhs = parseDate($0["timestamp"]) ?? .distantPast
-                let rhs = parseDate($1["timestamp"]) ?? .distantPast
-                return lhs < rhs
-            }
-
-            let converted: [ChatMessage] = sortedMessages.compactMap { message in
-                let role = mapMessageRole(string(message["role"]))
-                var content = nonEmpty(string(message["content"])) ?? ""
-                let reasoning = nonEmpty(string(message["reasoningText"]))
-                if content.isEmpty, let reasoning {
-                    content = reasoning
-                }
-                guard !content.isEmpty else { return nil }
-
-                var chatMessage = ChatMessage(
-                    id: stableUUID(from: string(message["id"])) ?? UUID(),
-                    role: role,
-                    content: content,
-                    reasoningContent: reasoning
-                )
-                if let totalTokens = int(message["totalTokens"]) {
-                    chatMessage.tokenUsage = MessageTokenUsage(
-                        promptTokens: nil,
-                        completionTokens: nil,
-                        totalTokens: totalTokens
-                    )
-                }
-                return chatMessage
-            }
-
-            guard !converted.isEmpty else { continue }
-            let session = ChatSession(
-                id: stableUUID(from: conversationID) ?? UUID(),
-                name: title,
-                isTemporary: false
-            )
-            sessions.append(SyncedSession(session: session, messages: converted))
-        }
-
-        if sessions.isEmpty, !messagesByConversationID.isEmpty {
-            for (index, pair) in messagesByConversationID.enumerated() {
-                let conversationID = pair.key
-                let rawMessages = pair.value
-
-                let converted: [ChatMessage] = rawMessages.compactMap { message in
-                    let role = mapMessageRole(string(message["role"]))
-                    let content = nonEmpty(string(message["content"])) ?? nonEmpty(string(message["reasoningText"])) ?? ""
-                    guard !content.isEmpty else { return nil }
-                    return ChatMessage(
-                        id: stableUUID(from: string(message["id"])) ?? UUID(),
-                        role: role,
-                        content: content
-                    )
-                }
-                guard !converted.isEmpty else { continue }
-
-                let session = ChatSession(
-                    id: stableUUID(from: conversationID) ?? UUID(),
-                    name: String(
-                        format: NSLocalizedString("Kelivo 对话 %d", comment: "Imported Kelivo conversation fallback name"),
-                        index + 1
-                    ),
-                    isTemporary: false
-                )
-                sessions.append(SyncedSession(session: session, messages: converted))
-            }
-        }
-
-        return sessions
-    }
 }

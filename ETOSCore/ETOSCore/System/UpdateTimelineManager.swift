@@ -268,12 +268,12 @@ public final class UpdateTimelineManager: ObservableObject {
 
     public var autoCheckEnabled: Bool {
         get { AppConfigStore.boolValue(for: .updateTimelineAutoCheckEnabled) }
-        set { AppConfigStore.persistSynchronously(.bool(newValue), for: .updateTimelineAutoCheckEnabled, quickSync: false) }
+        set { AppConfigStore.persistSynchronously(.bool(newValue), for: .updateTimelineAutoCheckEnabled) }
     }
 
     public var autoSummaryEnabled: Bool {
         get { AppConfigStore.boolValue(for: .updateTimelineAutoSummaryEnabled) }
-        set { AppConfigStore.persistSynchronously(.bool(newValue), for: .updateTimelineAutoSummaryEnabled, quickSync: false) }
+        set { AppConfigStore.persistSynchronously(.bool(newValue), for: .updateTimelineAutoSummaryEnabled) }
     }
 
     public var repositoryURL: URL {

@@ -158,7 +158,6 @@ public final class RoleplayStore: @unchecked Sendable {
             var library = loadLibraryUnlocked()
             var value = binding
             value.characterIDs = deduplicated(value.characterIDs)
-            value.additionalWorldbookIDs = deduplicated(value.additionalWorldbookIDs)
             value.updatedAt = Date()
             if let index = library.bindings.firstIndex(where: { $0.sessionID == value.sessionID }) {
                 library.bindings[index] = value
@@ -332,7 +331,6 @@ public final class RoleplayStore: @unchecked Sendable {
     }
 
     func notifyChange(kind: String) {
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
 
         // 酒馆脚本会在后台更新变量，通知必须回到主线程后再驱动 SwiftUI 状态。
         guard !Thread.isMainThread else {

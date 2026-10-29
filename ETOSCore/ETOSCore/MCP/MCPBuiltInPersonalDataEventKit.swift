@@ -71,9 +71,6 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
     }
 
     func createEvent(arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(NSLocalizedString("watchOS 不支持通过 EventKit 写入日历事件。", comment: "watchOS EventKit write unsupported"))
-        #else
         let title = try arguments.personalDataRequiredString("title")
         let startDate = try arguments.personalDataRequiredDate("start_date")
         let endDate = try arguments.personalDataRequiredDate("end_date")
@@ -88,13 +85,9 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         try store.save(event, span: .thisEvent, commit: true)
 
         return writeResult(toolName: "calendar.create_event", itemKey: "event", payload: eventPayload(event))
-        #endif
     }
 
     func updateEvent(arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(NSLocalizedString("watchOS 不支持通过 EventKit 写入日历事件。", comment: "watchOS EventKit write unsupported"))
-        #else
         let eventID = try arguments.personalDataRequiredString("event_id")
         let store = self.store
         try await requestEventAccess(store: store, writeOnlyAllowed: false)
@@ -115,13 +108,9 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         try store.save(event, span: .thisEvent, commit: true)
 
         return writeResult(toolName: "calendar.update_event", itemKey: "event", payload: eventPayload(event))
-        #endif
     }
 
     func deleteEvent(arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(NSLocalizedString("watchOS 不支持通过 EventKit 删除日历事件。", comment: "watchOS EventKit delete unsupported"))
-        #else
         let eventID = try arguments.personalDataRequiredString("event_id")
         let store = self.store
         try await requestEventAccess(store: store, writeOnlyAllowed: false)
@@ -133,7 +122,6 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         try store.remove(event, span: span, commit: true)
 
         return writeResult(toolName: "calendar.delete_event", itemKey: "deleted_event", payload: payload)
-        #endif
     }
 
     func queryReminders(arguments: [String: Any]) async throws -> [String: Any] {
@@ -170,9 +158,6 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
     }
 
     func createReminder(arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(NSLocalizedString("watchOS 不支持通过 EventKit 写入提醒事项。", comment: "watchOS EventKit reminder write unsupported"))
-        #else
         let title = try arguments.personalDataRequiredString("title")
         let store = self.store
         try await requestReminderAccess(store: store)
@@ -181,13 +166,9 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         try applyReminderFields(reminder, arguments: arguments, store: store)
         try store.save(reminder, commit: true)
         return writeResult(toolName: "reminder.create_reminder", itemKey: "reminder", payload: reminderPayload(reminder))
-        #endif
     }
 
     func updateReminder(arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(NSLocalizedString("watchOS 不支持通过 EventKit 写入提醒事项。", comment: "watchOS EventKit reminder write unsupported"))
-        #else
         let reminderID = try arguments.personalDataRequiredString("reminder_id")
         let store = self.store
         try await requestReminderAccess(store: store)
@@ -200,13 +181,9 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         try applyReminderFields(reminder, arguments: arguments, store: store)
         try store.save(reminder, commit: true)
         return writeResult(toolName: "reminder.update_reminder", itemKey: "reminder", payload: reminderPayload(reminder))
-        #endif
     }
 
     func deleteReminder(arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(NSLocalizedString("watchOS 不支持通过 EventKit 删除提醒事项。", comment: "watchOS EventKit reminder delete unsupported"))
-        #else
         let reminderID = try arguments.personalDataRequiredString("reminder_id")
         let store = self.store
         try await requestReminderAccess(store: store)
@@ -216,7 +193,6 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         let payload = reminderPayload(reminder)
         try store.remove(reminder, commit: true)
         return writeResult(toolName: "reminder.delete_reminder", itemKey: "deleted_reminder", payload: payload)
-        #endif
     }
 
     func requestEventAccess(store: EKEventStore, writeOnlyAllowed: Bool) async throws {
@@ -289,7 +265,6 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         return [calendar]
     }
 
-    #if !os(watchOS)
     func applyEventFields(_ event: EKEvent, arguments: [String: Any], store: EKEventStore) throws {
         if let calendarID = arguments.personalDataString("calendar_id"), !calendarID.isEmpty {
             guard let calendar = store.calendar(withIdentifier: calendarID) else {
@@ -402,7 +377,6 @@ private extension MCPBuiltInPersonalDataEventKitExecutor {
         throw MCPBuiltInPersonalDataError.unavailable(NSLocalizedString("当前平台没有 CoreLocation，无法创建位置提醒。", comment: "CoreLocation unavailable"))
         #endif
     }
-    #endif
 
     func fetchReminders(store: EKEventStore, predicate: NSPredicate) async throws -> [EKReminder] {
         await withCheckedContinuation { continuation in

@@ -28,7 +28,6 @@ public extension Persistence {
         do {
             guard let store = activeGRDBStore() else { return false }
             try store.saveLocalAgentMode(mode, sessionID: sessionID, at: Date())
-            WatchDatabaseSyncService.markDatabaseChanged(.chat)
             return true
         } catch {
             logger.error("保存会话 Agent 模式失败：\(error.localizedDescription)")
@@ -56,7 +55,6 @@ public extension Persistence {
         do {
             guard let store = activeGRDBStore() else { return false }
             try store.saveBrowserAgentDataProfile(profile, sessionID: sessionID, at: Date())
-            WatchDatabaseSyncService.markDatabaseChanged(.chat)
             return true
         } catch {
             logger.error("保存 Browser Agent 会话数据配置失败：\(error.localizedDescription)")
@@ -228,7 +226,6 @@ public extension Persistence {
             guard let store = activeAuxiliaryStore(kind: .config) else { return false }
             try store.saveLocalLinuxEnvironmentVariable(variable)
             NotificationCenter.default.post(name: .localLinuxConfigurationDidChange, object: nil)
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             return true
         } catch {
             logger.error("保存 Linux 环境变量失败：\(error.localizedDescription)")
@@ -242,40 +239,9 @@ public extension Persistence {
             guard let store = activeAuxiliaryStore(kind: .config) else { return false }
             try store.deleteLocalLinuxEnvironmentVariable(id: id)
             NotificationCenter.default.post(name: .localLinuxConfigurationDidChange, object: nil)
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             return true
         } catch {
             logger.error("删除 Linux 环境变量失败：\(error.localizedDescription)")
-            return false
-        }
-    }
-
-    static func loadLocalAgentPromptProfiles() -> [LocalAgentPromptProfile] {
-        (try? activeAuxiliaryStore(kind: .config)?.loadLocalAgentPromptProfiles()) ?? []
-    }
-
-    @discardableResult
-    static func saveLocalAgentPromptProfile(_ profile: LocalAgentPromptProfile) -> Bool {
-        do {
-            guard let store = activeAuxiliaryStore(kind: .config) else { return false }
-            try store.saveLocalAgentPromptProfile(profile)
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
-            return true
-        } catch {
-            logger.error("保存 Agent 提示词失败：\(error.localizedDescription)")
-            return false
-        }
-    }
-
-    @discardableResult
-    static func deleteLocalAgentPromptProfile(id: UUID) -> Bool {
-        do {
-            guard let store = activeAuxiliaryStore(kind: .config) else { return false }
-            try store.deleteLocalAgentPromptProfile(id: id)
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
-            return true
-        } catch {
-            logger.error("删除 Agent 提示词失败：\(error.localizedDescription)")
             return false
         }
     }
@@ -290,7 +256,6 @@ public extension Persistence {
             guard let store = activeAuxiliaryStore(kind: .config) else { return false }
             try store.saveLocalLinuxCommandRule(rule)
             NotificationCenter.default.post(name: .localLinuxConfigurationDidChange, object: nil)
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             return true
         } catch {
             logger.error("保存 Linux 命令规则失败：\(error.localizedDescription)")
@@ -304,7 +269,6 @@ public extension Persistence {
             guard let store = activeAuxiliaryStore(kind: .config) else { return false }
             try store.deleteLocalLinuxCommandRule(id: id)
             NotificationCenter.default.post(name: .localLinuxConfigurationDidChange, object: nil)
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             return true
         } catch {
             logger.error("删除 Linux 命令规则失败：\(error.localizedDescription)")
@@ -374,7 +338,6 @@ public extension Persistence {
             guard let store = activeAuxiliaryStore(kind: .config) else { return false }
             try store.saveLocalLinuxMount(mount)
             LocalLinuxJobNotifications.storageChanged()
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             return true
         } catch {
             logger.error("保存 Linux 挂载失败：\(error.localizedDescription)")
@@ -388,7 +351,6 @@ public extension Persistence {
             guard let store = activeAuxiliaryStore(kind: .config) else { return false }
             try store.deleteLocalLinuxMount(id: id)
             LocalLinuxJobNotifications.storageChanged()
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             return true
         } catch {
             logger.error("删除 Linux 挂载失败：\(error.localizedDescription)")

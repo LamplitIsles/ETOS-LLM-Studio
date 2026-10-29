@@ -38,7 +38,6 @@ extension Persistence {
             return nil
         }
 
-        migrateLegacySessionDirectoryToCurrentLayoutIfNeeded()
         do {
             let store = try PersistenceGRDBStore(chatsDirectory: getChatsDirectory())
             cachedGRDBStore = store
@@ -61,20 +60,6 @@ extension Persistence {
             logger.error("GRDB 持久化初始化失败，已自动回退到 JSON: \(String(describing: error))")
             return nil
         }
-    }
-
-    private static func auxiliaryStoreKind(forKey key: String) -> AuxiliaryStoreKind {
-        if auxiliaryMemoryBlobKeys.contains(key) {
-            return .memory
-        }
-        if auxiliaryConfigBlobKeys.contains(key) {
-            return .config
-        }
-        return .config
-    }
-
-    private static func activeAuxiliaryStore(forKey key: String) -> PersistenceAuxiliaryGRDBStore? {
-        activeAuxiliaryStore(kind: auxiliaryStoreKind(forKey: key))
     }
 
     static func activeAuxiliaryStore(kind: AuxiliaryStoreKind) -> PersistenceAuxiliaryGRDBStore? {
@@ -107,7 +92,7 @@ extension Persistence {
                 lastAuxiliaryStoreInitializationFailedAt[kind] = nil
                 return store
             } catch {
-                let launchKind: LaunchDatabaseKind = kind == .config ? .config : .memory
+                let launchKind: LaunchDatabaseKind = .config
                 // 恢复通知会写入配置分库，必须等辅助分库锁释放后再持久化。
                 if quarantineDatabaseAfterInitializationFailure(
                     kind: launchKind,
@@ -149,9 +134,6 @@ extension Persistence {
                 try? FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
             }
             return configDirectory.appendingPathComponent(kind.rawValue, isDirectory: false)
-        case .memory:
-            let memoryDirectory = MemoryStoragePaths.rootDirectory()
-            return memoryDirectory.appendingPathComponent(kind.rawValue, isDirectory: false)
         }
     }
 
@@ -225,64 +207,8 @@ extension Persistence {
             logger.warning("启动阶段检测到可恢复的数据库损坏，等待用户确认。")
             return
         }
-        let grdbStore = activeGRDBStore()
+        _ = activeGRDBStore()
         _ = activeAuxiliaryStore(kind: .config)
-        _ = activeAuxiliaryStore(kind: .memory)
-        if launchPreparation.needsChatFTSRebuild {
-            let interval = TelemetrySignpost.begin(.databaseFTSRebuild)
-            defer { TelemetrySignpost.end(interval) }
-            grdbStore?.rebuildMessagesFTSIndex()
-        }
-    }
-
-    public static func legacyJSONMigrationStatus() -> LegacyJSONMigrationStatus {
-        guard let store = activeGRDBStore() else {
-            return LegacyJSONMigrationStatus(
-                hasLegacyArtifacts: false,
-                importCompleted: false,
-                cleanupCompleted: false,
-                requiresImportDecision: false,
-                requiresCleanupDecision: false,
-                estimatedLegacyBytes: 0,
-                estimatedSessionCount: 0
-            )
-        }
-        return store.legacyJSONMigrationStatus()
-    }
-
-    public static func migrateLegacyJSONIncrementally(
-        shouldCleanupLegacyJSONAfterImport: Bool,
-        throttleInterval: TimeInterval = 0.02,
-        progressHandler: (@Sendable (LegacyJSONMigrationProgress) -> Void)? = nil
-    ) async throws -> LegacyJSONMigrationResult {
-        try await Task.detached(priority: .userInitiated) {
-            guard let store = activeGRDBStore() else {
-                throw LegacyJSONMigrationError.grdbUnavailable
-            }
-            do {
-                return try store.migrateLegacyJSONIncrementally(
-                    shouldCleanupLegacyJSONAfterImport: shouldCleanupLegacyJSONAfterImport,
-                    throttleInterval: throttleInterval,
-                    progressHandler: progressHandler
-                )
-            } catch {
-                throw LegacyJSONMigrationError.importFailed(error.localizedDescription)
-            }
-        }.value
-    }
-
-    @discardableResult
-    public static func cleanupLegacyJSONArtifactsAfterImport() async throws -> Bool {
-        try await Task.detached(priority: .userInitiated) {
-            guard let store = activeGRDBStore() else {
-                throw LegacyJSONMigrationError.grdbUnavailable
-            }
-            do {
-                return try store.cleanupLegacyJSONArtifactsAfterImport()
-            } catch {
-                throw LegacyJSONMigrationError.cleanupFailed(error.localizedDescription)
-            }
-        }.value
     }
 
     static func resetGRDBStoreForTests() {
@@ -319,7 +245,7 @@ extension Persistence {
     }
 
     public static func auxiliaryBlobExists(forKey key: String) -> Bool {
-        let targetStore = activeAuxiliaryStore(forKey: key)
+        let targetStore = activeAuxiliaryStore(kind: .config)
         if targetStore?.auxiliaryBlobExists(forKey: key) == true {
             return true
         }
@@ -333,7 +259,7 @@ extension Persistence {
     }
 
     public static func loadAuxiliaryBlob<T: Decodable>(_ type: T.Type, forKey key: String) -> T? {
-        let targetStore = activeAuxiliaryStore(forKey: key)
+        let targetStore = activeAuxiliaryStore(kind: .config)
         if let value = targetStore?.loadAuxiliaryBlob(type, forKey: key) {
             return value
         }
@@ -349,7 +275,7 @@ extension Persistence {
 
     @discardableResult
     public static func saveAuxiliaryBlob<T: Encodable>(_ value: T, forKey key: String) -> Bool {
-        if let targetStore = activeAuxiliaryStore(forKey: key),
+        if let targetStore = activeAuxiliaryStore(kind: .config),
            targetStore.saveAuxiliaryBlob(value, forKey: key) {
             if let legacyStore = activeGRDBStore() {
                 _ = legacyStore.removeAuxiliaryBlob(forKey: key)
@@ -366,7 +292,7 @@ extension Persistence {
         var didHandle = false
         var didSucceed = true
 
-        if let targetStore = activeAuxiliaryStore(forKey: key) {
+        if let targetStore = activeAuxiliaryStore(kind: .config) {
             didHandle = true
             didSucceed = targetStore.removeAuxiliaryBlob(forKey: key) && didSucceed
         }
@@ -407,23 +333,4 @@ extension Persistence {
         return store.startObservation(observation, onError: onError, onChange: onChange)
     }
 
-    static func withMemoryDatabaseRead<T>(_ block: (Database) throws -> T) -> T? {
-        guard let store = activeAuxiliaryStore(kind: .memory) else { return nil }
-        do {
-            return try store.read(block)
-        } catch {
-            logger.error("读取记忆数据库失败: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    static func withMemoryDatabaseWrite<T>(_ block: (Database) throws -> T) -> T? {
-        guard let store = activeAuxiliaryStore(kind: .memory) else { return nil }
-        do {
-            return try store.write(block)
-        } catch {
-            logger.error("写入记忆数据库失败: \(error.localizedDescription)")
-            return nil
-        }
-    }
 }

@@ -109,8 +109,7 @@ extension ConfigLoader {
         }
         _ = AppConfigStore.persistSynchronously(
             .bool(completed),
-            for: .configLoaderDownloadOnceCompleted,
-            quickSync: false
+            for: .configLoaderDownloadOnceCompleted
         )
     }
 

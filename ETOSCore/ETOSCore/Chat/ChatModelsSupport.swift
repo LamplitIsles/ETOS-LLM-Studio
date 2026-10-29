@@ -622,172 +622,61 @@ public struct RequestLogSummary: Codable, Hashable, Sendable {
 public struct ChatSession: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var name: String
-    /// 仅对当前会话生效的系统提示词，位于全局用户系统提示词之后。
-    public var systemPrompt: String?
-    public var topicPrompt: String?
-    public var enhancedPrompt: String?
-    /// 会话首选聊天模型；nil 表示继续跟随当前全局模型。
     public var preferredModelIdentifier: String?
-    /// 会话所属文件夹，nil 表示未分类。
     public var folderID: UUID?
-    /// 隐藏子代理归属的可见主会话；非 nil 时不会出现在普通会话列表中。
     public var containerSessionID: UUID?
-    public var lorebookIDs: [UUID]
-    /// 绑定到当前会话的标签 ID，标签实体由 SessionTag 单独维护。
     public var tagIDs: [UUID]
-    /// 开启后，当前会话发送请求时不会读取、写入或主动检索长期记忆。
-    public var memoryContextIsolationEnabled: Bool
-    /// 开启后，当前会话不会向模型暴露工具，并会清理历史工具调用消息。
     public var toolContextIsolationEnabled: Bool
-    /// 开启后，当前会话不会注入全局系统提示词；会话与角色扮演提示词不受影响。
-    public var globalSystemPromptIsolationEnabled: Bool
-    /// 兼容旧版把记忆和工具合并保存的隔离开关。
-    @available(*, deprecated, message: "请改用 memoryContextIsolationEnabled 与 toolContextIsolationEnabled。")
-    public var worldbookContextIsolationEnabled: Bool {
-        get { memoryContextIsolationEnabled || toolContextIsolationEnabled }
-        set {
-            memoryContextIsolationEnabled = newValue
-            toolContextIsolationEnabled = newValue
-        }
-    }
-    @available(*, deprecated, message: "请改用 lorebookIDs；worldbookIDs 为兼容旧代码保留。")
-    public var worldbookIDs: [UUID] {
-        get { lorebookIDs }
-        set { lorebookIDs = newValue }
-    }
     public var isTemporary: Bool = false
 
-    /// 嵌入式子代理拥有独立上下文，但其生命周期和可见性都由主会话管理。
-    public var isEmbeddedSubagent: Bool {
-        containerSessionID != nil
-    }
-
-    public var isMemoryContextIsolationActive: Bool { memoryContextIsolationEnabled }
-
+    public var isEmbeddedSubagent: Bool { containerSessionID != nil }
     public var isToolContextIsolationActive: Bool { toolContextIsolationEnabled }
-
-    public var isGlobalSystemPromptIsolationActive: Bool { globalSystemPromptIsolationEnabled }
 
     public init(
         id: UUID,
         name: String,
-        systemPrompt: String? = nil,
-        topicPrompt: String? = nil,
-        enhancedPrompt: String? = nil,
         preferredModelIdentifier: String? = nil,
-        worldbookIDs: [UUID] = [],
-        lorebookIDs: [UUID]? = nil,
         tagIDs: [UUID] = [],
-        worldbookContextIsolationEnabled: Bool = false,
-        memoryContextIsolationEnabled: Bool? = nil,
-        toolContextIsolationEnabled: Bool? = nil,
-        globalSystemPromptIsolationEnabled: Bool = false,
+        toolContextIsolationEnabled: Bool = false,
         folderID: UUID? = nil,
         containerSessionID: UUID? = nil,
         isTemporary: Bool = false
     ) {
         self.id = id
         self.name = name
-        self.systemPrompt = systemPrompt
-        self.topicPrompt = topicPrompt
-        self.enhancedPrompt = enhancedPrompt
         self.preferredModelIdentifier = preferredModelIdentifier
         self.folderID = folderID
         self.containerSessionID = containerSessionID
-        self.lorebookIDs = lorebookIDs ?? worldbookIDs
         self.tagIDs = tagIDs
-        self.memoryContextIsolationEnabled = memoryContextIsolationEnabled ?? worldbookContextIsolationEnabled
-        self.toolContextIsolationEnabled = toolContextIsolationEnabled ?? worldbookContextIsolationEnabled
-        self.globalSystemPromptIsolationEnabled = globalSystemPromptIsolationEnabled
+        self.toolContextIsolationEnabled = toolContextIsolationEnabled
         self.isTemporary = isTemporary
     }
 
     enum CodingKeys: String, CodingKey {
-        case id
-        case name
-        case systemPrompt
-        case topicPrompt
-        case enhancedPrompt
-        case preferredModelIdentifier
-        case folderID
-        case containerSessionID
-        case worldbookIDs
-        case lorebookIDs
-        case lorebookIds
-        case tagIDs
-        case tagIds
-        case worldbookContextIsolationEnabled
-        case memoryContextIsolationEnabled
-        case toolContextIsolationEnabled
-        case globalSystemPromptIsolationEnabled
+        case id, name, preferredModelIdentifier, folderID, containerSessionID, tagIDs, toolContextIsolationEnabled
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(UUID.self, forKey: .id)
-        self.name = try container.decode(String.self, forKey: .name)
-        self.systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
-        self.topicPrompt = try container.decodeIfPresent(String.self, forKey: .topicPrompt)
-        self.enhancedPrompt = try container.decodeIfPresent(String.self, forKey: .enhancedPrompt)
-        self.preferredModelIdentifier = try container.decodeIfPresent(String.self, forKey: .preferredModelIdentifier)
-        self.folderID = try container.decodeIfPresent(UUID.self, forKey: .folderID)
-        self.containerSessionID = try container.decodeIfPresent(UUID.self, forKey: .containerSessionID)
-        if let ids = try container.decodeIfPresent([UUID].self, forKey: .lorebookIDs) {
-            self.lorebookIDs = ids
-        } else if let ids = try container.decodeIfPresent([UUID].self, forKey: .lorebookIds) {
-            self.lorebookIDs = ids
-        } else if let ids = try container.decodeIfPresent([UUID].self, forKey: .worldbookIDs) {
-            self.lorebookIDs = ids
-        } else {
-            self.lorebookIDs = []
-        }
-        if let ids = try container.decodeIfPresent([UUID].self, forKey: .tagIDs) {
-            self.tagIDs = ids
-        } else if let ids = try container.decodeIfPresent([UUID].self, forKey: .tagIds) {
-            self.tagIDs = ids
-        } else {
-            self.tagIDs = []
-        }
-        let legacyIsolationEnabled = try container.decodeIfPresent(Bool.self, forKey: .worldbookContextIsolationEnabled) ?? false
-        self.memoryContextIsolationEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryContextIsolationEnabled)
-            ?? legacyIsolationEnabled
-        self.toolContextIsolationEnabled = try container.decodeIfPresent(Bool.self, forKey: .toolContextIsolationEnabled)
-            ?? legacyIsolationEnabled
-        self.globalSystemPromptIsolationEnabled = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .globalSystemPromptIsolationEnabled
-        ) ?? false
-        self.isTemporary = false
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        preferredModelIdentifier = try container.decodeIfPresent(String.self, forKey: .preferredModelIdentifier)
+        folderID = try container.decodeIfPresent(UUID.self, forKey: .folderID)
+        containerSessionID = try container.decodeIfPresent(UUID.self, forKey: .containerSessionID)
+        tagIDs = try container.decodeIfPresent([UUID].self, forKey: .tagIDs) ?? []
+        toolContextIsolationEnabled = try container.decodeIfPresent(Bool.self, forKey: .toolContextIsolationEnabled) ?? false
+        isTemporary = false
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
-        try container.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
-        try container.encodeIfPresent(topicPrompt, forKey: .topicPrompt)
-        try container.encodeIfPresent(enhancedPrompt, forKey: .enhancedPrompt)
         try container.encodeIfPresent(preferredModelIdentifier, forKey: .preferredModelIdentifier)
         try container.encodeIfPresent(folderID, forKey: .folderID)
         try container.encodeIfPresent(containerSessionID, forKey: .containerSessionID)
-        if !lorebookIDs.isEmpty {
-            try container.encode(lorebookIDs, forKey: .lorebookIDs)
-            // 兼容旧版本持久化字段，避免多端混用时丢失绑定。
-            try container.encode(lorebookIDs, forKey: .worldbookIDs)
-        }
-        if !tagIDs.isEmpty {
-            try container.encode(tagIDs, forKey: .tagIDs)
-        }
-        // 两个新字段需要显式编码 false，避免旧兼容字段为 true 时合并回错误状态。
-        try container.encode(memoryContextIsolationEnabled, forKey: .memoryContextIsolationEnabled)
+        try container.encode(tagIDs, forKey: .tagIDs)
         try container.encode(toolContextIsolationEnabled, forKey: .toolContextIsolationEnabled)
-        if globalSystemPromptIsolationEnabled {
-            try container.encode(globalSystemPromptIsolationEnabled, forKey: .globalSystemPromptIsolationEnabled)
-        }
-        if memoryContextIsolationEnabled || toolContextIsolationEnabled {
-            // 旧版本无法识别独立字段；宁可多屏蔽一类上下文，也不能静默泄露用户已屏蔽的内容。
-            try container.encode(true, forKey: .worldbookContextIsolationEnabled)
-        }
     }
 }
 

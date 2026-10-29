@@ -114,11 +114,6 @@ private extension MCPNativeContactsExecutor {
     }
 
     func create(_ arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(
-            NSLocalizedString("watchOS 不支持通过 Contacts 写入联系人。", comment: "watchOS Contacts write unsupported")
-        )
-        #else
         let store = CNContactStore()
         try await requestAccess(store)
         let contact = CNMutableContact()
@@ -128,15 +123,9 @@ private extension MCPNativeContactsExecutor {
         try store.execute(save)
         let saved = try store.unifiedContact(withIdentifier: contact.identifier, keysToFetch: keysToFetch)
         return result(toolName: "contacts.create", extra: ["saved": true, "contact": payload(saved)])
-        #endif
     }
 
     func update(_ arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(
-            NSLocalizedString("watchOS 不支持通过 Contacts 更新联系人。", comment: "watchOS Contacts update unsupported")
-        )
-        #else
         let identifier = try arguments.personalDataRequiredString("contact_id")
         let store = CNContactStore()
         try await requestAccess(store)
@@ -159,15 +148,9 @@ private extension MCPNativeContactsExecutor {
         try store.execute(save)
         let saved = try store.unifiedContact(withIdentifier: identifier, keysToFetch: keysToFetch)
         return result(toolName: "contacts.update", extra: ["saved": true, "contact": payload(saved)])
-        #endif
     }
 
     func delete(_ arguments: [String: Any]) async throws -> [String: Any] {
-        #if os(watchOS)
-        throw MCPBuiltInPersonalDataError.unsupportedPlatform(
-            NSLocalizedString("watchOS 不支持通过 Contacts 删除联系人。", comment: "watchOS Contacts delete unsupported")
-        )
-        #else
         let identifier = try arguments.personalDataRequiredString("contact_id")
         let store = CNContactStore()
         try await requestAccess(store)
@@ -189,7 +172,6 @@ private extension MCPNativeContactsExecutor {
         save.delete(contact)
         try store.execute(save)
         return result(toolName: "contacts.delete", extra: ["deleted": true, "contact": deleted])
-        #endif
     }
 
     func requestAccess(_ store: CNContactStore) async throws {

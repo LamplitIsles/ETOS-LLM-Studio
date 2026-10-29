@@ -12,17 +12,10 @@ extension AppToolKind {
     public var toolDescription: String {
         switch self {
         case .showWidget:
-            #if os(watchOS)
-            return NSLocalizedString(
-                "在 watchOS 中把传入的 HTML Widget 打开为独立全屏网页。App 会将 widget_code 作为 HTML 片段插入宿主管理的页面；不要包含 html、head、body 或 viewport meta，也不要修改宿主页面。请让内容填满可用区域，并针对手表的小尺寸圆角屏幕使用响应式布局。inline_aspect_ratio 必填，用于把结果同步到支持内联展示的客户端；watchOS 会保留但不使用它控制本地全屏尺寸。title 和 loading_messages 可选，widget_code 必填。",
-                comment: "Show widget tool description sent to model on watchOS"
-            )
-            #else
             return NSLocalizedString(
                 "在 iOS 聊天中把传入的 HTML Widget 渲染为固定画幅的内联网页卡片。App 会将 widget_code 作为 HTML 片段插入宿主管理的容器，并根据气泡可用宽度与 inline_aspect_ratio 计算卡片高度；不要包含 html、head、body 或 viewport meta，也不要修改宿主页面。请让顶层内容使用 100% 宽高填满容器，并根据容器尺寸响应式布局。inline_aspect_ratio 和 widget_code 必填，title 和 loading_messages 可选。",
                 comment: "Show widget tool description sent to model on iOS"
             )
-            #endif
         case .askUserInput:
             return NSLocalizedString(
                 "向用户展示结构化问答面板。支持 single_select / multi_select、可选的“其他输入”、必填校验与自定义提交按钮文案。此工具用于在回答前收集关键信息，调用后应等待用户补充。",
@@ -53,24 +46,9 @@ extension AppToolKind {
                 "创建或覆盖一个 AI 可复用的 JavaScriptCore（JSC）自定义工具。脚本会保存到应用 Application Support 下的 CustomJSTools 独立目录，每个工具包含 manifest.json 与 script.js。脚本必须声明同步 function main(input)，创建前会用 validation_input 试运行；如果工具需要参数，请提供一份能通过校验的 validation_input，否则验证失败不会保存。以后会以 app_custom_jsc_<tool_id> 暴露给模型。能力边界：没有 Node.js、文件系统、原生网络 API 或 Promise 返回值能力。",
                 comment: "Create custom JSC JS tool description sent to model"
             )
-        case .executeWebKitJavaScript:
-            return NSLocalizedString(
-                "使用 watchOS 系统 WebKit JavaScript bridge 执行一段同步 JavaScript 算法代码。代码必须声明 function main(input)，工具会把 input 作为 JSON 值传入，并返回 main 的 JSON 可序列化结果与 console 输出。能力边界：这是 WebKit JS bridge，不是 JavaScriptCore.framework；不提供 Node.js、require/import、文件系统、原生网络 API、外部页面 DOM 或 Promise 返回值。此工具只在 watchOS 暴露。",
-                comment: "Execute WebKit JavaScript description sent to model"
-            )
-        case .createCustomWebKitJSTool:
-            return NSLocalizedString(
-                "创建或覆盖一个 AI 可复用的 watchOS WebKit JavaScript bridge 自定义工具。脚本会保存到应用 Application Support 下的 CustomJSTools 独立目录，每个工具包含 manifest.json 与 script.js。脚本必须声明同步 function main(input)，创建前会用 validation_input 试运行；如果工具需要参数，请提供一份能通过校验的 validation_input，否则验证失败不会保存。以后会以 app_custom_webkit_js_<tool_id> 暴露给模型。能力边界：这是 WebKit JS bridge，不是 JavaScriptCore.framework；没有 Node.js、文件系统、原生网络 API、外部页面 DOM 或 Promise 返回值能力。",
-                comment: "Create custom WebKit JS tool description sent to model"
-            )
-        case .editMemory:
-            return NSLocalizedString(
-                "编辑既有长期记忆。可按 memory_id 修改 content，也可切换归档状态。修改 content 后会自动重新生成这条记忆的嵌入。",
-                comment: "Memory edit tool description sent to model"
-            )
         case .submitFeedbackTicket:
             return NSLocalizedString(
-                "向反馈助手提交一条问题或建议工单。title 和 detail 必填；category 可选 bug 或 suggestion（默认 bug）；可附带复现步骤、预期行为、实际行为、补充信息，或引用本机 Linux 诊断编号。",
+                "向反馈助手提交一条问题或建议工单。title 和 detail 必填；category 可选 bug 或 suggestion（默认 bug）；可附带复现步骤、预期行为、实际行为、补充信息。",
                 comment: "Submit feedback ticket tool description sent to model"
             )
         case .listSandboxDirectory:
@@ -117,11 +95,6 @@ extension AppToolKind {
             return NSLocalizedString(
                 "按多条规则批量编辑应用沙盒 Documents 目录中的 UTF-8 文本文件。只能访问沙盒内部路径。",
                 comment: "Batch edit sandbox file description sent to model"
-            )
-        case .listMemories:
-            return NSLocalizedString(
-                "分页列出长期记忆并支持关键词筛选，可选择是否包含归档记忆。",
-                comment: "List memories description sent to model"
             )
         case .listSQLiteTables:
             return NSLocalizedString(

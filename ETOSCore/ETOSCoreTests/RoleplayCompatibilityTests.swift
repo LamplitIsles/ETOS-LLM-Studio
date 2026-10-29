@@ -52,156 +52,6 @@ struct RoleplayCompatibilityTests {
         #expect(mutated.map(\.id) == original.map(\.id))
     }
 
-    @Test("世界书 outlet 宏只在引用位置展开")
-    func resolvesWorldbookOutletMacrosAtReferenceSite() {
-        let resolved = RoleplayMacroResolver.resolveWorldbookOutlets(
-            "前文 {{outlet::角色状态}} 后文 {{outlet::不存在}}",
-            outlets: ["角色状态": "生命值：80"]
-        )
-
-        #expect(resolved == "前文 生命值：80 后文 ")
-    }
-
-    #if canImport(JavaScriptCore)
-    @Test("提示词模板执行 EJS 并预激活世界书条目")
-    func rendersPromptTemplateAndPreactivatesWorldbookEntry() async {
-        let preprocessor = WorldbookEntry(
-            comment: "[Preprocessing] 状态路由",
-            content: "@@preprocessing\n<% if (getvar('phase', { defaults: '' }) === 'on') { setLocalVar('initialized', true); activewi(null, '目标条目', true); } %>",
-            keys: [],
-            constant: true
-        )
-        let target = WorldbookEntry(
-            comment: "目标条目",
-            content: "动态内容",
-            keys: [],
-            isEnabled: false
-        )
-        let variables = RoleplayVariableSnapshot(chat: ["phase": .string("on")])
-        var context = RoleplayMacroContext(variables: variables)
-        let prepared = await RoleplayPromptTemplateRenderer.preprocessWorldbooks(
-            [Worldbook(name: "模板书", entries: [preprocessor, target])],
-            messages: [],
-            macroContext: &context
-        )
-
-        #expect(prepared[0].entries[1].isEnabled)
-        #expect(prepared[0].entries[1].constant)
-        #expect(context.variables.chat["initialized"] == .bool(true))
-
-        let rendered = await RoleplayPromptTemplateRenderer.renderMessages(
-            [ChatMessage(role: .system, content: "<% if (getvar('phase') === 'on') { %>已开启<% } %>")],
-            worldbooks: prepared,
-            chatHistory: [],
-            macroContext: &context
-        )
-        #expect(rendered[0].content == "已开启")
-    }
-
-    @Test("提示词预处理支持异步世界书、消息筛选、键模板与分层变量回存")
-    func preprocessesCompletePromptTemplateContext() async {
-        let firstMessage = ChatMessage(role: .assistant, content: "第一层")
-        let secondMessage = ChatMessage(role: .user, content: "第二层")
-        let thirdMessage = ChatMessage(role: .assistant, content: "第三层")
-        var variables = RoleplayVariableSnapshot(global: ["全局": .int(1)], chat: ["会话": .int(2)])
-        variables.replaceMessageVariables(
-            ["原值": .string("保留")],
-            messageID: firstMessage.id,
-            versionIndex: 0
-        )
-        let preprocessor = WorldbookEntry(
-            comment: "[Preprocessing] 完整预处理",
-            content: """
-            @@preprocessing
-            <% const recent = getChatMessages(-2); setGlobalVar('最近', recent.join('|')); setLocalVar('本地', recent.length); setMessageVar('指定楼层', recent[1], { withMsg: { id: 0 } }); await activewi(null, /目标条目/, true); %>
-            <%= await getwi('子模板', { suffix: '完成' }) %>
-            """,
-            keys: ["<%= getChatMessages(-1)[0] %>"],
-            secondaryKeys: ["<%= getGlobalVar('最近') %>"],
-            constant: true
-        )
-        let child = WorldbookEntry(
-            uid: 8,
-            comment: "子模板",
-            content: "子模板<%= suffix %>",
-            keys: []
-        )
-        let target = WorldbookEntry(
-            uid: 9,
-            comment: "目标条目",
-            content: "目标内容",
-            keys: [],
-            isEnabled: false
-        )
-        let disabled = WorldbookEntry(
-            comment: "[Preprocessing] 已禁用",
-            content: "@@preprocessing\n<% setLocalVar('不应写入', true); %>",
-            keys: [],
-            isEnabled: false
-        )
-        var context = RoleplayMacroContext(
-            variables: variables,
-            messageID: thirdMessage.id,
-            messageVersionIndex: 0
-        )
-
-        let prepared = await RoleplayPromptTemplateRenderer.preprocessWorldbooks(
-            [Worldbook(name: "模板书", entries: [preprocessor, child, target, disabled])],
-            messages: [firstMessage, secondMessage, thirdMessage],
-            macroContext: &context
-        )
-
-        #expect(prepared[0].entries[0].content.trimmingCharacters(in: .whitespacesAndNewlines) == "子模板完成")
-        #expect(prepared[0].entries[0].keys == ["第三层"])
-        #expect(prepared[0].entries[0].secondaryKeys == ["第二层|第三层"])
-        #expect(prepared[0].entries[2].isEnabled)
-        #expect(prepared[0].entries[2].constant)
-        #expect(context.variables.global["最近"] == .string("第二层|第三层"))
-        #expect(context.variables.chat["本地"] == .int(2))
-        #expect(context.variables.messageVariables(messageID: firstMessage.id, versionIndex: 0)["指定楼层"] == .string("第三层"))
-        #expect(context.variables.chat["不应写入"] == nil)
-    }
-
-    @Test("激活后的 EJS 世界书条目保留所属世界书上下文")
-    func rendersActivatedWorldbookEntryInItsOwnContext() async {
-        let otherChild = WorldbookEntry(uid: 1, comment: "子条目", content: "错误世界书", keys: [])
-        let targetChild = WorldbookEntry(uid: 1, comment: "子条目", content: "目标世界书", keys: [])
-        let targetRoot = WorldbookEntry(
-            uid: 2,
-            comment: "动态条目",
-            content: "<%= await getwi('子条目') %>",
-            keys: []
-        )
-        let otherBook = Worldbook(name: "其他世界书", entries: [otherChild])
-        let targetBook = Worldbook(name: "目标世界书", entries: [targetChild, targetRoot])
-        let injection = WorldbookInjection(
-            worldbookID: targetBook.id,
-            worldbookName: targetBook.name,
-            entryID: targetRoot.id,
-            entryComment: targetRoot.comment,
-            content: targetRoot.content,
-            position: .after,
-            outletName: nil,
-            order: 100,
-            depth: nil,
-            role: .system,
-            triggerScore: 1
-        )
-        var evaluation = WorldbookEvaluationResult.empty
-        evaluation.after = [injection]
-        var context = RoleplayMacroContext()
-
-        let rendered = await RoleplayPromptTemplateRenderer.renderWorldbookEvaluation(
-            evaluation,
-            worldbooks: [otherBook, targetBook],
-            chatHistory: [],
-            macroContext: &context
-        )
-
-        #expect(rendered.after.first?.content == "目标世界书")
-    }
-    #endif
-
     @Test("导入 Character Card V3 的角色资料、世界书、正则和助手脚本")
     func importV3JSON() throws {
         let json = #"""
@@ -270,10 +120,6 @@ struct RoleplayCompatibilityTests {
         #expect(result.character.regexRules.count == 1)
         #expect(result.character.regexRules.first?.substituteRegex == 1)
         #expect(result.character.helperScripts.first?.buttons.first?.name == "确认")
-        #expect(result.embeddedWorldbook?.name == "星野世界书")
-        #expect(result.embeddedWorldbook?.entries.first?.content == "车站位于海边。")
-        #expect(result.embeddedWorldbook?.entries.first?.probability == 30)
-        #expect(result.embeddedWorldbook?.entries.first?.useProbability == true)
     }
 
     @Test("导入新旧酒馆助手字段时拆开 value 包装并按脚本 ID 去重")
@@ -608,8 +454,7 @@ struct RoleplayCompatibilityTests {
             dictionary: config,
             raw: true,
             systemPrompts: ["char_description": "角色描述"],
-            chatHistory: [ChatMessage(role: .user, content: "原历史")],
-            fallbackSystemPrompt: "不应注入"
+            chatHistory: [ChatMessage(role: .user, content: "原历史")]
         )
 
         #expect(messages.map(\.role) == [.system, .assistant, .user, .system, .user])
@@ -673,55 +518,6 @@ struct RoleplayCompatibilityTests {
         ) == .string("海边"))
     }
 
-    @Test("MVU 从世界书 YAML 初始化标准数据并解析宏")
-    func initializeMVUFromWorldbook() {
-        let primaryID = UUID()
-        let worldbook = Worldbook(
-            id: primaryID,
-            name: "白石世界书",
-            entries: [
-                WorldbookEntry(
-                    uid: 7,
-                    comment: "[initvar]变量初始化勿开",
-                    content: """
-                    世界:
-                      当前地点: {{user}}家客厅
-                      日期: 2026年1月8日
-                    白石:
-                      好感度: 85
-                      标签: [青梅竹马, 吸血鬼]
-                    """,
-                    keys: [],
-                    isEnabled: false,
-                    constant: true
-                )
-            ]
-        )
-        let result = RoleplayMVUInitializer.initialize(
-            greeting: "你好。",
-            worldbooks: [worldbook],
-            primaryWorldbookID: primaryID,
-            existingVariables: [:],
-            macroContext: RoleplayMacroContext(
-                character: RoleplayCharacter(name: "白石"),
-                persona: PersonaProfile(name: "旅行者")
-            )
-        )
-
-        #expect(result.failureReasons.isEmpty)
-        #expect(result.loadedSourceCount == 1)
-        guard case .dictionary(let world) = result.data.statData["世界"],
-              case .dictionary(let character) = result.data.statData["白石"] else {
-            Issue.record("initvar 没有生成预期对象。")
-            return
-        }
-        #expect(world["当前地点"] == .string("旅行者家客厅"))
-        #expect(character["好感度"] == .int(85))
-        #expect(result.data.initializedLorebooks["白石世界书"] == [.int(7)])
-        #expect(result.data.variables["display_data"] == result.data.variables["stat_data"])
-        #expect(result.data.variables["schema"] != nil)
-    }
-
     @Test("MVU 将旧版根变量迁移到 stat_data")
     func migrateLegacyRootMVUVariables() {
         let data = RoleplayMVUData(migratingLegacyVariables: [
@@ -767,20 +563,8 @@ struct RoleplayCompatibilityTests {
         #expect(reconciled["状态"] == .string("正常"))
     }
 
-    @Test("开场白 initvar 覆盖主世界书并保留附加世界书变量")
+    @Test("开场白 initvar 初始化角色变量")
     func initializeMVUFromGreetingOverride() {
-        let primaryID = UUID()
-        let additionalID = UUID()
-        let primary = Worldbook(
-            id: primaryID,
-            name: "主世界书",
-            entries: [WorldbookEntry(comment: "[initvar]主变量", content: "角色:\n  好感度: 1", keys: [])]
-        )
-        let additional = Worldbook(
-            id: additionalID,
-            name: "附加世界书",
-            entries: [WorldbookEntry(comment: "[initvar]附加变量", content: "天气: 晴\n角色:\n  标记: true", keys: [])]
-        )
         let result = RoleplayMVUInitializer.initialize(
             greeting: """
             <UpdateVariable><initvar>
@@ -788,8 +572,6 @@ struct RoleplayCompatibilityTests {
               好感度: 30
             </initvar></UpdateVariable>
             """,
-            worldbooks: [primary, additional],
-            primaryWorldbookID: primaryID,
             existingVariables: [:],
             macroContext: .init()
         )
@@ -799,9 +581,6 @@ struct RoleplayCompatibilityTests {
             return
         }
         #expect(character["好感度"] == .int(30))
-        #expect(character["标记"] == .bool(true))
-        #expect(result.data.statData["天气"] == .string("晴"))
-        #expect(result.data.initializedLorebooks["主世界书"] == [])
     }
 
     @Test("MVU JSON Patch 支持 replace、delta、insert 和 remove")
@@ -1072,13 +851,7 @@ struct RoleplayCompatibilityTests {
             userName: "旅行者",
             characterName: "星野",
             userAvatarPath: "user.png",
-            characterAvatarPath: "char.png",
-            worldbooks: [
-                Worldbook(
-                    name: "测试世界书",
-                    entries: [WorldbookEntry(content: "海边车站", keys: ["车站"])]
-                )
-            ]
+            characterAvatarPath: "char.png"
         )
 
         #expect(extraction.remainingText == "叙事正文")
@@ -1100,8 +873,6 @@ struct RoleplayCompatibilityTests {
         #expect(document.contains("scopeVariables"))
         #expect(document.contains("deleteVariable"))
         #expect(document.contains("setChatMessages"))
-        #expect(document.contains("createWorldbookEntries"))
-        #expect(document.contains("测试世界书"))
         #expect(document.contains("playAudio"))
         #expect(document.contains("getButtonEvent"))
     }
@@ -1276,7 +1047,7 @@ struct RoleplayCompatibilityTests {
     }
 
 #if canImport(JavaScriptCore)
-    @Test("HTML 兼容桥可执行变量、事件、MVU、lorebook 与宏语义")
+    @Test("HTML 兼容桥可执行变量、事件、MVU 与宏语义")
     func executeHTMLCompatibilityRuntime() throws {
         let document = RoleplayHTMLDocumentFactory.makeDocument(
             source: "<html><head></head><body></body></html>",
@@ -1286,8 +1057,6 @@ struct RoleplayCompatibilityTests {
             userAvatarPath: "",
             characterAvatarPath: "",
             chatMessages: [ChatMessage(role: .assistant, content: "状态")],
-            worldbooks: [Worldbook(name: "测试世界书", entries: [WorldbookEntry(content: "内容", keys: ["键"])])],
-            primaryWorldbookName: "测试世界书",
             scriptID: UUID(uuidString: "11111111-1111-1111-1111-111111111111")
         )
         let startMarker = "<script>(function () {"
@@ -1357,14 +1126,12 @@ struct RoleplayCompatibilityTests {
         #expect(context.evaluateScript(
             "posted.some(item => item.action === 'replace_message_variables' && item.value.schema.properties.stat_data.type === 'object')"
         )?.toBool() == true)
-        #expect(context.evaluateScript("typeof getLorebookEntries")?.toString() == "function")
         #expect(context.evaluateScript("typeof formatAsDisplayedMessage")?.toString() == "function")
         #expect(context.evaluateScript("getScriptId()")?.toString() == "11111111-1111-1111-1111-111111111111")
-        #expect(context.evaluateScript("getCharWorldbookNames('current').primary")?.toString() == "测试世界书")
         context.evaluateScript("""
         __etosReceiveEvent(
           Mvu.events.VARIABLE_UPDATE_ENDED,
-          [{ stat_data: { synced: 4 }, initialized_lorebooks: {} }, { stat_data: {} }],
+          [{ stat_data: { synced: 4 } }, { stat_data: {} }],
           'ETOS-native-mvu'
         );
         """)
@@ -1397,7 +1164,7 @@ struct RoleplayCompatibilityTests {
         var parsedMVUValue = -1;
         var commandOverride = (_variables, commands) => { commands[0].args[1] = 9; };
         eventOn(Mvu.events.COMMAND_PARSED, commandOverride);
-        Mvu.parseMessage("_.set('value', 3); // 测试; 注释", { stat_data: { value: 1 }, initialized_lorebooks: {} })
+        Mvu.parseMessage("_.set('value', 3); // 测试; 注释", { stat_data: { value: 1 } })
           .then(value => { parsedMVUValue = value.stat_data.value; });
         """)
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
@@ -1408,7 +1175,7 @@ struct RoleplayCompatibilityTests {
         var parsedMVUArrayLength = -1;
         Mvu.parseMessage(
           '<JSONPatch>[{"op":"insert","path":"/items/-","value":"b"}]</JSONPatch>',
-          { stat_data: { items: ['a'] }, initialized_lorebooks: {} }
+          { stat_data: { items: ['a'] } }
         ).then(value => { parsedMVUArrayLength = value.stat_data.items.length; });
         """)
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
@@ -1418,7 +1185,7 @@ struct RoleplayCompatibilityTests {
         var parsedMVUQuotedPath = -1;
         Mvu.parseMessage(
           `_.add('角色["名字.带点"].数值', 2 * 3); // 算术表达式`,
-          { stat_data: { 角色: { '名字.带点': { 数值: 1 } } }, initialized_lorebooks: {} }
+          { stat_data: { 角色: { '名字.带点': { 数值: 1 } } } }
         ).then(value => { parsedMVUQuotedPath = value.stat_data.角色['名字.带点'].数值; });
         """)
         RunLoop.current.run(until: Date().addingTimeInterval(0.01))
@@ -1430,7 +1197,6 @@ struct RoleplayCompatibilityTests {
           `<JSONPatch>[{"op":"insert","path":"/新增","value":2},{"op":"remove","path":"/固定"}]</JSONPatch>`,
           {
             stat_data: { 固定: 1 },
-            initialized_lorebooks: {},
             schema: {
               type: 'object',
               properties: {

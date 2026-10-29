@@ -209,11 +209,7 @@ private struct ProviderManagementContentView: View {
             }
         } message: {
             if let target = providerToDelete {
-                if LocalModelProviderBridge.isLocalProvider(target) {
-                    Text(NSLocalizedString("本地权重文件会保留；稍后重新开启本地模型时会自动恢复这个提供商。", comment: "Local provider delete disables feature message"))
-                } else {
-                    Text(String(format: NSLocalizedString("删除“%@”后无法恢复。", comment: ""), target.name))
-                }
+                Text(String(format: NSLocalizedString("删除“%@”后无法恢复。", comment: ""), target.name))
             } else {
                 Text(NSLocalizedString("此操作无法撤销。", comment: ""))
             }
@@ -366,15 +362,15 @@ private struct ProviderConfigurationTabsView: View {
     }
 
     private var allowsRemoteModelFetch: Bool {
-        !LocalModelProviderBridge.isLocalProvider(provider) && provider.apiFormat.lowercased() != "anthropic"
+        provider.apiFormat.lowercased() != "anthropic"
     }
 
     private var allowsModelTesting: Bool {
-        !LocalModelProviderBridge.isLocalProvider(provider)
+        true
     }
 
     private var allowsManualModelAdd: Bool {
-        !LocalModelProviderBridge.isLocalProvider(provider)
+        true
     }
 
     private func updateProvider(_ updatedProvider: Provider) {

@@ -38,7 +38,6 @@ final class ETOSCloudSyncAppDelegate: NSObject, UIApplicationDelegate {
     ) {
         Task { @MainActor in
             let imported = await CloudSyncManager.shared.performAutoSyncNowIfEnabled()
-            WatchSyncManager.shared.relayCloudSyncSignalToCompanion()
             completionHandler(imported ? .newData : .noData)
         }
     }
@@ -51,7 +50,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
     @UIApplicationDelegateAdaptor(ETOSCloudSyncAppDelegate.self) private var appDelegate
 #endif
     @StateObject private var launchStateMachine = AppLaunchStateMachine()
-    @StateObject private var syncManager = WatchSyncManager.shared
     @StateObject private var cloudSyncManager = CloudSyncManager.shared
     @StateObject private var mcpManager = MCPManager.shared
     @StateObject private var dailyPulseManager = DailyPulseManager.shared
@@ -91,7 +89,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
                 .networkConnectionApprovalHost()
                 .environmentObject(viewModel)
                 .environmentObject(appConfig)
-                .environmentObject(syncManager)
                 .environmentObject(cloudSyncManager)
                 .overlay {
                     if launchStateMachine.phase == .waitingForDatabaseUnlock {
@@ -162,7 +159,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
                     guard launchStateMachine.phase == .ready else { return }
                     guard !Persistence.hasPendingLaunchRecoveryRequest() else { return }
                     // 启动持久化预热完成后再触发自动同步，避免冷启动阶段覆盖未加载完的会话状态。
-                    syncManager.performAutoSyncIfEnabled()
                     cloudSyncManager.performAutoSyncIfEnabled()
                 }
         }
@@ -175,7 +171,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
     private func handleDatabaseUnlocked() {
         guard launchStateMachine.phase == .waitingForDatabaseUnlock else { return }
         appConfig.reloadFromPersistentStore()
-        viewModel.reloadPersistedDataAfterLegacyJSONMigration()
         launchStateMachine.continueAfterDatabaseUnlock()
     }
 

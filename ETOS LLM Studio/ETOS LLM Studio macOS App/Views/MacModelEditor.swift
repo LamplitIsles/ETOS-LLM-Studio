@@ -36,20 +36,16 @@ struct MacModelEditor: View {
                     TextField(NSLocalizedString("显示名称", comment: ""), text: $draft.displayName)
                     Toggle(NSLocalizedString("启用", comment: ""), isOn: $draft.isActivated)
                     TextField(NSLocalizedString("分组名称", comment: ""), text: Binding(get: { draft.pickerGroupName ?? "" }, set: { draft.pickerGroupName = Model.normalizedPickerGroupName($0) }))
-                    TextField(NSLocalizedString("model.prompt.title", comment: ""), text: $draft.prompt, axis: .vertical)
-                        .lineLimit(3...10)
                     Picker(NSLocalizedString("模型用途", comment: ""), selection: Binding(get: { draft.kind }, set: {
                         if draft.kind != $0 { draft.resetCapabilityShape(for: $0) }
                     })) {
                         ForEach(ModelKind.allCases, id: \.self) { Text($0.localizedName).tag($0) }
                     }
-                    if providerAPIFormat != LocalModelProviderBridge.apiFormat {
-                        Picker(NSLocalizedString("API 格式", comment: ""), selection: Binding(
-                            get: { draft.apiFormatOverride ?? "" }, set: { draft.apiFormatOverride = Model.normalizedAPIFormatOverride($0) }
-                        )) {
-                            Text(NSLocalizedString("跟随提供商", comment: "")).tag("")
-                            ForEach(ProviderAPIFormatOption.allCases) { Text($0.localizedName).tag($0.rawValue) }
-                        }
+                    Picker(NSLocalizedString("API 格式", comment: ""), selection: Binding(
+                        get: { draft.apiFormatOverride ?? "" }, set: { draft.apiFormatOverride = Model.normalizedAPIFormatOverride($0) }
+                    )) {
+                        Text(NSLocalizedString("跟随提供商", comment: "")).tag("")
+                        ForEach(ProviderAPIFormatOption.allCases) { Text($0.localizedName).tag($0.rawValue) }
                     }
                 } footer: {
                     Text(NSLocalizedString("模型修改先返回提供商草稿，保存提供商后生效。", comment: ""))
@@ -143,15 +139,14 @@ struct MacModelEditor: View {
             .string("model_id", label: NSLocalizedString("模型 ID", comment: ""), get: { draft.modelName }, set: { draft.modelName = $0 }),
             .string("display_name", label: NSLocalizedString("显示名称", comment: ""), get: { draft.displayName }, set: { draft.displayName = $0 }),
             .string("picker_group", label: NSLocalizedString("分组名称", comment: ""), get: { draft.pickerGroupName ?? "" }, set: { draft.pickerGroupName = Model.normalizedPickerGroupName($0) }),
-            .string("model_prompt", label: NSLocalizedString("model.prompt.title", comment: ""), get: { draft.prompt }, set: { draft.prompt = $0 }),
             .bool("enabled", label: NSLocalizedString("启用", comment: ""), get: { draft.isActivated }, set: { draft.isActivated = $0 }),
             .string("kind", label: NSLocalizedString("模型用途", comment: ""), allowedValues: ModelKind.allCases.map(\.rawValue), get: { draft.kind.rawValue }, set: {
                 if let kind = ModelKind(rawValue: $0), draft.kind != kind { draft.resetCapabilityShape(for: kind) }
             })
-        ] + (providerAPIFormat == LocalModelProviderBridge.apiFormat ? [] : [
+        ] + [
             .string("api_format_override", label: NSLocalizedString("API 格式", comment: ""), allowedValues: [""] + ProviderAPIFormatOption.allCases.map(\.rawValue),
                     get: { draft.apiFormatOverride ?? "" }, set: { draft.apiFormatOverride = Model.normalizedAPIFormatOverride($0) })
-        ]) + ModelModality.allCases.map { modality in
+        ] + ModelModality.allCases.map { modality in
             .bool("input_\(modality.rawValue)", label: modality.localizedName, get: { draft.inputModalities.contains(modality) }, set: { enabled in
                 draft.inputModalities.removeAll { $0 == modality }
                 if enabled { draft.inputModalities.append(modality) }

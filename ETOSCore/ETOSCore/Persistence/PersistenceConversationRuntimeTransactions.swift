@@ -3,135 +3,16 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 负责消息原子写入，以及跨多个运行时实体的一致性创建事务。
+// 负责跨多个运行时实体的一致性创建事务。
 // ============================================================================
 
 import Foundation
 import GRDB
 
 extension PersistenceGRDBStore {
-    // MARK: - 消息原子写入
-
-    func appendConversationMessageAtomically(
-        _ message: ChatMessage,
-        to sessionID: UUID
-    ) throws -> ChatMessage {
-        try upsertConversationMessageAtomically(message, to: sessionID)
-    }
-
-    func upsertConversationMessageAtomically(
-        _ message: ChatMessage,
-        to sessionID: UUID,
-        afterMessageID: UUID? = nil
-    ) throws -> ChatMessage {
-        flushPendingMessageWrites()
-        return try dbPool.write { db in
-            try ensureSessionExists(db, sessionID: sessionID)
-            let storedMessage = try upsertConversationMessage(
-                message, in: db, sessionID: sessionID, afterMessageID: afterMessageID
-            )
-            try db.execute(
-                sql: "UPDATE sessions SET updated_at = ? WHERE id = ?",
-                arguments: [Date().timeIntervalSince1970, sessionID.uuidString]
-            )
-            return storedMessage
-        }
-    }
-
-    func appendConversationMessagesAtomically(
-        _ messages: [ChatMessage],
-        to sessionID: UUID
-    ) throws -> [ChatMessage] {
-        flushPendingMessageWrites()
-        return try dbPool.write { db in
-            try ensureSessionExists(db, sessionID: sessionID)
-            // 同一提交的来源和回复占位一起成功或回滚，其他入口不能插入组内。
-            let storedMessages = try messages.map {
-                try upsertConversationMessage($0, in: db, sessionID: sessionID)
-            }
-            try db.execute(
-                sql: "UPDATE sessions SET updated_at = ? WHERE id = ?",
-                arguments: [Date().timeIntervalSince1970, sessionID.uuidString]
-            )
-            return storedMessages
-        }
-    }
-
-    /// 只操作调用方已经持有的事务，不刷新写队列，也不再次开启数据库写入。
-    private func upsertConversationMessage(
-        _ message: ChatMessage,
-        in db: Database,
-        sessionID: UUID,
-        afterMessageID: UUID? = nil
-    ) throws -> ChatMessage {
-        let existingMetadata = try Row.fetchOne(
-            db,
-            sql: "SELECT position, created_at FROM messages WHERE id = ? AND session_id = ?",
-            arguments: [message.id.uuidString, sessionID.uuidString]
-        )
-        let existingPosition: Int? = existingMetadata?["position"]
-        let existingCreatedAt: Double? = existingMetadata?["created_at"]
-        let position: Int
-        if let existingPosition {
-            position = existingPosition
-        } else if let afterMessageID,
-                  let anchorPosition = try Int.fetchOne(
-                      db,
-                      sql: "SELECT position FROM messages WHERE id = ? AND session_id = ?",
-                      arguments: [afterMessageID.uuidString, sessionID.uuidString]
-                  ) {
-            try db.execute(
-                sql: "UPDATE messages SET position = position + 1 WHERE session_id = ? AND position > ?",
-                arguments: [sessionID.uuidString, anchorPosition]
-            )
-            position = anchorPosition + 1
-        } else {
-            position = (try Int.fetchOne(
-                db,
-                sql: "SELECT MAX(position) FROM messages WHERE session_id = ?",
-                arguments: [sessionID.uuidString]
-            ) ?? -1) + 1
-        }
-        let record = try makePersistedMessageRecord(
-            db,
-            message: message,
-            sessionID: sessionID,
-            position: position,
-            fallbackTimestamp: Date(),
-            existingCreatedAt: existingCreatedAt
-        )
-        try upsertMessageRecord(db, record: record)
-        var storedMessage = message
-        storedMessage.id = UUID(uuidString: record.id) ?? message.id
-        return storedMessage
-    }
-
-    func deleteConversationMessageAtomically(
-        id messageID: UUID,
-        from sessionID: UUID
-    ) throws -> Bool {
-        flushPendingMessageWrites()
-        return try dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM messages WHERE id = ? AND session_id = ?",
-                arguments: [messageID.uuidString, sessionID.uuidString]
-            )
-            guard db.changesCount == 1 else { return false }
-            try db.execute(
-                sql: "UPDATE sessions SET updated_at = ? WHERE id = ?",
-                arguments: [Date().timeIntervalSince1970, sessionID.uuidString]
-            )
-            return true
-        }
-    }
-
     // MARK: - 运行时组合事务
 
     func createConversationRuntimeBundle(
-        targetSession: ChatSession? = nil,
-        targetMessages: [ChatMessage] = [],
-        groupingFolder: SessionFolder? = nil,
-        groupingRootSessionID: UUID? = nil,
         origin: ConversationOrigin?,
         capabilities: [ConversationCapability],
         targetRun: ConversationRun?,
@@ -140,10 +21,6 @@ extension PersistenceGRDBStore {
         waits: [ConversationWait],
         waitingRunID: UUID?
     ) throws {
-        guard targetSession != nil || targetMessages.isEmpty else {
-            throw ConversationRuntimeError.persistenceUnavailable
-        }
-        let normalizedTargetMessages = normalizeToolCallsPlacement(in: targetMessages)
         let targetRunConfigurationJSON: Data?
         if let targetRun {
             guard let encoded = encodeJSON(targetRun.requestConfiguration) else {
@@ -155,74 +32,6 @@ extension PersistenceGRDBStore {
         }
 
         try dbPool.write { db in
-            if let groupingFolder {
-                try db.execute(
-                    sql: """
-                    INSERT INTO session_folders (id, name, parent_id, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(id) DO NOTHING
-                    """,
-                    arguments: [
-                        groupingFolder.id.uuidString,
-                        groupingFolder.name,
-                        groupingFolder.parentID?.uuidString,
-                        groupingFolder.updatedAt.timeIntervalSince1970
-                    ]
-                )
-                if let groupingRootSessionID {
-                    let groupingRootExists = try (Int.fetchOne(
-                        db,
-                        sql: "SELECT COUNT(*) FROM sessions WHERE id = ? AND container_session_id IS NULL",
-                        arguments: [groupingRootSessionID.uuidString]
-                    ) ?? 0) == 1
-                    guard groupingRootExists else {
-                        throw ConversationRuntimeError.persistenceUnavailable
-                    }
-                    try db.execute(
-                        sql: "UPDATE sessions SET folder_id = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND container_session_id IS NULL",
-                        arguments: [
-                            groupingFolder.id.uuidString,
-                            groupingFolder.updatedAt.timeIntervalSince1970,
-                            groupingRootSessionID.uuidString
-                        ]
-                    )
-                }
-            } else if groupingRootSessionID != nil {
-                throw ConversationRuntimeError.persistenceUnavailable
-            }
-
-            if let targetSession {
-                guard !targetSession.isTemporary else {
-                    throw ConversationRuntimeError.persistenceUnavailable
-                }
-                let now = Date()
-                try db.execute(
-                    sql: "UPDATE sessions SET sort_index = sort_index + 1 WHERE is_temporary = 0"
-                )
-                try upsertSession(
-                    db,
-                    session: targetSession,
-                    sortIndex: 0,
-                    updatedAt: now,
-                    conversationSummary: nil,
-                    conversationSummaryUpdatedAt: nil,
-                    preserveExistingSummary: false
-                )
-                for (index, message) in normalizedTargetMessages.enumerated() {
-                    let record = try makePersistedMessageRecord(
-                        db,
-                        message: message,
-                        sessionID: targetSession.id,
-                        position: index,
-                        fallbackTimestamp: now.addingTimeInterval(Double(index) * 0.000_001)
-                    )
-                    guard record.id == message.id.uuidString else {
-                        throw ConversationRuntimeError.persistenceUnavailable
-                    }
-                    try upsertMessageRecord(db, record: record)
-                }
-            }
-
             if let origin {
                 try upsertConversationOrigin(db, origin: origin)
             }

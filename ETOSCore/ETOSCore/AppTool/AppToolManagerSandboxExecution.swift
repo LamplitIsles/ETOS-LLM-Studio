@@ -92,7 +92,6 @@ extension AppToolManager {
                 rootDirectory: SandboxFileToolSupport.activeRootDirectory
             )
         }
-        refreshCurrentSessionMessagesIfNeeded(mutatedPaths: [result.path])
         let payload: [String: Any] = [
             "path": result.path,
             "size": result.size,
@@ -210,9 +209,6 @@ extension AppToolManager {
                 rootDirectory: SandboxFileToolSupport.activeRootDirectory
             )
         }
-        refreshCurrentSessionMessagesIfNeeded(
-            mutatedPaths: [result.sourcePath, result.destinationPath]
-        )
         let payload: [String: Any] = [
             "sourcePath": result.sourcePath,
             "destinationPath": result.destinationPath,
@@ -247,7 +243,6 @@ extension AppToolManager {
                 rootDirectory: SandboxFileToolSupport.activeRootDirectory
             )
         }
-        refreshCurrentSessionMessagesIfNeeded(mutatedPaths: [result.destinationPath])
         let payload: [String: Any] = [
             "sourcePath": result.sourcePath,
             "destinationPath": result.destinationPath,

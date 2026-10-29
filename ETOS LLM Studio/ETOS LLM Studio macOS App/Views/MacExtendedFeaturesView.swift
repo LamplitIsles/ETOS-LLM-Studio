@@ -31,8 +31,6 @@ struct MacExtendedFeaturesView: View {
                 NavigationLink { BatchTasksView(isActive: available) }
                     label: { Label(NSLocalizedString("batch.title", value: "Batch Tasks", comment: "批量任务入口"), systemImage: "tray.full") }
                     .accessibilityIdentifier("batch.tasks.entry")
-                NavigationLink { MacLocalModelLibraryView(isActive: available, library: workspace.localModels) }
-                    label: { Label(NSLocalizedString("本地模型", comment: ""), systemImage: "cpu") }
                 NavigationLink { MacShellView(isActive: available, model: workspace.linux) }
                     label: { Label(NSLocalizedString("mac.shell.title", value: "Local Shell", comment: ""), systemImage: "terminal") }
             }
@@ -78,7 +76,6 @@ struct MacExtendedFeaturesView: View {
                 .readOnly("gallery_requires_navigation", label: NSLocalizedString("图片相册", comment: ""), value: { .bool(true) }),
                 .readOnly("slash_commands_require_navigation", label: NSLocalizedString("快速指令", comment: ""), value: { .bool(true) }),
                 .readOnly("batch_tasks_require_navigation", label: NSLocalizedString("batch.title", value: "Batch Tasks", comment: "批量任务入口"), value: { .bool(true) }),
-                .readOnly("local_models_require_navigation", label: NSLocalizedString("本地模型", comment: ""), value: { .bool(true) }),
                 .readOnly("shell_requires_navigation", label: NSLocalizedString("mac.shell.title", value: "Local Shell", comment: ""), value: { .bool(true) }),
                 .readOnly("backup_requires_navigation", label: NSLocalizedString("快照备份", comment: ""), value: { .bool(true) }),
                 .readOnly("sync_requires_navigation", label: NSLocalizedString("iCloud 漫游同步", comment: ""), value: { .bool(true) }),

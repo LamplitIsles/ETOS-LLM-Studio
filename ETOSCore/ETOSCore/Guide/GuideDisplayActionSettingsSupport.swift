@@ -16,11 +16,6 @@ public enum GuideDisplayActionSettingsSupport {
         )
     }
 
-    public static let watchInputActionsSchema: JSONValue = stringArraySchema(
-        values: WatchInputQuickAction.allCases.map(\.rawValue),
-        minimumCount: 0
-    )
-
     public static func messageActionItemsValue(_ items: [MessageActionBarItem]) -> JSONValue {
         .array(items.map { .string($0.rawValue) })
     }
@@ -31,18 +26,6 @@ public enum GuideDisplayActionSettingsSupport {
 
     public static func messageActionItems(from value: JSONValue) throws -> [MessageActionBarItem] {
         try uniqueRawValues(value, transform: MessageActionBarItem.init(rawValue:)).compactMap(MessageActionBarItem.init(rawValue:))
-    }
-
-    public static func watchInputActionsValue(_ items: [WatchInputQuickAction]) -> JSONValue {
-        .array(items.map { .string($0.rawValue) })
-    }
-
-    public static func normalizeWatchInputActions(_ value: JSONValue) throws -> JSONValue {
-        .array(try uniqueRawValues(value, transform: WatchInputQuickAction.init(rawValue:)).map(JSONValue.string))
-    }
-
-    public static func watchInputActions(from value: JSONValue) throws -> [WatchInputQuickAction] {
-        try uniqueRawValues(value, transform: WatchInputQuickAction.init(rawValue:)).compactMap(WatchInputQuickAction.init(rawValue:))
     }
 
     private static func stringArraySchema(values: [String], minimumCount: Int) -> JSONValue {

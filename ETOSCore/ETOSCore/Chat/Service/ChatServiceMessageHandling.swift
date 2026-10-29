@@ -23,9 +23,6 @@ extension ChatService {
             return
         }
         var messages = messagesSnapshot(for: resolvedSessionID)
-        let originalMessages = messages
-        let originalMessagesByID = Dictionary(uniqueKeysWithValues: originalMessages.map { ($0.id, $0) })
-        var forcedMutationMessageIDs = Set<UUID>()
 
         // 格式化错误内容，使其更简洁易读
         let (formattedContent, fullContent) = formatErrorContent(content, httpStatusCode: httpStatusCode)
@@ -82,9 +79,6 @@ extension ChatService {
             let shouldPreserveLoadingMessage = messageHasDisplayablePayload(loadingMessage)
 
             if shouldPreserveLoadingMessage {
-                // 流式正文只存在于运行期快照时，它与 originalMessages 相等，但磁盘仍可能是空占位。
-                // 错误收尾必须强制落盘该助手消息，随后才能追加错误气泡。
-                forcedMutationMessageIDs.insert(loadingMessage.id)
                 messages.insert(makeErrorMessage(loadingMessage.requestedAt, metadata: loadingAttemptMetadata), at: loadingIndex + 1)
                 logger.error("流式内容已保留，并追加错误消息。")
             } else {
@@ -113,18 +107,7 @@ extension ChatService {
 
         messages = messages.flatMap(ChatMessageAtomicContentSupport.atomized)
 
-        let mutations: [(message: ChatMessage, afterMessageID: UUID?)] = messages.indices.compactMap { index in
-            let message = messages[index]
-            if originalMessagesByID[message.id] == message,
-               !forcedMutationMessageIDs.contains(message.id) {
-                return nil
-            }
-            let afterMessageID = index > messages.startIndex ? messages[messages.index(before: index)].id : nil
-            return (message, afterMessageID)
-        }
-        // 先排入有序写队列再发布；落盘结束不再重发旧消息，避免覆盖用户刚选择的重试版本。
         storeRuntimeMessagesSnapshot(messages, for: resolvedSessionID)
-        Persistence.enqueueConversationMessageUpserts(mutations, for: resolvedSessionID)
         publishMessagesIfCurrentSession(messages, for: resolvedSessionID)
     }
 
@@ -169,16 +152,7 @@ extension ChatService {
     }
 
     func applyTranscriptionResult(_ transcript: String, toMessageWithID messageID: UUID, in sessionID: UUID, placeholder: String) async {
-        let cachedMessage = runtimeMessagesSnapshot(for: sessionID)?.first(where: { $0.id == messageID })
-        let persistedMessage: ChatMessage?
-        if cachedMessage == nil {
-            persistedMessage = await Task.detached(priority: .utility) {
-                Persistence.loadMessages(for: sessionID).first(where: { $0.id == messageID })
-            }.value
-        } else {
-            persistedMessage = nil
-        }
-        guard var message = cachedMessage ?? persistedMessage else {
+        guard var message = runtimeMessagesSnapshot(for: sessionID)?.first(where: { $0.id == messageID }) else {
             logger.warning("未找到需要更新的语音消息（可能会话已被切换或删除）。")
             return
         }
@@ -191,21 +165,15 @@ extension ChatService {
             return
         }
 
-        let sessionsToPersist = await MainActor.run { () -> [ChatSession]? in
+        await MainActor.run {
             var sessions = chatSessionsSubject.value
             guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }),
-                  sessions[sessionIndex].name == placeholder else { return nil }
+                  sessions[sessionIndex].name == placeholder else { return }
             sessions[sessionIndex].name = String(transcript.prefix(20))
             chatSessionsSubject.send(sessions)
             if currentSessionSubject.value?.id == sessionID {
                 currentSessionSubject.send(sessions[sessionIndex])
             }
-            return sessions
-        }
-        if let sessionsToPersist {
-            await Task.detached(priority: .utility) {
-                Persistence.saveChatSessions(sessionsToPersist)
-            }.value
         }
     }
 

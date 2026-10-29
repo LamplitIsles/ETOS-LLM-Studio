@@ -10,57 +10,6 @@
 import Darwin
 import Foundation
 
-public final class LocalLinuxPreparedMountSet: @unchecked Sendable {
-    public let mounts: [LocalLinuxBridgeMount]
-    private let descriptors: [Int32]
-
-    init(mounts: [LocalLinuxBridgeMount], descriptors: [Int32]) {
-        self.mounts = mounts
-        self.descriptors = descriptors
-    }
-
-    deinit {
-        descriptors.forEach { close($0) }
-    }
-}
-
-public final class LocalLinuxMountLease: @unchecked Sendable {
-    public let mountID: UUID
-    private var bridgeLease: iSHAppleBridgeMountLease?
-    private let releaseHandler: @Sendable (UUID) -> Void
-    private let lock = NSLock()
-    private var didRelease = false
-
-    fileprivate init(
-        bridgeLease: iSHAppleBridgeMountLease,
-        releaseHandler: @escaping @Sendable (UUID) -> Void
-    ) {
-        mountID = bridgeLease.mountID
-        self.bridgeLease = bridgeLease
-        self.releaseHandler = releaseHandler
-    }
-
-    deinit {
-        release()
-    }
-
-    public func release() {
-        lock.lock()
-        guard !didRelease else {
-            lock.unlock()
-            return
-        }
-        didRelease = true
-        var lease = bridgeLease
-        bridgeLease = nil
-        lock.unlock()
-        // native lease 必须先归还，随后才能安全尝试移除临时挂载。
-        withExtendedLifetime(lease) {}
-        lease = nil
-        releaseHandler(mountID)
-    }
-}
-
 public final class LocalLinuxDirectoryAccess: @unchecked Sendable {
     public let url: URL
     private let securityScopedURL: URL
@@ -99,46 +48,15 @@ public actor LocalLinuxMountManager {
         "app://\(appMountsDirectoryName)/\(id.uuidString.lowercased())"
     }
 
-    private let storage: LocalLinuxStorageManager
-    private let bridge: any LocalLinuxMountBridge
     private let resolveBookmark: @Sendable (Data) throws -> (url: URL, isStale: Bool)
     private var mutatingMountIDs: Set<UUID> = []
-    private var scopedResources: [UUID: LocalLinuxDirectoryAccess] = [:]
-    private var runtimeGeneration = UUID()
-    private struct TransientSkillMount {
-        let id: UUID
-        let canonicalHostPath: String
-        var leaseCount: Int
-    }
-    private var transientSkillMounts: [String: TransientSkillMount] = [:]
 
-    public init(
-        storage: LocalLinuxStorageManager = .shared,
-        bridge: iSHAppleBridgeAdapter = .shared
-    ) {
-        self.storage = storage
-        self.bridge = bridge
+    public init() {
         resolveBookmark = { try LocalLinuxExternalDirectory.resolveBookmark($0) }
-    }
-
-    init(
-        storage: LocalLinuxStorageManager,
-        bridge: any LocalLinuxMountBridge,
-        resolveBookmark: @escaping @Sendable (Data) throws -> (url: URL, isStale: Bool) = { try LocalLinuxExternalDirectory.resolveBookmark($0) }
-    ) {
-        self.storage = storage
-        self.bridge = bridge
-        self.resolveBookmark = resolveBookmark
     }
 
     public func records() -> [LocalLinuxMountRecord] {
         Persistence.loadLocalLinuxMounts()
-    }
-
-    /// 文件授权可用不代表已经挂入当前内核；数据库恢复和宿主文件浏览都会改变前者。
-    public func activeExternalMountIDs() async throws -> [UUID] {
-        let activeIDs = Set(try await bridge.mounts().filter { $0.state == 2 }.map(\.id))
-        return records().filter { $0.isEnabled && activeIDs.contains($0.id) }.map(\.id)
     }
 
     /// 为宿主界面保留一次安全作用域访问，调用方应在文件浏览界面存续期间持有返回值。
@@ -167,18 +85,7 @@ public actor LocalLinuxMountManager {
             access: access,
             guestPath: "/mnt/etos/\(id.uuidString.lowercased())"
         )
-        // 新记录只有在即时挂载成功后才发布，失败重试不会不断留下同名入口。
-        if await bridge.runtimePhase() == 2 {
-            let prepared = try prepareExternalMount(record, persistState: false)
-            defer { close(prepared.descriptor) }
-            try await bridge.addMount(prepared.mount)
-            scopedResources[id] = prepared.resource
-        }
         guard Persistence.saveLocalLinuxMount(record) else {
-            if scopedResources[id] != nil {
-                try await bridge.removeMount(id: id, force: false)
-                scopedResources[id] = nil
-            }
             throw LocalLinuxRuntimeError.runtimeUnavailable(
                 NSLocalizedString("无法保存 Linux 挂载。", comment: "Save Linux mount failure")
             )
@@ -207,7 +114,6 @@ public actor LocalLinuxMountManager {
         guard var record = records().first(where: { $0.id == id }) else {
             throw LocalLinuxRuntimeError.invalidPath(id.uuidString)
         }
-        let original = record
         try validateExpected(expected, current: record)
         record.bookmark = try LocalLinuxExternalDirectory.createBookmark(for: url)
         record.displayName = url.lastPathComponent
@@ -215,24 +121,6 @@ public actor LocalLinuxMountManager {
         record.authorizationState = .available
         record.updatedAt = Date()
 
-        if await bridge.runtimePhase() == 2, record.isEnabled {
-            var didRemovePreviousMount = false
-            do {
-                // 候选书签与权限在切换成功前不能写进旧记录；EBUSY 时旧挂载仍在使用。
-                let prepared = try prepareExternalMount(record, persistState: false)
-                defer { close(prepared.descriptor) }
-                try await bridge.removeMount(id: id, force: false)
-                didRemovePreviousMount = true
-                scopedResources[id] = nil
-                try await bridge.addMount(prepared.mount)
-                scopedResources[id] = prepared.resource
-            } catch {
-                if didRemovePreviousMount {
-                    persistAuthorizationState(original, state: .unavailable)
-                }
-                throw error
-            }
-        }
         guard Persistence.saveLocalLinuxMount(record) else {
             throw LocalLinuxRuntimeError.runtimeUnavailable(
                 NSLocalizedString("无法保存重新授权的 Linux 挂载。", comment: "Save reauthorized Linux mount failure")
@@ -249,27 +137,6 @@ public actor LocalLinuxMountManager {
         }
         try validateExpected(expected, current: record)
         guard record.isEnabled != isEnabled else { return record }
-        if await bridge.runtimePhase() == 2 {
-            if isEnabled {
-                do {
-                    let prepared = try prepareExternalMount(record)
-                    defer { close(prepared.descriptor) }
-                    try await bridge.addMount(prepared.mount)
-                    scopedResources[id] = prepared.resource
-                    record.authorizationState = .available
-                    // 准备目录可能已自动刷新书签，启用配置不能再写回解析前的旧副本。
-                    record.bookmark = records().first(where: { $0.id == id })?.bookmark ?? record.bookmark
-                } catch {
-                    if records().first(where: { $0.id == id })?.authorizationState == .materializing {
-                        persistAuthorizationState(record, state: .unavailable)
-                    }
-                    throw error
-                }
-            } else {
-                try await bridge.removeMount(id: id, force: false)
-                scopedResources[id] = nil
-            }
-        }
         record.isEnabled = isEnabled
         record.updatedAt = Date()
         guard Persistence.saveLocalLinuxMount(record) else {
@@ -280,17 +147,10 @@ public actor LocalLinuxMountManager {
         return records().first(where: { $0.id == id }) ?? record
     }
 
-    public func delete(id: UUID, force: Bool, expected: LocalLinuxMountRecord? = nil) async throws {
+    public func delete(id: UUID, expected: LocalLinuxMountRecord? = nil) async throws {
         try beginMutation(id: id)
         defer { mutatingMountIDs.remove(id) }
         if let expected { try validateExpected(expected, current: records().first { $0.id == id }) }
-        if force {
-            await LocalLinuxJobScheduler.shared.cancelJobs(usingMountID: id)
-        }
-        if await bridge.runtimePhase() == 2 {
-            try await bridge.removeMount(id: id, force: force)
-        }
-        scopedResources[id] = nil
         guard Persistence.deleteLocalLinuxMount(id: id) else {
             throw LocalLinuxRuntimeError.runtimeUnavailable(
                 NSLocalizedString("无法删除 Linux 挂载。", comment: "Delete Linux mount failure")
@@ -303,287 +163,6 @@ public actor LocalLinuxMountManager {
         guard current?.matchesConfiguration(expected) == true else {
             throw LocalLinuxRuntimeError.runtimeUnavailable(NSLocalizedString("挂载配置已变化，请刷新后重试。", comment: ""))
         }
-    }
-
-    public func prepareStartupMounts() async throws -> LocalLinuxPreparedMountSet {
-        let layout = try await storage.prepareLayout()
-        var mounts: [LocalLinuxBridgeMount] = []
-        var descriptors: [Int32] = []
-        var didFinish = false
-        defer {
-            if !didFinish { descriptors.forEach { close($0) } }
-        }
-
-        try appendInternalMount(
-            id: Self.homeMountID,
-            url: layout.home,
-            guestDirectory: Self.homeMountGuestPath,
-            mounts: &mounts,
-            descriptors: &descriptors
-        )
-        try appendInternalMount(
-            id: Self.workspaceMountID,
-            url: layout.workspaces,
-            guestDirectory: Self.workspaceMountGuestPath,
-            mounts: &mounts,
-            descriptors: &descriptors
-        )
-        // Shared 由 runtime 的 sharedDirectory 参数保留挂到 /mnt/shared；
-        // 动态 mount registry 会拒绝再次占用该路径。
-        if let iCloudURL = try await storage.iCloudLinuxDirectory() {
-            try appendInternalMount(
-                id: Self.iCloudMountID,
-                url: iCloudURL,
-                guestDirectory: Self.iCloudGuestPath,
-                mounts: &mounts,
-                descriptors: &descriptors
-            )
-        }
-
-        for record in records() where record.isEnabled {
-            do {
-                let prepared = try prepareExternalMount(record)
-                mounts.append(prepared.mount)
-                descriptors.append(prepared.descriptor)
-                scopedResources[record.id] = prepared.resource
-                // prepareExternalMount 会写入 materializing，原先已 available 的记录也必须收尾。
-                persistAuthorizationState(record, state: .available)
-            } catch {
-                // prepareExternalMount 已区分书签失效、物化失败等状态。
-            }
-        }
-        didFinish = true
-        return LocalLinuxPreparedMountSet(mounts: mounts, descriptors: descriptors)
-    }
-
-    public func mountNow(id: UUID) async throws {
-        try beginMutation(id: id)
-        defer { mutatingMountIDs.remove(id) }
-        guard let record = records().first(where: { $0.id == id && $0.isEnabled }) else {
-            throw LocalLinuxRuntimeError.invalidPath(id.uuidString)
-        }
-        // 重复恢复不能覆盖已有挂载，也不能提前释放它持有的安全作用域。
-        if let mounted = try await bridge.mounts().first(where: { $0.id == id }), mounted.state == 2 {
-            return
-        }
-        do {
-            let prepared = try prepareExternalMount(record)
-            defer { close(prepared.descriptor) }
-            try await bridge.addMount(prepared.mount)
-            scopedResources[id] = prepared.resource
-        } catch {
-            if records().first(where: { $0.id == id })?.authorizationState == .materializing {
-                persistAuthorizationState(record, state: .unavailable)
-            }
-            throw error
-        }
-        persistAuthorizationState(record, state: .available)
-    }
-
-    public func acquireLeases(ids: [UUID]) async throws -> [LocalLinuxMountLease] {
-        var leases: [LocalLinuxMountLease] = []
-        do {
-            for id in ids {
-                let bridgeLease: iSHAppleBridgeMountLease
-                do {
-                    bridgeLease = try await bridge.acquireMountLease(id: id)
-                } catch LocalLinuxRuntimeError.bridgeFailure(_, let code) where code == LocalLinuxBridgeConstants.linuxENOENT {
-                    // 启动时云目录可能暂时不可用，宿主文件浏览也可能只恢复授权而没有
-                    // 挂入内核。仅恢复仍启用的记录一次；失败就中止，不能写进裸挂载点。
-                    try await mountNow(id: id)
-                    bridgeLease = try await bridge.acquireMountLease(id: id)
-                }
-                incrementPersistedLeaseCount(id: id)
-                leases.append(
-                    LocalLinuxMountLease(bridgeLease: bridgeLease) { [weak self, runtimeGeneration] releasedID in
-                        Task { await self?.decrementPersistedLeaseCount(id: releasedID, generation: runtimeGeneration) }
-                    }
-                )
-            }
-            return leases
-        } catch {
-            leases.removeAll()
-            throw error
-        }
-    }
-
-    /// Skill 包只在持有租约的执行或 Agent Run 存续期间挂载，且 guest 永远只能只读访问。
-    public func acquireReadOnlySkillMount(
-        skillID: String,
-        hostDirectory: URL,
-        guestDirectory: String? = nil
-    ) async throws -> LocalLinuxMountLease {
-        guard SkillPaths.isValidSkillName(skillID) else {
-            throw SkillExecutionError.invalidScriptPath
-        }
-        let canonicalDirectory = hostDirectory.resolvingSymlinksInPath().standardizedFileURL
-        let skillGuestRoot = "/mnt/etos/skills/\(skillID)"
-        let guestPath = guestDirectory ?? skillGuestRoot
-        if guestPath != skillGuestRoot {
-            let prefix = skillGuestRoot + "/"
-            guard guestPath.hasPrefix(prefix) else {
-                throw SkillExecutionError.invalidScriptPath
-            }
-            let suffix = String(guestPath.dropFirst(prefix.count))
-            guard !suffix.isEmpty,
-                  suffix.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({
-                      !$0.isEmpty && $0 != "." && $0 != ".."
-                  }) else {
-                throw SkillExecutionError.invalidScriptPath
-            }
-        }
-        if var existing = transientSkillMounts[guestPath] {
-            guard existing.canonicalHostPath == canonicalDirectory.path else {
-                throw LocalLinuxRuntimeError.runtimeUnavailable(
-                    NSLocalizedString("同名 Skill 的只读挂载指向不同目录。", comment: "Conflicting transient Skill mount")
-                )
-            }
-            let bridgeLease = try await bridge.acquireMountLease(id: existing.id)
-            existing.leaseCount += 1
-            transientSkillMounts[guestPath] = existing
-            return LocalLinuxMountLease(bridgeLease: bridgeLease) { [weak self] releasedID in
-                Task { await self?.releaseTransientSkillMount(guestPath: guestPath, mountID: releasedID) }
-            }
-        }
-
-        let descriptor = canonicalDirectory.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
-        }
-        guard descriptor >= 0 else {
-            throw LocalLinuxRuntimeError.runtimeUnavailable(
-                NSLocalizedString("无法打开 Skill 目录用于只读挂载。", comment: "Open Skill directory for read-only mount failure")
-            )
-        }
-        defer { close(descriptor) }
-
-        let id = UUID()
-        do {
-            try await bridge.addMount(
-                LocalLinuxBridgeMount(
-                    id: id,
-                    hostDirectoryDescriptor: descriptor,
-                    guestDirectory: guestPath,
-                    access: .readOnly
-                )
-            )
-            let bridgeLease = try await bridge.acquireMountLease(id: id)
-            transientSkillMounts[guestPath] = TransientSkillMount(
-                id: id,
-                canonicalHostPath: canonicalDirectory.path,
-                leaseCount: 1
-            )
-            return LocalLinuxMountLease(bridgeLease: bridgeLease) { [weak self] releasedID in
-                Task { await self?.releaseTransientSkillMount(guestPath: guestPath, mountID: releasedID) }
-            }
-        } catch {
-            try? await bridge.removeMount(id: id, force: false)
-            throw error
-        }
-    }
-
-    public func releaseAuthorization(id: UUID) {
-        scopedResources[id] = nil
-    }
-
-    public func releaseAllAuthorizations() {
-        scopedResources.removeAll()
-    }
-
-    public func runtimeDidStop() {
-        runtimeGeneration = UUID()
-        scopedResources.removeAll()
-        transientSkillMounts.removeAll()
-        resetStaleLeaseCountsAfterLaunch()
-    }
-
-    public func resetStaleLeaseCountsAfterLaunch() {
-        _ = Persistence.resetLocalLinuxMountLeaseCounts()
-    }
-
-    private func incrementPersistedLeaseCount(id: UUID) {
-        _ = Persistence.updateLocalLinuxMountLeaseCount(id: id, delta: 1)
-    }
-
-    private func decrementPersistedLeaseCount(id: UUID, generation: UUID) {
-        // release 的 actor 回调可能迟到；停止前的租约不能减少恢复数据库后的计数。
-        guard generation == runtimeGeneration else { return }
-        _ = Persistence.updateLocalLinuxMountLeaseCount(id: id, delta: -1)
-    }
-
-    private func releaseTransientSkillMount(guestPath: String, mountID: UUID) async {
-        // 重启前排队的释放回调不能减少新内核中同一路径的租约。
-        guard var mount = transientSkillMounts[guestPath], mount.id == mountID else { return }
-        mount.leaseCount -= 1
-        if mount.leaseCount > 0 {
-            transientSkillMounts[guestPath] = mount
-            return
-        }
-        do {
-            try await bridge.removeMount(id: mount.id, force: false)
-            transientSkillMounts[guestPath] = nil
-        } catch {
-            // 仍有 bridge 引用时保留记录；下一次释放或取得时不会覆盖同一路径。
-            mount.leaseCount = 0
-            transientSkillMounts[guestPath] = mount
-        }
-    }
-
-    private func appendInternalMount(
-        id: UUID,
-        url: URL,
-        guestDirectory: String,
-        mounts: inout [LocalLinuxBridgeMount],
-        descriptors: inout [Int32]
-    ) throws {
-        let descriptor = openDirectory(url)
-        guard descriptor >= 0 else {
-            throw LocalLinuxRuntimeError.runtimeUnavailable(
-                String(
-                    format: NSLocalizedString("无法打开 Linux 目录：%@", comment: "Open Linux host directory failure"),
-                    url.lastPathComponent
-                )
-            )
-        }
-        descriptors.append(descriptor)
-        mounts.append(
-            LocalLinuxBridgeMount(
-                id: id,
-                hostDirectoryDescriptor: descriptor,
-                guestDirectory: guestDirectory,
-                access: .readWrite
-            )
-        )
-    }
-
-    private func prepareExternalMount(
-        _ record: LocalLinuxMountRecord,
-        persistState: Bool = true
-    ) throws -> (mount: LocalLinuxBridgeMount, descriptor: Int32, resource: LocalLinuxDirectoryAccess) {
-        // 恢复的记录属于外部输入，不能占用 runtime 保留的内部挂载路径或身份。
-        guard record.guestPath == "/mnt/etos/\(record.id.uuidString.lowercased())",
-              ![Self.homeMountID, Self.workspaceMountID, Self.sharedMountID, Self.iCloudMountID].contains(record.id) else {
-            if persistState { persistAuthorizationState(record, state: .unavailable) }
-            throw LocalLinuxRuntimeError.invalidPath(record.guestPath)
-        }
-        let resource = try prepareExternalDirectory(record, persistState: persistState)
-        let descriptor = openDirectory(resource.url)
-        guard descriptor >= 0 else {
-            if persistState { persistAuthorizationState(record, state: .unavailable) }
-            throw LocalLinuxRuntimeError.runtimeUnavailable(
-                NSLocalizedString("无法打开已授权目录。", comment: "Open authorized Linux directory failure")
-            )
-        }
-        return (
-            LocalLinuxBridgeMount(
-                id: record.id,
-                hostDirectoryDescriptor: descriptor,
-                guestDirectory: record.guestPath,
-                access: record.access
-            ),
-            descriptor,
-            resource
-        )
     }
 
     private func prepareExternalDirectory(
@@ -661,10 +240,4 @@ public actor LocalLinuxMountManager {
         }
     }
 
-    private func openDirectory(_ url: URL) -> Int32 {
-        url.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return -1 }
-            return open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        }
-    }
 }

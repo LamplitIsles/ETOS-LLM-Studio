@@ -77,12 +77,6 @@ enum ConversationToolDefinitions {
                         "description": .string(NSLocalizedString("是否把子代理隐藏并存放在当前主会话内部；默认开启。关闭后会创建可见会话并自动归入主会话文件夹。", comment: "Create hidden conversation"))
                     ]),
                     "model_identifier": stringProperty(NSLocalizedString("可选的已激活聊天模型标识；省略、留空或填写 self 时使用当前模型。", comment: "Create conversation model identifier")),
-                    "system_prompt": stringProperty(NSLocalizedString("新会话的系统提示词内容。", comment: "Create conversation system prompt")),
-                    "system_prompt_mode": promptModeProperty(),
-                    "topic_prompt": stringProperty(NSLocalizedString("新会话的话题提示词内容。", comment: "Create conversation topic prompt")),
-                    "topic_prompt_mode": promptModeProperty(),
-                    "enhanced_prompt": stringProperty(NSLocalizedString("新会话的增强提示词内容。", comment: "Create conversation enhanced prompt")),
-                    "enhanced_prompt_mode": promptModeProperty()
                 ]),
                 "required": .array([
                     .string("initial_message"),
@@ -206,13 +200,6 @@ enum ConversationToolDefinitions {
         )
     }
 
-    private static func promptModeProperty() -> JSONValue {
-        enumProperty(
-            values: ["inherit", "append", "replace"],
-            description: NSLocalizedString("继承、追加或替换被继承的会话提示词。", comment: "Conversation prompt inheritance mode")
-        )
-    }
-
     private static func listMaximumProperty() -> JSONValue {
         .dictionary([
             "type": .string("integer"),
@@ -272,12 +259,6 @@ struct CreateConversationToolArguments: Decodable {
     let executionMode: String
     let hidden: Bool?
     let modelIdentifier: String?
-    let systemPrompt: String?
-    let systemPromptMode: String?
-    let topicPrompt: String?
-    let topicPromptMode: String?
-    let enhancedPrompt: String?
-    let enhancedPromptMode: String?
 
     enum CodingKeys: String, CodingKey {
         case initialMessage = "initial_message"
@@ -287,12 +268,6 @@ struct CreateConversationToolArguments: Decodable {
         case executionMode = "execution_mode"
         case hidden
         case modelIdentifier = "model_identifier"
-        case systemPrompt = "system_prompt"
-        case systemPromptMode = "system_prompt_mode"
-        case topicPrompt = "topic_prompt"
-        case topicPromptMode = "topic_prompt_mode"
-        case enhancedPrompt = "enhanced_prompt"
-        case enhancedPromptMode = "enhanced_prompt_mode"
     }
 
     var hidesConversation: Bool {

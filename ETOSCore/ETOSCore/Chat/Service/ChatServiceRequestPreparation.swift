@@ -17,11 +17,6 @@ extension ChatService {
     }
 
     struct AuxiliaryContextPolicy {
-        let enableMemory: Bool
-        let enableMemoryWrite: Bool
-        let enableMemoryActiveRetrieval: Bool
-        let includeMemoryTools: Bool
-        let includeMemoryManagementTools: Bool
         let includeBuiltInAppTools: Bool
         let includeMCPTools: Bool
         let includeShortcutTools: Bool
@@ -29,30 +24,13 @@ extension ChatService {
     }
 
     func auxiliaryContextPolicy(
-        for session: ChatSession?,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool
+        for session: ChatSession?
     ) -> AuxiliaryContextPolicy {
-        let memoryIsolationActive = session?.isMemoryContextIsolationActive ?? false
         let toolIsolationActive = session?.isToolContextIsolationActive ?? false
-        let temporaryMemoryIsolationActive = isTemporaryChatMemoryIsolated(for: session?.id)
-        let shouldIsolateMemory = memoryIsolationActive || temporaryMemoryIsolationActive
-
-        if memoryIsolationActive {
-            logger.info("当前会话已屏蔽记忆，将跳过长期记忆上下文与记忆工具。")
-        } else if temporaryMemoryIsolationActive {
-            logger.info("当前临时对话已启用记忆隔离，将屏蔽长期记忆上下文与记忆工具。")
-        }
         if toolIsolationActive {
             logger.info("当前会话已屏蔽工具，将跳过工具定义与历史工具调用。")
         }
         return AuxiliaryContextPolicy(
-            enableMemory: enableMemory && !shouldIsolateMemory,
-            enableMemoryWrite: enableMemoryWrite && !shouldIsolateMemory,
-            enableMemoryActiveRetrieval: enableMemoryActiveRetrieval && !shouldIsolateMemory,
-            includeMemoryTools: !toolIsolationActive,
-            includeMemoryManagementTools: !shouldIsolateMemory,
             includeBuiltInAppTools: !toolIsolationActive,
             includeMCPTools: !toolIsolationActive,
             includeShortcutTools: !toolIsolationActive,
@@ -62,19 +40,11 @@ extension ChatService {
 
     func resolveRequestTooling(
         for session: ChatSession?,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool,
         localAgentContext: AgentRuntimeContext? = nil,
         agentCapabilities: AgentToolCapabilityPolicy? = nil,
         selectedAgentMCPServerIDs: Set<UUID>? = nil
     ) async -> (tools: [InternalToolDefinition]?, policy: AuxiliaryContextPolicy) {
-        let policy = auxiliaryContextPolicy(
-            for: session,
-            enableMemory: enableMemory,
-            enableMemoryWrite: enableMemoryWrite,
-            enableMemoryActiveRetrieval: enableMemoryActiveRetrieval
-        )
+        let policy = auxiliaryContextPolicy(for: session)
 
         var resolvedTools: [InternalToolDefinition] = []
         let includeAgentTools = agentCapabilities?.preparesAgentRun
@@ -88,12 +58,6 @@ extension ChatService {
         let selectedServerIDs = includeLocalLinuxTools
             ? (selectedAgentMCPServerIDs ?? localAgentContext.map { Set($0.selectedMCPServerIDs) })
             : nil
-        if policy.includeMemoryTools && policy.enableMemory && policy.enableMemoryWrite {
-            resolvedTools.append(saveMemoryTool)
-        }
-        if policy.includeMemoryTools && policy.enableMemory && policy.enableMemoryActiveRetrieval && resolvedMemoryTopK() > 0 {
-            resolvedTools.append(searchMemoryTool)
-        }
         if policy.includeBuiltInAppTools {
             let builtInAppTools = await MainActor.run { AppToolManager.shared.builtInToolsForLLM() }
             resolvedTools.append(contentsOf: builtInAppTools)
@@ -107,10 +71,7 @@ extension ChatService {
                     selectedServerIDs: selectedServerIDs
                 )
             }
-            resolvedTools.append(contentsOf: mcpTools.filter { tool in
-                policy.includeMemoryManagementTools
-                    || MCPBuiltInAppToolServer.category(for: tool.name) != .memory
-            })
+            resolvedTools.append(contentsOf: mcpTools)
         }
         if policy.includeShortcutTools {
             let shortcutTools = await MainActor.run { ShortcutToolManager.shared.chatToolsForLLM() }
@@ -218,10 +179,8 @@ extension ChatService {
         let normalizedMessages = normalizedMessagesForToolCallChain(baseMessages)
         let messageRegexRules = MessageRegexRuleStore.currentRules()
         let isToolIsolationActive = session?.isToolContextIsolationActive == true
-        let isMemoryIsolationActive = session?.isMemoryContextIsolationActive == true
-            || isTemporaryChatMemoryIsolated(for: session?.id)
 
-        if !isToolIsolationActive && !isMemoryIsolationActive {
+        if !isToolIsolationActive {
             guard !messageRegexRules.isEmpty else {
                 return normalizedMessages
             }
@@ -233,21 +192,12 @@ extension ChatService {
                 if isToolIsolationActive {
                     return nil
                 }
-                if message.toolCalls?.contains(where: { isMemoryToolName($0.toolName) }) == true {
-                    return nil
-                }
             }
 
             var sanitized = message
             if isToolIsolationActive {
                 sanitized.toolCalls = nil
                 sanitized.toolCallsPlacement = nil
-            } else if let toolCalls = sanitized.toolCalls {
-                let retainedToolCalls = toolCalls.filter { !isMemoryToolName($0.toolName) }
-                sanitized.toolCalls = retainedToolCalls.isEmpty ? nil : retainedToolCalls
-                if retainedToolCalls.isEmpty {
-                    sanitized.toolCallsPlacement = nil
-                }
             }
 
             if sanitized.role == .assistant,
@@ -260,12 +210,6 @@ extension ChatService {
             }
             return applyMessageRegexRules(to: sanitized, rules: messageRegexRules, mode: .sendOnly)
         }
-    }
-
-    private func isMemoryToolName(_ name: String) -> Bool {
-        name == "save_memory"
-            || name == "search_memory"
-            || MCPBuiltInAppToolServer.category(for: name) == .memory
     }
 
     func limitedChatHistory(_ messages: [ChatMessage], maxMessages: Int) -> [ChatMessage] {

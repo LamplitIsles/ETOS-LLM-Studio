@@ -7,6 +7,7 @@
 // ============================================================================
 
 import Foundation
+import Compression
 import ZIPFoundation
 
 public enum RoleplayCardImportError: LocalizedError {
@@ -28,18 +29,15 @@ public enum RoleplayCardImportError: LocalizedError {
 
 public struct RoleplayCardImportResult: Sendable {
     public var character: RoleplayCharacter
-    public var embeddedWorldbook: Worldbook?
     public var avatarPNGData: Data?
     public var assets: [RoleplayImportedCardAsset]
 
     public init(
         character: RoleplayCharacter,
-        embeddedWorldbook: Worldbook?,
         avatarPNGData: Data?,
         assets: [RoleplayImportedCardAsset] = []
     ) {
         self.character = character
-        self.embeddedWorldbook = embeddedWorldbook
         self.avatarPNGData = avatarPNGData
         self.assets = assets
     }
@@ -66,7 +64,7 @@ public struct RoleplayCardImportService {
         let jsonData: Data
         let avatarPNGData: Data?
         let packagedAssets: [String: Data]
-        if WorldbookImportService.isPNG(data) {
+        if Self.isPNG(data) {
             guard let embedded = extractCharacterJSON(fromPNG: data) else {
                 throw RoleplayCardImportError.missingPNGCharacterData
             }
@@ -100,7 +98,6 @@ public struct RoleplayCardImportService {
         let regexRules = parseRegexRules(from: extensions)
         let helperScripts = parseHelperScripts(from: extensions)
         let initialVariables = parseInitialVariables(from: extensions)
-        let embeddedWorldbook = parseEmbeddedWorldbook(from: cardData, characterName: name, fileName: fileName)
         let report = makeCompatibilityReport(regexRules: regexRules, helperScripts: helperScripts)
         let assets = parseAssets(
             cardData["assets"],
@@ -118,7 +115,6 @@ public struct RoleplayCardImportService {
             alternateGreetings: strings(cardData["alternate_greetings"] ?? cardData["alternateGreetings"]),
             messageExamples: string(cardData["mes_example"] ?? cardData["messageExamples"]) ?? "",
             creatorNotes: string(cardData["creator_notes"] ?? cardData["creatorNotes"]) ?? "",
-            systemPrompt: string(cardData["system_prompt"] ?? cardData["systemPrompt"]) ?? "",
             postHistoryInstructions: string(cardData["post_history_instructions"] ?? cardData["postHistoryInstructions"]) ?? "",
             tags: strings(cardData["tags"]),
             creator: string(cardData["creator"]) ?? "",
@@ -134,11 +130,9 @@ public struct RoleplayCardImportService {
             rawCardData: jsonDictionary(cardData),
             compatibilityReport: report
         )
-        character.embeddedWorldbookID = embeddedWorldbook?.id
 
         return RoleplayCardImportResult(
             character: character,
-            embeddedWorldbook: embeddedWorldbook,
             avatarPNGData: avatarPNGData,
             assets: assets
         )
@@ -154,14 +148,14 @@ public struct RoleplayCardImportService {
         var result: [String: Data] = [:]
         var offset = 8
         while offset + 12 <= data.count {
-            let length = Int(WorldbookImportService.readUInt32BigEndian(data, offset: offset))
+            let length = Int(Self.readUInt32BigEndian(data, offset: offset))
             let typeStart = offset + 4
             let chunkStart = typeStart + 4
             let chunkEnd = chunkStart + length
             let crcEnd = chunkEnd + 4
             guard crcEnd <= data.count else { break }
             let type = String(data: data[typeStart..<(typeStart + 4)], encoding: .ascii) ?? ""
-            if let values = WorldbookImportService.decodePNGTextChunk(
+            if let values = Self.decodePNGTextChunk(
                 type: type,
                 data: Data(data[chunkStart..<chunkEnd])
             ) {
@@ -221,7 +215,7 @@ public struct RoleplayCardImportService {
         var offset = 8
         var legacyPayload: String?
         while offset + 12 <= data.count {
-            let length = Int(WorldbookImportService.readUInt32BigEndian(data, offset: offset))
+            let length = Int(Self.readUInt32BigEndian(data, offset: offset))
             let typeStart = offset + 4
             let chunkStart = typeStart + 4
             let chunkEnd = chunkStart + length
@@ -230,7 +224,7 @@ public struct RoleplayCardImportService {
 
             let type = String(data: data[typeStart..<(typeStart + 4)], encoding: .ascii) ?? ""
             let chunkData = Data(data[chunkStart..<chunkEnd])
-            if let values = WorldbookImportService.decodePNGTextChunk(type: type, data: chunkData) {
+            if let values = Self.decodePNGTextChunk(type: type, data: chunkData) {
                 if let payload = values["ccv3"], let decoded = decodeCharacterPayload(payload) {
                     return decoded
                 }
@@ -258,21 +252,6 @@ public struct RoleplayCardImportService {
         guard let decoded = Data(base64Encoded: normalized),
               (try? JSONSerialization.jsonObject(with: decoded)) != nil else { return nil }
         return decoded
-    }
-
-    private func parseEmbeddedWorldbook(
-        from cardData: [String: Any],
-        characterName: String,
-        fileName: String
-    ) -> Worldbook? {
-        guard let characterBook = cardData["character_book"] as? [String: Any] else { return nil }
-        let wrapper: [String: Any] = [
-            "name": characterBook["name"] ?? "\(characterName) Lorebook",
-            "character_book": characterBook
-        ]
-        guard JSONSerialization.isValidJSONObject(wrapper),
-              let data = try? JSONSerialization.data(withJSONObject: wrapper) else { return nil }
-        return try? WorldbookImportService().importWorldbook(from: data, fileName: fileName)
     }
 
     private func parseRegexRules(from extensions: [String: Any]) -> [RoleplayRegexRule] {
@@ -474,5 +453,95 @@ public struct RoleplayCardImportService {
 
     private func jsonDictionary(_ dictionary: [String: Any]) -> [String: JSONValue] {
         dictionary.compactMapValues(JSONValue.init(anyJSONValue:))
+    }
+    static func isPNG(_ data: Data) -> Bool {
+        guard data.count >= 8 else { return false }
+        let signature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        return Array(data.prefix(8)) == signature
+    }
+
+    static func decodePNGTextChunk(type: String, data: Data) -> [String: String]? {
+        switch type {
+        case "tEXt":
+            guard let separator = data.firstIndex(of: 0) else { return nil }
+            let key = String(data: data[..<separator], encoding: .isoLatin1) ?? ""
+            let valueData = data[data.index(after: separator)...]
+            let value = String(data: valueData, encoding: .utf8) ?? String(data: valueData, encoding: .isoLatin1) ?? ""
+            return [key: value]
+        case "zTXt":
+            guard let separator = data.firstIndex(of: 0) else { return nil }
+            let key = String(data: data[..<separator], encoding: .isoLatin1) ?? ""
+            let methodIndex = data.index(after: separator)
+            guard methodIndex < data.endIndex else { return nil }
+            let compressedDataStart = data.index(after: methodIndex)
+            guard compressedDataStart <= data.endIndex else { return nil }
+            let compressed = Data(data[compressedDataStart...])
+            guard let decompressed = decompressZlib(compressed) else { return nil }
+            let value = String(data: decompressed, encoding: .utf8) ?? String(data: decompressed, encoding: .isoLatin1) ?? ""
+            return [key: value]
+        case "iTXt":
+            guard let keyEnd = data.firstIndex(of: 0) else { return nil }
+            let key = String(data: data[..<keyEnd], encoding: .utf8) ?? ""
+            var cursor = data.index(after: keyEnd)
+            guard cursor < data.endIndex else { return nil }
+            let compressedFlag = data[cursor]
+            cursor = data.index(after: cursor)
+            guard cursor < data.endIndex else { return nil }
+            _ = data[cursor]
+            cursor = data.index(after: cursor)
+
+            guard let languageEnd = data[cursor...].firstIndex(of: 0) else { return nil }
+            cursor = data.index(after: languageEnd)
+            guard let translatedEnd = data[cursor...].firstIndex(of: 0) else { return nil }
+            cursor = data.index(after: translatedEnd)
+
+            let textData = Data(data[cursor...])
+            let decoded: Data
+            if compressedFlag == 1 {
+                guard let inflated = decompressZlib(textData) else { return nil }
+                decoded = inflated
+            } else {
+                decoded = textData
+            }
+            let value = String(data: decoded, encoding: .utf8) ?? ""
+            return [key: value]
+        default:
+            return nil
+        }
+    }
+
+    static func readUInt32BigEndian(_ data: Data, offset: Int) -> UInt32 {
+        let b0 = UInt32(data[offset]) << 24
+        let b1 = UInt32(data[offset + 1]) << 16
+        let b2 = UInt32(data[offset + 2]) << 8
+        let b3 = UInt32(data[offset + 3])
+        return b0 | b1 | b2 | b3
+    }
+
+    static func decompressZlib(_ data: Data) -> Data? {
+        guard !data.isEmpty else { return Data() }
+        var capacity = max(4096, data.count * 4)
+        let maxCapacity = 32 * 1024 * 1024
+
+        while capacity <= maxCapacity {
+            var output = Data(count: capacity)
+            let decodedCount: Int = output.withUnsafeMutableBytes { outputRaw in
+                data.withUnsafeBytes { sourceRaw in
+                    guard let dst = outputRaw.bindMemory(to: UInt8.self).baseAddress,
+                          let src = sourceRaw.bindMemory(to: UInt8.self).baseAddress else {
+                        return 0
+                    }
+                    return compression_decode_buffer(dst, capacity, src, data.count, nil, COMPRESSION_ZLIB)
+                }
+            }
+
+            if decodedCount > 0 {
+                output.count = decodedCount
+                return output
+            }
+            capacity *= 2
+        }
+
+        return nil
     }
 }

@@ -20,16 +20,6 @@ extension AppToolKind {
     public var parameters: JSONValue {
         switch self {
         case .showWidget:
-            #if os(watchOS)
-            let widgetCodeDescription = NSLocalizedString(
-                "watchOS 全屏 Widget 的 HTML 片段，可包含 style/script。片段会被插入 App 提供的宿主页面；不要包含 html、head、body 或 viewport meta，也不要修改宿主页面。顶层内容应填满可用宽高，并适配手表的小尺寸圆角屏幕。",
-                comment: "Show widget tool html parameter description on watchOS"
-            )
-            let inlineAspectRatioDescription = NSLocalizedString(
-                "同步到支持内联展示的客户端时使用的首选画幅，格式为“宽:高”。宽和高必须是大于零的有限数值，不限制比例范围，例如 16:9、3:1 或 1:4。watchOS 本地全屏渲染会保留但忽略此值。",
-                comment: "Show widget inline aspect ratio parameter description on watchOS"
-            )
-            #else
             let widgetCodeDescription = NSLocalizedString(
                 "iOS 聊天内联 Widget 的 HTML 片段，可包含 style/script。片段会被插入 App 提供的固定画幅宿主容器；不要包含 html、head、body 或 viewport meta，也不要修改宿主页面。顶层内容应使用 100% 宽高填满容器，并根据容器尺寸响应式布局。",
                 comment: "Show widget tool html parameter description on iOS"
@@ -38,7 +28,6 @@ extension AppToolKind {
                 "iOS 内联卡片的首选画幅，格式为“宽:高”。宽和高必须是大于零的有限数值，不限制比例范围，例如 16:9、3:1 或 1:4。宿主会填满气泡可用宽度，并根据此画幅计算固定高度。",
                 comment: "Show widget inline aspect ratio parameter description on iOS"
             )
-            #endif
             return JSONValue.dictionary([
                 "type": .string("object"),
                 "properties": .dictionary([
@@ -172,7 +161,7 @@ extension AppToolKind {
                 ]),
                 "required": .array([.string("text")])
             ])
-        case .executeJSCJavaScript, .executeWebKitJavaScript:
+        case .executeJSCJavaScript:
             return JSONValue.dictionary([
                 "type": .string("object"),
                 "properties": .dictionary([
@@ -188,13 +177,13 @@ extension AppToolKind {
                 ]),
                 "required": .array([.string("code")])
             ])
-        case .createCustomJSCJSTool, .createCustomWebKitJSTool:
+        case .createCustomJSCJSTool:
             return JSONValue.dictionary([
                 "type": .string("object"),
                 "properties": .dictionary([
                     "tool_id": .dictionary([
                         "type": .string("string"),
-                        "description": .string(NSLocalizedString("自定义工具 ID，可选。仅允许小写字母、数字和下划线；JSC 工具名会是 app_custom_jsc_<tool_id>，WebKit 工具名会是 app_custom_webkit_js_<tool_id>。", comment: "Create custom JS tool id parameter description"))
+                        "description": .string(NSLocalizedString("自定义工具 ID，可选。仅允许小写字母、数字和下划线；工具名会是 app_custom_jsc_<tool_id>。", comment: "Create custom JS tool id parameter description"))
                     ]),
                     "display_name": .dictionary([
                         "type": .string("string"),
@@ -232,55 +221,6 @@ extension AppToolKind {
                     ])
                 ]),
                 "required": .array([.string("display_name"), .string("description"), .string("code")])
-            ])
-        case .editMemory:
-            return JSONValue.dictionary([
-                "type": .string("object"),
-                "properties": .dictionary([
-                    "memory_id": .dictionary([
-                        "type": .string("string"),
-                        "description": .string(NSLocalizedString("要编辑的记忆 ID，可从 search_memory 的结果里获得。", comment: "Memory edit tool memory id parameter description"))
-                    ]),
-                    "content": .dictionary([
-                        "type": .string("string"),
-                        "description": .string(NSLocalizedString("编辑后的记忆内容。若不传，则保持原内容不变。", comment: "Memory edit tool content parameter description"))
-                    ]),
-                    "is_archived": .dictionary([
-                        "type": .string("boolean"),
-                        "description": .string(NSLocalizedString("是否归档这条记忆。true 表示归档，false 表示恢复激活。", comment: "Memory edit tool archive parameter description"))
-                    ]),
-                    "kind": .dictionary([
-                        "type": .string("string"),
-                        "enum": .array(MemoryKind.allCases.map { .string($0.rawValue) }),
-                        "description": .string(NSLocalizedString("更新记忆类型。", comment: "Memory edit kind parameter description"))
-                    ]),
-                    "importance": .dictionary([
-                        "type": .string("number"),
-                        "minimum": .int(0),
-                        "maximum": .int(1),
-                        "description": .string(NSLocalizedString("更新长期重要度，范围 0 到 1。", comment: "Memory edit importance parameter description"))
-                    ]),
-                    "confidence": .dictionary([
-                        "type": .string("number"),
-                        "minimum": .int(0),
-                        "maximum": .int(1),
-                        "description": .string(NSLocalizedString("更新事实置信度，范围 0 到 1。", comment: "Memory edit confidence parameter description"))
-                    ]),
-                    "entities": .dictionary([
-                        "type": .string("array"),
-                        "items": .dictionary(["type": .string("string")]),
-                        "description": .string(NSLocalizedString("替换记忆关联的实体名称。", comment: "Memory edit entities parameter description"))
-                    ]),
-                    "valid_from": .dictionary([
-                        "type": .string("string"),
-                        "description": .string(NSLocalizedString("更新事实开始生效的 ISO 8601 时间。", comment: "Memory edit valid from parameter description"))
-                    ]),
-                    "valid_until": .dictionary([
-                        "type": .string("string"),
-                        "description": .string(NSLocalizedString("设置事实停止生效的 ISO 8601 时间，用于保留已被新事实取代的历史记录。", comment: "Memory edit valid until parameter description"))
-                    ])
-                ]),
-                "required": .array([.string("memory_id")])
             ])
         case .submitFeedbackTicket:
             return JSONValue.dictionary([
@@ -516,32 +456,6 @@ extension AppToolKind {
                     ])
                 ]),
                 "required": .array([.string("path"), .string("rules")])
-            ])
-        case .listMemories:
-            return JSONValue.dictionary([
-                "type": .string("object"),
-                "properties": .dictionary([
-                    "query": .dictionary([
-                        "type": .string("string"),
-                        "description": .string(NSLocalizedString("按记忆内容模糊匹配的关键词。", comment: "List memories query parameter description"))
-                    ]),
-                    "include_archived": .dictionary([
-                        "type": .string("boolean"),
-                        "description": .string(NSLocalizedString("是否包含已归档记忆，默认 true。", comment: "List memories include archived parameter description"))
-                    ]),
-                    "offset": .dictionary([
-                        "type": .string("integer"),
-                        "description": .string(NSLocalizedString("分页起始偏移，默认 0。", comment: "List memories offset parameter description"))
-                    ]),
-                    "limit": .dictionary([
-                        "type": .string("integer"),
-                        "description": .string(NSLocalizedString("返回数量上限，默认 20，最大 200。", comment: "List memories limit parameter description"))
-                    ]),
-                    "order": .dictionary([
-                        "type": .string("string"),
-                        "description": .string(NSLocalizedString("排序方向，支持 desc 或 asc，默认 desc。", comment: "List memories order parameter description"))
-                    ])
-                ])
             ])
         case .listSQLiteTables:
             return JSONValue.dictionary([

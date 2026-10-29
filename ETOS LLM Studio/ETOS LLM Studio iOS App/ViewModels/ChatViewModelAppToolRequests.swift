@@ -132,22 +132,14 @@ extension ChatViewModel {
     }
 
     private func sendToolSupplementMessage(_ content: String, targetSessionID: UUID) {
-        let targetSession = chatSessions.first(where: { $0.id == targetSessionID })
-            ?? chatService.chatSessionsSubject.value.first(where: { $0.id == targetSessionID })
-
         Task { [weak self] in
             guard let self else { return }
             await chatService.sendAndProcessMessage(
                 content: content,
                 aiTemperature: aiTemperature,
                 aiTopP: aiTopP,
-                systemPrompt: systemPrompt,
                 maxChatHistory: maxChatHistory,
                 enableStreaming: enableStreaming,
-                enhancedPrompt: targetSession?.enhancedPrompt,
-                enableMemory: enableMemory,
-                enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                 includeSystemTime: includeSystemTimeInPrompt,
                 systemTimeInjectionPosition: systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,

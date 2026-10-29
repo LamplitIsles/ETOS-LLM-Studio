@@ -37,9 +37,6 @@ struct MacRoleplayCharacterDetail: View {
                         MacRoleplayContentList(model: model, characterID: characterID, kind: .scripts)
                     }
                     LabeledContent(NSLocalizedString("资源文件", comment: ""), value: (row.character.assets?.count ?? 0).formatted())
-                    if let id = row.character.embeddedWorldbookID {
-                        NavigationLink(NSLocalizedString("内嵌世界书", comment: "")) { MacWorldbookDetailView(model: workspace.worldbookModel, bookID: id) }
-                    }
                 }
                 MacSettingsIntroCard(id: "roleplay-character", title: NSLocalizedString("使用说明", comment: ""),
                                      details: NSLocalizedString("Mac 角色资料使用说明", comment: ""), documentID: "roleplay")

@@ -219,9 +219,6 @@ extension ChatService {
                 ?? localAgentContext.map { Set($0.selectedMCPServerIDs) }
             let requestTooling = await self.resolveRequestTooling(
                 for: session,
-                enableMemory: configuration.enableMemory,
-                enableMemoryWrite: configuration.enableMemoryWrite,
-                enableMemoryActiveRetrieval: configuration.enableMemoryActiveRetrieval,
                 localAgentContext: localAgentContext,
                 agentCapabilities: agentCapabilities,
                 selectedAgentMCPServerIDs: selectedAgentMCPServerIDs
@@ -234,15 +231,9 @@ extension ChatService {
                 wasTemporarySession: false,
                 aiTemperature: configuration.temperature,
                 aiTopP: configuration.topP,
-                systemPrompt: configuration.systemPrompt,
                 maxChatHistory: configuration.maxChatHistory,
                 enableStreaming: configuration.enableStreaming,
-                enhancedPrompt: configuration.enhancedPrompt,
                 tools: requestTooling.tools,
-                localAgentPrompt: localAgentContext?.promptContent,
-                enableMemory: requestTooling.policy.enableMemory,
-                enableMemoryWrite: requestTooling.policy.enableMemoryWrite,
-                enableMemoryActiveRetrieval: requestTooling.policy.enableMemoryActiveRetrieval,
                 includeSystemTime: configuration.includeSystemTime,
                 systemTimeInjectionPosition: configuration.systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: configuration.enablePeriodicTimeLandmark,

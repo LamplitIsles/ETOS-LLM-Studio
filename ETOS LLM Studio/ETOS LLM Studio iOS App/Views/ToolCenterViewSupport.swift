@@ -147,21 +147,9 @@ extension ToolCenterView {
             Section {
                 ToolCenterIntroCard(
                     title: "内置工具",
-                    summary: "系统自带能力集中在这里，按单项调整记忆、网页卡片、问答与时间工具。",
+                    summary: "系统自带能力集中在这里，按单项调整网页卡片、问答与时间工具。",
                     details: "内置工具说明正文",
                     isExpanded: $isShowingBuiltInIntroDetails
-                )
-            }
-
-            Section(
-                header: Text(NSLocalizedString("记忆系统", comment: "Memory system section title")),
-                footer: Text(NSLocalizedString("启用记忆系统后，记忆写入与主动检索工具才可能参与聊天。", comment: "Built-in memory system footer"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            ) {
-                Toggle(
-                    NSLocalizedString("启用记忆系统", comment: "Enable long-term memory"),
-                    isOn: $viewModel.enableMemory
                 )
             }
 
@@ -174,12 +162,7 @@ extension ToolCenterView {
                         NavigationLink {
                             BuiltInToolDetailView(
                                 kind: state.kind,
-                                currentSessionMemoryIsolationActive: currentSessionMemoryIsolationActive,
-                                currentSessionIsolationActive: currentSessionIsolationActive,
-                                enableMemory: $viewModel.enableMemory,
-                                enableMemoryWrite: $viewModel.enableMemoryWrite,
-                                enableMemoryActiveRetrieval: $viewModel.enableMemoryActiveRetrieval,
-                                memoryTopK: $appConfig.memoryTopK
+                                currentSessionIsolationActive: currentSessionIsolationActive
                             )
                         } label: {
                             ToolCenterStatusRow(
@@ -214,7 +197,6 @@ extension ToolCenterView {
             NavigationLink {
                 MCPToolCategoryDetailView(
                     currentSessionIsolationActive: currentSessionIsolationActive,
-                    currentSessionMemoryIsolationActive: currentSessionMemoryIsolationActive,
                     searchText: searchText,
                     showEnabledOnly: showEnabledOnly
                 )
@@ -318,10 +300,6 @@ extension ToolCenterView {
 
     func builtInTitle(for kind: ToolCatalogBuiltInToolKind) -> String {
         switch kind {
-        case .memoryWrite:
-            return NSLocalizedString("记忆系统写入", comment: "Memory write tool title")
-        case .memorySearch:
-            return NSLocalizedString("记忆系统主动检索", comment: "Memory search tool title")
         case .widgetCard:
             return NSLocalizedString("显示网页卡片", comment: "Built-in widget tool title")
         case .askUserInput:
@@ -335,10 +313,6 @@ extension ToolCenterView {
 
     func builtInSubtitle(for kind: ToolCatalogBuiltInToolKind) -> String {
         switch kind {
-        case .memoryWrite:
-            return NSLocalizedString("允许模型调用 save_memory，将有长期价值的信息写入记忆。", comment: "Memory write tool subtitle")
-        case .memorySearch:
-            return NSLocalizedString("允许模型调用 search_memory，在回答前主动检索记忆。", comment: "Memory search tool subtitle")
         case .widgetCard:
             return NSLocalizedString("允许模型调用 show_widget，在对话中渲染 HTML 网页卡片。", comment: "Built-in widget tool subtitle")
         case .askUserInput:
@@ -355,48 +329,13 @@ extension ToolCenterView {
             return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
         }
         switch state.kind {
-        case .memoryWrite:
-            switch state.statusReason {
-            case .enabled:
-                return NSLocalizedString("已允许写入新的记忆。", comment: "Memory write enabled")
-            case .memoryDisabled:
-                return NSLocalizedString("记忆系统总开关已关闭。", comment: "Memory system disabled")
-            case .memoryWriteDisabled:
-                return NSLocalizedString("当前未允许写入新的记忆。", comment: "Memory write disabled")
-            case .isolatedBySession:
-                return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
-            case .activeRetrievalDisabled, .zeroTopK, .widgetDisabled, .askUserInputDisabled, .getSystemTimeDisabled:
-                return NSLocalizedString("当前未允许写入新的记忆。", comment: "Memory write disabled fallback")
-            @unknown default:
-                return NSLocalizedString("当前未允许写入新的记忆。", comment: "Memory write unknown status fallback")
-            }
-        case .memorySearch:
-            switch state.statusReason {
-            case .enabled:
-                return String(
-                    format: NSLocalizedString("已允许主动检索，Top K = %d。", comment: "Memory search enabled with top k"),
-                    state.memoryTopK
-                )
-            case .memoryDisabled:
-                return NSLocalizedString("记忆系统总开关已关闭。", comment: "Memory system disabled")
-            case .activeRetrievalDisabled:
-                return NSLocalizedString("当前未允许主动检索。", comment: "Memory search disabled")
-            case .zeroTopK:
-                return NSLocalizedString("当前 Top K 为 0，聊天时不会暴露检索工具。", comment: "Memory search top k zero")
-            case .isolatedBySession:
-                return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
-            case .memoryWriteDisabled, .widgetDisabled, .askUserInputDisabled, .getSystemTimeDisabled:
-                return NSLocalizedString("当前未允许主动检索。", comment: "Memory search disabled fallback")
-            @unknown default:
-                return NSLocalizedString("当前未允许主动检索。", comment: "Memory search unknown status fallback")
-            }
         case .widgetCard:
             switch state.statusReason {
             case .enabled:
                 return NSLocalizedString("已启用网页卡片渲染能力。", comment: "Built-in widget enabled status")
             case .widgetDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget disabled status")
-            case .memoryDisabled, .memoryWriteDisabled, .activeRetrievalDisabled, .zeroTopK, .isolatedBySession, .askUserInputDisabled, .getSystemTimeDisabled:
+            case .isolatedBySession, .askUserInputDisabled, .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget unknown status fallback")
@@ -407,7 +346,7 @@ extension ToolCenterView {
                 return NSLocalizedString("已启用结构化问答能力。", comment: "Built-in ask user input enabled status")
             case .askUserInputDisabled:
                 return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input disabled status")
-            case .memoryDisabled, .memoryWriteDisabled, .activeRetrievalDisabled, .zeroTopK, .isolatedBySession, .widgetDisabled, .getSystemTimeDisabled:
+            case .isolatedBySession, .widgetDisabled, .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input unknown status fallback")
@@ -418,7 +357,7 @@ extension ToolCenterView {
                 return NSLocalizedString("已启用系统时间获取能力。", comment: "Get system time enabled status")
             case .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status")
-            case .memoryDisabled, .memoryWriteDisabled, .activeRetrievalDisabled, .zeroTopK, .isolatedBySession, .widgetDisabled, .askUserInputDisabled:
+            case .isolatedBySession, .widgetDisabled, .askUserInputDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time unknown status fallback")
@@ -560,32 +499,15 @@ extension ToolCenterView {
 
 struct BuiltInToolDetailView: View {
     let kind: ToolCatalogBuiltInToolKind
-    let currentSessionMemoryIsolationActive: Bool
     let currentSessionIsolationActive: Bool
-    @Binding var enableMemory: Bool
-    @Binding var enableMemoryWrite: Bool
-    @Binding var enableMemoryActiveRetrieval: Bool
-    @Binding var memoryTopK: Int
 
     @ObservedObject private var appToolManager = AppToolManager.shared
 
-    private var numberFormatter: NumberFormatter {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        return formatter
-    }
-
     private var state: ToolCatalogBuiltInToolState {
         ToolCatalogSupport.builtInToolStates(
-            enableMemory: enableMemory,
-            enableMemoryWrite: enableMemoryWrite,
-            enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
-            memoryTopK: memoryTopK,
             enableWidgetTool: appToolManager.isToolEnabled(.showWidget),
             enableAskUserInputTool: appToolManager.isToolEnabled(.askUserInput),
             enableGetSystemTimeTool: appToolManager.isToolEnabled(.getSystemTime),
-            isMemoryIsolated: currentSessionMemoryIsolationActive,
             isToolIsolated: currentSessionIsolationActive
         ).first(where: { $0.kind == kind }) ?? ToolCatalogBuiltInToolState(
             kind: kind,
@@ -611,25 +533,6 @@ struct BuiltInToolDetailView: View {
             }
 
             switch kind {
-            case .memoryWrite:
-                Section(NSLocalizedString("启用状态", comment: "Enable status")) {
-                    Toggle(NSLocalizedString("启用记忆系统", comment: "Enable long-term memory"), isOn: $enableMemory)
-                    Toggle(NSLocalizedString("允许写入新的记忆", comment: "Allow memory writing"), isOn: $enableMemoryWrite)
-                        .disabled(!enableMemory)
-                }
-            case .memorySearch:
-                Section(NSLocalizedString("启用状态", comment: "Enable status")) {
-                    Toggle(NSLocalizedString("启用记忆系统", comment: "Enable long-term memory"), isOn: $enableMemory)
-                    Toggle(NSLocalizedString("主动检索", comment: "Active retrieval toggle title"), isOn: $enableMemoryActiveRetrieval)
-                        .disabled(!enableMemory)
-                    HStack {
-                        Text(NSLocalizedString("Top K", comment: "Memory search top k label"))
-                        Spacer()
-                        TextField("0", value: $memoryTopK, formatter: numberFormatter)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 72)
-                    }
-                }
             case .widgetCard:
                 Section(NSLocalizedString("启用状态", comment: "Enable status")) {
                     Toggle(
@@ -672,10 +575,6 @@ struct BuiltInToolDetailView: View {
 
     private var title: String {
         switch kind {
-        case .memoryWrite:
-            return NSLocalizedString("记忆系统写入", comment: "Memory write tool title")
-        case .memorySearch:
-            return NSLocalizedString("记忆系统主动检索", comment: "Memory search tool title")
         case .widgetCard:
             return NSLocalizedString("显示网页卡片", comment: "Built-in widget tool title")
         case .askUserInput:
@@ -689,10 +588,6 @@ struct BuiltInToolDetailView: View {
 
     private var subtitle: String {
         switch kind {
-        case .memoryWrite:
-            return NSLocalizedString("允许模型调用 save_memory，将有长期价值的信息写入记忆。", comment: "Memory write tool subtitle")
-        case .memorySearch:
-            return NSLocalizedString("允许模型调用 search_memory，在回答前主动检索记忆。", comment: "Memory search tool subtitle")
         case .widgetCard:
             return NSLocalizedString("允许模型调用 show_widget，在对话中渲染 HTML 网页卡片。", comment: "Built-in widget tool subtitle")
         case .askUserInput:
@@ -712,10 +607,8 @@ struct BuiltInToolDetailView: View {
             return .askUserInputDisabled
         case .getSystemTime:
             return .getSystemTimeDisabled
-        case .memoryWrite, .memorySearch:
-            return .memoryDisabled
         @unknown default:
-            return .memoryDisabled
+            return .widgetDisabled
         }
     }
 
@@ -724,48 +617,13 @@ struct BuiltInToolDetailView: View {
             return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
         }
         switch state.kind {
-        case .memoryWrite:
-            switch state.statusReason {
-            case .enabled:
-                return NSLocalizedString("已允许写入新的记忆。", comment: "Memory write enabled")
-            case .memoryDisabled:
-                return NSLocalizedString("记忆系统总开关已关闭。", comment: "Memory system disabled")
-            case .memoryWriteDisabled:
-                return NSLocalizedString("当前未允许写入新的记忆。", comment: "Memory write disabled")
-            case .isolatedBySession:
-                return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
-            case .activeRetrievalDisabled, .zeroTopK, .widgetDisabled, .askUserInputDisabled, .getSystemTimeDisabled:
-                return NSLocalizedString("当前未允许写入新的记忆。", comment: "Memory write fallback")
-            @unknown default:
-                return NSLocalizedString("当前未允许写入新的记忆。", comment: "Memory write unknown status fallback")
-            }
-        case .memorySearch:
-            switch state.statusReason {
-            case .enabled:
-                return String(
-                    format: NSLocalizedString("已允许主动检索，Top K = %d。", comment: "Memory search enabled with top k"),
-                    state.memoryTopK
-                )
-            case .memoryDisabled:
-                return NSLocalizedString("记忆系统总开关已关闭。", comment: "Memory system disabled")
-            case .activeRetrievalDisabled:
-                return NSLocalizedString("当前未允许主动检索。", comment: "Memory search disabled")
-            case .zeroTopK:
-                return NSLocalizedString("当前 Top K 为 0，聊天时不会暴露检索工具。", comment: "Memory search top k zero")
-            case .isolatedBySession:
-                return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
-            case .memoryWriteDisabled, .widgetDisabled, .askUserInputDisabled, .getSystemTimeDisabled:
-                return NSLocalizedString("当前未允许主动检索。", comment: "Memory search fallback")
-            @unknown default:
-                return NSLocalizedString("当前未允许主动检索。", comment: "Memory search unknown status fallback")
-            }
         case .widgetCard:
             switch state.statusReason {
             case .enabled:
                 return NSLocalizedString("已启用网页卡片渲染能力。", comment: "Built-in widget enabled status")
             case .widgetDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget disabled status")
-            case .memoryDisabled, .memoryWriteDisabled, .activeRetrievalDisabled, .zeroTopK, .isolatedBySession, .askUserInputDisabled, .getSystemTimeDisabled:
+            case .isolatedBySession, .askUserInputDisabled, .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget unknown status fallback")
@@ -776,7 +634,7 @@ struct BuiltInToolDetailView: View {
                 return NSLocalizedString("已启用结构化问答能力。", comment: "Built-in ask user input enabled status")
             case .askUserInputDisabled:
                 return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input disabled status")
-            case .memoryDisabled, .memoryWriteDisabled, .activeRetrievalDisabled, .zeroTopK, .isolatedBySession, .widgetDisabled, .getSystemTimeDisabled:
+            case .isolatedBySession, .widgetDisabled, .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input unknown status fallback")
@@ -787,7 +645,7 @@ struct BuiltInToolDetailView: View {
                 return NSLocalizedString("已启用系统时间获取能力。", comment: "Get system time enabled status")
             case .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status")
-            case .memoryDisabled, .memoryWriteDisabled, .activeRetrievalDisabled, .zeroTopK, .isolatedBySession, .widgetDisabled, .askUserInputDisabled:
+            case .isolatedBySession, .widgetDisabled, .askUserInputDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time unknown status fallback")

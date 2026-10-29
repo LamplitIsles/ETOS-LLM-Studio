@@ -42,7 +42,6 @@ enum SettingsNavigationDestination: Hashable, Identifiable {
 private enum CoreSettingsNavigationDestination: Hashable {
     case modelManagement
     case conversation
-    case prompts
     case output
     case display
     case sync
@@ -134,13 +133,6 @@ struct SettingsView: View {
                 }
 
                 NavigationLink {
-                    LongTermMemoryFeatureView()
-                        .environmentObject(viewModel)
-                } label: {
-                    SettingsListIconLabel("记忆系统", icon: .memory)
-                }
-
-                NavigationLink {
                     MCPIntegrationView()
                 } label: {
                     SettingsListIconLabel("MCP 工具集成", icon: .mcp)
@@ -165,12 +157,6 @@ struct SettingsView: View {
                 }
 
                 NavigationLink {
-                    WorldbookSettingsView().environmentObject(viewModel)
-                } label: {
-                    SettingsListIconLabel("世界书", icon: .worldbook)
-                }
-
-                NavigationLink {
                     SpeechInputSettingsView(
                         enableSpeechInput: $viewModel.enableSpeechInput,
                         selectedSpeechModel: speechModelBinding,
@@ -183,12 +169,6 @@ struct SettingsView: View {
                     )
                 } label: {
                     SettingsListIconLabel("语音输入", icon: .speechInput)
-                }
-
-                NavigationLink {
-                    LocalLinuxFeatureView(sessionID: viewModel.currentSession?.id)
-                } label: {
-                    SettingsListIconLabel("本地 Linux", icon: .localLinux)
                 }
 
                 NavigationLink {
@@ -283,8 +263,6 @@ struct SettingsView: View {
                     .environmentObject(viewModel)
             case .conversation:
                 advancedSettingsView(destination: .conversation)
-            case .prompts:
-                advancedSettingsView(destination: .prompts)
             case .output:
                 advancedSettingsView(destination: .output)
             case .display:
@@ -351,12 +329,6 @@ struct SettingsView: View {
                 titleKey: "会话",
                 icon: .conversationSettings,
                 destination: .conversation,
-                preferredHeight: layout.preferredCardHeight
-            )
-            coreSettingsButton(
-                titleKey: "提示词",
-                icon: .promptSettings,
-                destination: .prompts,
                 preferredHeight: layout.preferredCardHeight
             )
             coreSettingsButton(
@@ -480,8 +452,6 @@ struct SettingsView: View {
             aiTopP: $viewModel.aiTopP,
             aiTemperatureEnabled: $viewModel.aiTemperatureEnabled,
             aiTopPEnabled: $viewModel.aiTopPEnabled,
-            globalSystemPromptEntries: $viewModel.globalSystemPromptEntries,
-            selectedGlobalSystemPromptEntryID: $viewModel.selectedGlobalSystemPromptEntryID,
             maxChatHistory: $viewModel.maxChatHistory,
             lazyLoadMessageCount: $viewModel.lazyLoadMessageCount,
             enableStreaming: $viewModel.enableStreaming,
@@ -494,12 +464,6 @@ struct SettingsView: View {
             systemTimeInjectionPosition: $viewModel.systemTimeInjectionPosition,
             enablePeriodicTimeLandmark: $viewModel.enablePeriodicTimeLandmark,
             periodicTimeLandmarkIntervalMinutes: $viewModel.periodicTimeLandmarkIntervalMinutes,
-            addGlobalSystemPromptEntry: viewModel.addGlobalSystemPromptEntry,
-            duplicateGlobalSystemPromptEntry: viewModel.duplicateGlobalSystemPromptEntry,
-            selectGlobalSystemPromptEntry: viewModel.selectGlobalSystemPromptEntry,
-            updateSelectedGlobalSystemPromptContent: viewModel.updateSelectedGlobalSystemPromptContent,
-            updateGlobalSystemPromptEntry: viewModel.updateGlobalSystemPromptEntry,
-            deleteGlobalSystemPromptEntry: { viewModel.deleteGlobalSystemPromptEntry(id: $0) },
             destination: destination
         )
     }
@@ -526,12 +490,10 @@ extension SettingsListIcon {
     static let agentSkills = SettingsListIcon(systemName: "star", backgroundColor: .purple)
     static let shortcuts = SettingsListIcon(systemName: "bolt", backgroundColor: .orange)
     static let imageGeneration = SettingsListIcon(systemName: "photo", backgroundColor: .pink)
-    static let worldbook = SettingsListIcon(systemName: "book", backgroundColor: .brown)
     static let roleplay = SettingsListIcon(systemName: "theatermasks", backgroundColor: .purple)
     static let speechInput = SettingsListIcon(systemName: "mic", backgroundColor: .red)
     static let extendedFeatures = SettingsListIcon(systemName: "ellipsis", backgroundColor: .indigo)
     static let backgroundGeneration = SettingsListIcon(systemName: "location", backgroundColor: .green)
-    static let localModels = SettingsListIcon(systemName: "cpu", backgroundColor: .blue)
     static let localLinux = SettingsListIcon(systemName: "terminal", backgroundColor: .green)
     static let browserAgent = SettingsListIcon(systemName: "safari", backgroundColor: .blue)
     static let guide = SettingsListIcon(systemName: "questionmark.bubble", backgroundColor: .blue)

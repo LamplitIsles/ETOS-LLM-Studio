@@ -29,14 +29,12 @@ public enum FeedbackEnvironmentCollector {
 
     public static func collectMinimalLogs() -> [String] {
         let providerCount = ConfigLoader.loadProviders().count
-        let sessionCount = Persistence.loadChatSessions().filter { !$0.isTemporary }.count
         let now = ISO8601DateFormatter().string(from: Date())
         let distributionChannel = UpdateTimelineManager.currentDistributionChannel().rawValue
 
         return [
             "timestamp=\(now)",
             "provider_count=\(providerCount)",
-            "session_count=\(sessionCount)",
             "platform=\(platformName)",
             "distribution_channel=\(distributionChannel)",
             "app_version=\(appVersion)(\(appBuild))"

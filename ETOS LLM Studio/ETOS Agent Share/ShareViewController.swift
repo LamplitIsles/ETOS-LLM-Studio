@@ -30,9 +30,7 @@ final class ShareViewController: UIViewController {
 @MainActor
 private final class ETOSShareModel: ObservableObject {
     @Published var mode: ETOSInboxMode = .agent
-    @Published var selectedSessionID: UUID?
     @Published private(set) var items: [ETOSInboxItem] = []
-    @Published private(set) var sessions: [ETOSSessionSummary] = []
     @Published private(set) var isLoading = true
     @Published private(set) var isSaving = false
     @Published var errorMessage: String?
@@ -42,7 +40,6 @@ private final class ETOSShareModel: ObservableObject {
 
     init(extensionContext: NSExtensionContext?) {
         self.extensionContext = extensionContext
-        Task { [weak self] in await self?.loadSessionSummaries() }
         Task { [weak self] in await self?.loadInput() }
     }
 
@@ -55,8 +52,8 @@ private final class ETOSShareModel: ObservableObject {
         isSaving = true
         Task {
             do {
-                let requestID = try await Task.detached(priority: .userInitiated) { [payloads, mode, selectedSessionID] in
-                    try Self.persist(payloads: payloads, mode: mode, selectedSessionID: selectedSessionID)
+                let requestID = try await Task.detached(priority: .userInitiated) { [payloads, mode] in
+                    try Self.persist(payloads: payloads, mode: mode)
                 }.value
                 let url = ETOSSystemEntryURL.consumeInbox(requestID)
                 _ = await extensionContext?.open(url)
@@ -66,14 +63,6 @@ private final class ETOSShareModel: ObservableObject {
                 isSaving = false
             }
         }
-    }
-
-    private func loadSessionSummaries() async {
-        sessions = await Task.detached(priority: .utility) {
-            guard let layout = ETOSSharedStorageLayout.resolve() else { return [] }
-            let url = layout.runSnapshots.appendingPathComponent("widget.json")
-            return (try? ETOSSharedFileStore.read(ETOSWidgetSnapshot.self, from: url))?.recentSessions ?? []
-        }.value
     }
 
     private func loadInput() async {
@@ -155,13 +144,12 @@ private final class ETOSShareModel: ObservableObject {
 
     private nonisolated static func persist(
         payloads: [(ETOSInboxItem, Data?)],
-        mode: ETOSInboxMode,
-        selectedSessionID: UUID?
+        mode: ETOSInboxMode
     ) throws -> UUID {
         try ETOSInboxStore.persist(
             payloads: payloads.map { ETOSInboxPayloadItem(item: $0.0, data: $0.1) },
             mode: mode,
-            preferredSessionID: selectedSessionID
+            preferredSessionID: nil
         ).id
     }
 }
@@ -180,17 +168,6 @@ private struct ETOSShareView: View {
                     .pickerStyle(.segmented)
                 } footer: {
                     Text(NSLocalizedString("内容会先进入 ETOS 预览，确认后才会发送。", comment: "Share preview behavior"))
-                }
-
-                if !model.sessions.isEmpty {
-                    Section(NSLocalizedString("目标会话", comment: "Share target session section")) {
-                        Picker(NSLocalizedString("会话", comment: "Share session picker"), selection: $model.selectedSessionID) {
-                            Text(NSLocalizedString("新会话", comment: "Share creates a new session")).tag(UUID?.none)
-                            ForEach(model.sessions) { session in
-                                Text(session.name).tag(Optional(session.id))
-                            }
-                        }
-                    }
                 }
 
                 Section(NSLocalizedString("共享内容", comment: "Shared content section")) {

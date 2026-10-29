@@ -19,7 +19,7 @@ import UIKit
 
 @MainActor
 public final class DailyPulseManager: ObservableObject {
-    public static let shared = DailyPulseManager(chatService: .shared, memoryManager: .shared)
+    public static let shared = DailyPulseManager(chatService: .shared)
     internal nonisolated static let persistedRetentionLimit = 14
     internal nonisolated static let feedbackHistoryRetentionLimit = 120
     internal nonisolated static let externalSignalRetentionLimit = 40
@@ -93,11 +93,9 @@ public final class DailyPulseManager: ObservableObject {
 
     let logger = Logger(subsystem: "com.ETOS.LLM.Studio", category: "DailyPulse")
     let chatService: ChatService
-    let memoryManager: MemoryManager
     let defaults: UserDefaults
     let retentionLimit: Int
     let maxMessagesPerSession = 6
-    let maxMemoriesInPrompt = 8
     private var syncNotificationObserver: NSObjectProtocol?
     private var appConfigNotificationObserver: NSObjectProtocol?
     private var persistedReloadTask: Task<Void, Never>?
@@ -142,11 +140,9 @@ public final class DailyPulseManager: ObservableObject {
 
     public init(
         chatService: ChatService,
-        memoryManager: MemoryManager,
         defaults: UserDefaults = .standard
     ) {
         self.chatService = chatService
-        self.memoryManager = memoryManager
         self.defaults = defaults
         self.retentionLimit = Self.persistedRetentionLimit
         self.runs = []

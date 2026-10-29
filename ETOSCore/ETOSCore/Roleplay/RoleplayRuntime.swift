@@ -19,11 +19,7 @@ struct ResolvedRoleplaySession: Sendable {
         characters.flatMap(\.regexRules)
     }
 
-    var worldbookIDs: [UUID] {
-        var seen = Set<UUID>()
-        return (characters.compactMap(\.embeddedWorldbookID) + binding.additionalWorldbookIDs)
-            .filter { seen.insert($0).inserted }
-    }
+
 }
 
 enum RoleplayRuntime {
@@ -81,7 +77,6 @@ enum RoleplayRuntime {
                 ("description", character.description),
                 ("personality", character.personality),
                 ("scenario", character.scenario),
-                ("system_prompt", character.systemPrompt),
                 ("message_examples", character.messageExamples)
             ]
             let content = fields.compactMap { tag, raw -> String? in
@@ -149,23 +144,6 @@ enum RoleplayRuntime {
         resolved.variables = macroContext.variables
         resolved.macroContext = macroContext
         return transformedMessages
-    }
-
-    static func resolvedWorldbooks(
-        _ worldbooks: [Worldbook],
-        macroContext: RoleplayMacroContext
-    ) -> [Worldbook] {
-        worldbooks.map { worldbook in
-            var updated = worldbook
-            updated.entries = worldbook.entries.map { entry in
-                var entry = entry
-                entry.keys = entry.keys.map { RoleplayMacroResolver.resolve($0, context: macroContext) }
-                entry.secondaryKeys = entry.secondaryKeys.map { RoleplayMacroResolver.resolve($0, context: macroContext) }
-                entry.content = RoleplayMacroResolver.resolve(entry.content, context: macroContext)
-                return entry
-            }
-            return updated
-        }
     }
 
     static func visualContent(

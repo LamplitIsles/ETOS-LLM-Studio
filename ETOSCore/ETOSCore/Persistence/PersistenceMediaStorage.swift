@@ -83,19 +83,6 @@ extension Persistence {
         }
     }
 
-    /// 删除会话相关的所有音频文件
-    /// - Parameters:
-    ///   - messages: 会话中的消息列表
-    public static func deleteAudioFiles(for messages: [ChatMessage]) {
-        let audioFileNames = messages.compactMap { $0.audioFileName }
-        for fileName in audioFileNames {
-            deleteAudio(fileName: fileName)
-        }
-        if !audioFileNames.isEmpty {
-            mediaStorageLogger.info("Deleted \(audioFileNames.count) audio files for session.")
-        }
-    }
-
     /// 获取所有音频文件
     /// - Returns: 音频文件名数组
     public static func getAllAudioFileNames() -> [String] {
@@ -174,19 +161,6 @@ extension Persistence {
             mediaStorageLogger.info("Image file deleted successfully: \(fileName)")
         } catch {
             mediaStorageLogger.warning("Failed to delete image file \(fileName): \(error.localizedDescription)")
-        }
-    }
-
-    /// 删除会话相关的所有图片文件
-    /// - Parameters:
-    ///   - messages: 会话中的消息列表
-    public static func deleteImageFiles(for messages: [ChatMessage]) {
-        let imageFileNames = messages.flatMap { $0.imageFileNames ?? [] }
-        for fileName in imageFileNames {
-            deleteImage(fileName: fileName)
-        }
-        if !imageFileNames.isEmpty {
-            mediaStorageLogger.info("Deleted \(imageFileNames.count) image files for session.")
         }
     }
 
@@ -305,44 +279,6 @@ extension Persistence {
         }
     }
 
-    public static func deleteStoredAttachmentsIfUnreferenced(
-        for messages: [ChatMessage],
-        excludingSessionIDs: Set<UUID> = [],
-        retainedMessages: [ChatMessage] = []
-    ) {
-        let audioFileNames = Set(messages.compactMap(\.audioFileName))
-        let imageFileNames = Set(messages.flatMap { $0.imageFileNames ?? [] })
-        let fileNames = Set(messages.flatMap { $0.fileFileNames ?? [] })
-
-        guard !audioFileNames.isEmpty || !imageFileNames.isEmpty || !fileNames.isEmpty else { return }
-        let remainingMessages = retainedMessages + loadMessagesReferencingStoredAttachments(excludingSessionIDs: excludingSessionIDs)
-
-        for fileName in audioFileNames where !remainingMessages.contains(where: { $0.audioFileName == fileName }) {
-            deleteAudio(fileName: fileName)
-        }
-
-        for fileName in imageFileNames where !remainingMessages.contains(where: { $0.imageFileNames?.contains(fileName) == true }) {
-            deleteImage(fileName: fileName)
-        }
-
-        for fileName in fileNames where !remainingMessages.contains(where: { $0.fileFileNames?.contains(fileName) == true }) {
-            deleteFile(fileName: fileName)
-        }
-    }
-
-    /// 删除会话相关的所有文件附件
-    /// - Parameters:
-    ///   - messages: 会话中的消息列表
-    public static func deleteFileFiles(for messages: [ChatMessage]) {
-        let fileNames = messages.flatMap { $0.fileFileNames ?? [] }
-        for fileName in fileNames {
-            deleteFile(fileName: fileName)
-        }
-        if !fileNames.isEmpty {
-            mediaStorageLogger.info("Deleted \(fileNames.count) file attachments for session.")
-        }
-    }
-
     /// 获取所有文件附件名
     /// - Returns: 文件附件名数组
     public static func getAllFileNames() -> [String] {
@@ -363,26 +299,6 @@ extension Persistence {
             return false
         }
         return (try? Data(contentsOf: url)) == data
-    }
-
-    private static func loadMessagesReferencingStoredAttachments(excludingSessionIDs: Set<UUID>) -> [ChatMessage] {
-        let remainingSessions = loadChatSessions()
-            .filter { !excludingSessionIDs.contains($0.id) }
-        let embeddedSessionIDs = remainingSessions.flatMap {
-            loadEmbeddedSubagentSessionIDs(containerSessionID: $0.id)
-        }
-        let remainingSessionIDs = Set(remainingSessions.map(\.id) + embeddedSessionIDs)
-            .subtracting(excludingSessionIDs)
-        let regularMessages = remainingSessionIDs.flatMap { loadMessages(for: $0) }
-        let continuationMessages = remainingSessions.compactMap {
-            try? loadConversationContinuationContext(for: $0.id)
-        }.flatMap(\.retainedMessages)
-
-        return (regularMessages + continuationMessages).filter {
-            $0.audioFileName != nil
-                || ($0.imageFileNames?.isEmpty == false)
-                || ($0.fileFileNames?.isEmpty == false)
-        }
     }
 
     /// 获取用于存储字体文件的目录URL

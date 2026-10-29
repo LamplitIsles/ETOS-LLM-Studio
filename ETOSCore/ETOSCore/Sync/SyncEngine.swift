@@ -9,9 +9,9 @@
 import Foundation
 
 public enum SyncEngine {
-    static let legacyGlobalSystemPromptKey = "systemPrompt"
-    static let conversationUserProfileRecordID = "conversation.user.profile"
     static let appStorageExcludedExactKeys: Set<String> = [
+        "systemPrompt",
+        "sync.options.globalPrompt",
         "cloudSync.deviceIdentifier",
         "cloudSync.appliedSnapshotChecksums",
         "cloudSync.snapshotChangeToken",
@@ -25,9 +25,7 @@ public enum SyncEngine {
     ]
 
     public static var currentPlatformName: String {
-        #if os(watchOS)
-        return "watchOS"
-        #elseif os(iOS)
+        #if os(iOS)
         return "iOS"
         #else
         return "远端"

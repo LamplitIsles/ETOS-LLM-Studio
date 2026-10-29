@@ -160,7 +160,7 @@ struct BatchSelectableSessionRow: View {
         SessionRowCard(isCurrent: false) {
             SessionListRowContentBody(
                 title: session.name,
-                subtitle: session.topicPrompt,
+                subtitle: nil,
                 footnote: nil,
                 tags: tags,
                 isCurrent: false,
@@ -189,7 +189,6 @@ struct SessionRow: View {
     let onSelect: () -> Void
     let onRename: () -> Void
     let onBranch: (Bool) -> Void
-    let onCompress: () -> Void
     let onMoveToFolder: (UUID?) -> Void
     let onDeleteLastMessage: () -> Void
     let onDelete: () -> Void
@@ -313,16 +312,6 @@ struct SessionRow: View {
         }
 
         Button {
-            onCompress()
-        } label: {
-            Label(
-                NSLocalizedString("压缩为续聊", comment: "Context compression session action"),
-                systemImage: "rectangle.compress.vertical"
-            )
-        }
-        .disabled(session.isTemporary)
-
-        Button {
             onDeleteLastMessage()
         } label: {
             Label(NSLocalizedString("删除最后一条消息", comment: ""), systemImage: "delete.backward")
@@ -382,9 +371,6 @@ struct SessionRow: View {
         if let searchSummary, !searchSummary.isEmpty {
             return searchSummary
         }
-        if let topic = session.topicPrompt, !topic.isEmpty {
-            return topic
-        }
         return locationSummary
     }
 
@@ -393,9 +379,6 @@ struct SessionRow: View {
             return runtimeSummary
         }
         guard searchSummary == nil || searchSummary?.isEmpty == true else {
-            return locationSummary
-        }
-        if let topic = session.topicPrompt, !topic.isEmpty {
             return locationSummary
         }
         return nil
@@ -642,36 +625,6 @@ struct SessionInfoSheet: View {
                     }
                 }
 
-                PromptMacroHelpSection()
-
-                Section {
-                    VStack(alignment: .leading) {
-                        Text(NSLocalizedString("会话系统提示词", comment: "Conversation system prompt"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: optionalTextBinding(\.systemPrompt))
-                            .frame(minHeight: 72)
-                    }
-                    VStack(alignment: .leading) {
-                        Text(NSLocalizedString("主题提示", comment: ""))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: optionalTextBinding(\.topicPrompt))
-                            .frame(minHeight: 72)
-                    }
-                    VStack(alignment: .leading) {
-                        Text(NSLocalizedString("增强提示词", comment: ""))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: optionalTextBinding(\.enhancedPrompt))
-                            .frame(minHeight: 72)
-                    }
-                } header: {
-                    Text(NSLocalizedString("会话提示词", comment: "Conversation-specific prompts"))
-                } footer: {
-                    Text(NSLocalizedString("这些提示词只对当前会话生效，App 的工具协议与运行约束不会被替换。", comment: "Conversation prompt editor footer"))
-                }
-
                 Section(NSLocalizedString("首选模型", comment: "Preferred conversation model")) {
                     Picker(NSLocalizedString("首选模型", comment: "Preferred conversation model"), selection: preferredModelBinding) {
                         Text(NSLocalizedString("跟随全局模型", comment: "Follow global model"))
@@ -756,9 +709,6 @@ struct SessionInfoSheet: View {
                 documents: [GuideDocumentReference(id: "settings-core", title: "Core Settings")],
                 settings: [
                     .string("name", label: NSLocalizedString("会话名称", comment: ""), get: { sessionDraft.name }, set: { sessionDraft.name = $0 }),
-                    .string("system_prompt", label: NSLocalizedString("会话系统提示词", comment: ""), get: { optionalTextBinding(\.systemPrompt).wrappedValue }, set: { optionalTextBinding(\.systemPrompt).wrappedValue = $0 }),
-                    .string("topic_prompt", label: NSLocalizedString("主题提示", comment: ""), get: { optionalTextBinding(\.topicPrompt).wrappedValue }, set: { optionalTextBinding(\.topicPrompt).wrappedValue = $0 }),
-                    .string("enhanced_prompt", label: NSLocalizedString("增强提示词", comment: ""), get: { optionalTextBinding(\.enhancedPrompt).wrappedValue }, set: { optionalTextBinding(\.enhancedPrompt).wrappedValue = $0 }),
                     .readOnly("preferred_model", label: NSLocalizedString("首选模型", comment: ""), value: { .string(sessionDraft.preferredModelIdentifier ?? "") }),
                     .readOnly("save_required", label: NSLocalizedString("修改后需要保存", comment: "向导保存说明"), value: { .bool(true) })
                 ]
@@ -788,22 +738,12 @@ struct SessionInfoSheet: View {
         )
     }
 
-    private func optionalTextBinding(_ keyPath: WritableKeyPath<ChatSession, String?>) -> Binding<String> {
-        Binding(
-            get: { sessionDraft[keyPath: keyPath] ?? "" },
-            set: { value in
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                sessionDraft[keyPath: keyPath] = trimmed.isEmpty ? nil : value
-            }
-        )
-    }
-
     private func reloadRelationshipDetails() async {
         let sessionID = payload.session.id
         relationshipDetails = await Task.detached(priority: .userInitiated) {
             let origins = Persistence.loadChildConversationOrigins(parentSessionID: sessionID)
             let namesByID = Dictionary(
-                uniqueKeysWithValues: Persistence.loadChatSessions().map { ($0.id, $0.name) }
+                uniqueKeysWithValues: ChatService.shared.chatSessionsSubject.value.map { ($0.id, $0.name) }
             )
             let children = origins.map { origin in
                 SessionRelationshipDetails.Child(

@@ -28,16 +28,12 @@ public enum SyncDeltaEngine {
     public static func buildLocalSnapshot(
         options: SyncOptions,
         channel: String,
-        chatService: ChatService = .shared,
         userDefaults: UserDefaults = .standard,
-        sessionIDs: Set<UUID>? = nil,
         now: Date = Date()
     ) -> SyncLocalSnapshot {
         let package = SyncEngine.buildPackage(
             options: options,
-            chatService: chatService,
-            userDefaults: userDefaults,
-            sessionIDs: sessionIDs
+            userDefaults: userDefaults
         )
         let manifest = buildManifest(
             from: package,
@@ -209,7 +205,6 @@ public enum SyncDeltaEngine {
         channel: String,
         remoteManifest: SyncManifest? = nil,
         chatService: ChatService = .shared,
-        memoryManager: MemoryManager? = nil,
         userDefaults: UserDefaults = .standard
     ) async -> SyncMergeSummary {
         var summary = SyncMergeSummary.empty
@@ -240,21 +235,17 @@ public enum SyncDeltaEngine {
             summary = await SyncEngine.apply(
                 package: filteredDelta.package,
                 chatService: chatService,
-                memoryManager: memoryManager,
                 userDefaults: userDefaults
             )
         }
 
         guard !filteredDelta.deletions.isEmpty else { return summary }
-        let resolvedMemoryManager = memoryManager ?? .shared
 
         var providerDeleted = false
         var backgroundDeleted = false
         var dailyPulseDeleted = false
         var usageStatsDeleted = false
         var fontDeleted = false
-        var memoryIDsToDelete = Set<UUID>()
-        var shouldDeleteConversationProfile = false
 
         for deletion in filteredDelta.deletions {
             switch deletion.type {
@@ -265,17 +256,6 @@ public enum SyncDeltaEngine {
                     summary.importedProviders += 1
                     providerDeleted = true
                 }
-            case .sessionTag:
-                guard let id = UUID(uuidString: deletion.recordID) else { continue }
-                if chatService.sessionTagsSubject.value.contains(where: { $0.id == id }) {
-                    chatService.deleteSessionTag(tagID: id)
-                    summary.importedSessions += 1
-                }
-            case .session:
-                guard let id = UUID(uuidString: deletion.recordID) else { continue }
-                if applySessionDeletion(sessionID: id, chatService: chatService) {
-                    summary.importedSessions += 1
-                }
             case .background:
                 ConfigLoader.setupBackgroundsDirectory()
                 let url = ConfigLoader.getBackgroundsDirectory().appendingPathComponent(deletion.recordID)
@@ -284,13 +264,6 @@ public enum SyncDeltaEngine {
                     summary.importedBackgrounds += 1
                     backgroundDeleted = true
                 }
-            case .memory:
-                if deletion.recordID == SyncEngine.conversationUserProfileRecordID {
-                    shouldDeleteConversationProfile = true
-                    continue
-                }
-                guard let id = UUID(uuidString: deletion.recordID) else { continue }
-                memoryIDsToDelete.insert(id)
             case .mcpServer:
                 guard let id = UUID(uuidString: deletion.recordID) else { continue }
                 if let server = MCPServerStore.loadServers().first(where: { $0.id == id }) {
@@ -321,13 +294,6 @@ public enum SyncDeltaEngine {
                 if tools.count != before {
                     ShortcutToolStore.saveTools(tools)
                     summary.importedShortcutTools += 1
-                }
-            case .worldbook:
-                guard let id = UUID(uuidString: deletion.recordID) else { continue }
-                let existing = WorldbookStore.shared.loadWorldbooks()
-                if existing.contains(where: { $0.id == id }) {
-                    WorldbookStore.shared.deleteWorldbook(id: id)
-                    summary.importedWorldbooks += 1
                 }
             case .feedbackTicket:
                 if let issueNumber = Int(deletion.recordID) {
@@ -387,19 +353,6 @@ public enum SyncDeltaEngine {
                 // AppStorage 删除为高风险操作，当前策略仅忽略删除指令。
                 continue
             }
-        }
-
-        if !memoryIDsToDelete.isEmpty {
-            let currentMemories = await resolvedMemoryManager.getAllMemories()
-            let targets = currentMemories.filter { memoryIDsToDelete.contains($0.id) }
-            if !targets.isEmpty {
-                await resolvedMemoryManager.deleteMemories(targets)
-                summary.importedMemories += targets.count
-            }
-        }
-        if shouldDeleteConversationProfile, ConversationMemoryManager.loadUserProfile() != nil {
-            try? ConversationMemoryManager.clearUserProfile()
-            summary.importedMemories += 1
         }
 
         if providerDeleted {

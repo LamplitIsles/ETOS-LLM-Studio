@@ -1,3 +1,5 @@
+> **首轮裁剪中**：本分支正在移除 Watch、本地模型、内嵌 Linux、长期记忆、世界书、本地聊天历史及跨会话摘要，并保留 macOS App 和 iOS 原生设备工具；尚未接入 CFL。本阶段允许暂时无法编译或运行，未进行构建或运行验证。下方为裁剪前的历史功能说明，不代表当前分支功能。
+
 # ETOS LLM Studio
 
 ![Swift](https://img.shields.io/badge/Swift-FA7343?style=flat-square&logo=swift&logoColor=white)

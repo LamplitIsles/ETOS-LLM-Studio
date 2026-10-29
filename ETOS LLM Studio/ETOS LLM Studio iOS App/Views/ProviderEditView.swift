@@ -35,9 +35,6 @@ struct ProviderEditView: View {
     private let savedHeaderOverrideTexts: [String]
     private let savedUseProviderProxyOverride: Bool
     private let savedProviderProxyConfiguration: NetworkProxyConfiguration
-    private var isLocalProvider: Bool {
-        LocalModelProviderBridge.isLocalProvider(provider)
-    }
     
     init(
         provider: Provider,
@@ -105,7 +102,6 @@ struct ProviderEditView: View {
                     Text(ProviderAPIFormatOption.geminiInteractions.localizedName).tag("gemini-interactions")
                     Text(NSLocalizedString("Anthropic", comment: "Provider API format")).tag("anthropic")
                 }
-                .disabled(isLocalProvider)
             }
             
             Section(header: Text(NSLocalizedString("认证", comment: "")), footer: Text(apiKeysHint)) {
@@ -128,7 +124,6 @@ struct ProviderEditView: View {
                         if enabled { showKeyManagement = true }
                     }
                 ))
-                .disabled(isLocalProvider)
                 if keyEditor.draft.multiKeyEnabled {
                     Button { showKeyManagement = true } label: {
                         LabeledContent(NSLocalizedString("管理 API Key", comment: ""),
@@ -490,9 +485,6 @@ struct ProviderEditView: View {
     }
 
     private var apiBaseURLHint: String {
-        if isLocalProvider {
-            return NSLocalizedString("本地提供商只用于模型管理和排序；API 地址、认证、请求头和代理会被保留但不会参与本地推理。", comment: "Local provider base URL hint")
-        }
         switch provider.apiFormat {
         case "gemini-interactions":
             return GeminiInteractionsConfigurationHelp.baseURLHint
@@ -510,13 +502,10 @@ struct ProviderEditView: View {
     }
 
     private var showsChatEndpointPathField: Bool {
-        !isLocalProvider && provider.apiFormat == "openai-compatible"
+        provider.apiFormat == "openai-compatible"
     }
 
     private var apiKeysHint: String {
-        if isLocalProvider {
-            return NSLocalizedString("本地推理不会读取 API Key。这里保留字段只是为了沿用提供商配置界面。", comment: "Local provider API key hint")
-        }
         return NSLocalizedString("可用逗号分隔多个 Key，或开启多 Key 模式逐条添加并填写备注。", comment: "")
     }
 
@@ -556,7 +545,7 @@ struct ProviderEditView: View {
     private var isSaveDisabled: Bool {
         provider.name.isEmpty ||
         provider.baseURL.isEmpty ||
-        (!isLocalProvider && !keyEditor.isValid) ||
+        !keyEditor.isValid ||
         providerProxyValidationError != nil ||
         headerOverrideEntries.contains { $0.error != nil }
     }

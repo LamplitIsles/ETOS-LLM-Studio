@@ -63,7 +63,6 @@ struct ChatServiceShortcutToolTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": adapter],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(
@@ -77,12 +76,8 @@ struct ChatServiceShortcutToolTests {
             content: "hello",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -140,7 +135,6 @@ struct ChatServiceShortcutToolTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": adapter],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(
@@ -154,12 +148,8 @@ struct ChatServiceShortcutToolTests {
             content: "hello",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -222,7 +212,6 @@ struct ChatServiceShortcutToolTests {
 
         let service = ChatService(
             adapters: ["openai-compatible": adapter],
-            memoryManager: MemoryManager(),
             urlSession: session
         )
         service.setSelectedModel(
@@ -236,12 +225,8 @@ struct ChatServiceShortcutToolTests {
             content: "hello",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 5,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 

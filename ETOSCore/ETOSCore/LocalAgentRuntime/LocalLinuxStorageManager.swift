@@ -21,9 +21,6 @@ public struct LocalLinuxStorageLayout: Equatable, Sendable {
     public let workspaces: URL
     public let exports: URL
 
-    public let legacyShared: URL
-    public let legacyExports: URL
-
     public init(
         documentsDirectory: URL,
         sharedDirectory: URL? = nil,
@@ -35,18 +32,10 @@ public struct LocalLinuxStorageLayout: Equatable, Sendable {
         rootFSData = rootFS.appendingPathComponent("data", isDirectory: true)
         diagnostics = system.appendingPathComponent("Diagnostics", isDirectory: true)
         home = root.appendingPathComponent("Home", isDirectory: true)
-        legacyShared = root.appendingPathComponent("Shared", isDirectory: true)
-        legacyExports = root.appendingPathComponent("Exports", isDirectory: true)
-        shared = sharedDirectory ?? legacyShared
+        shared = sharedDirectory ?? root.appendingPathComponent("Shared", isDirectory: true)
         workspaces = root.appendingPathComponent("Workspaces", isDirectory: true)
-        exports = exportsDirectory ?? legacyExports
+        exports = exportsDirectory ?? root.appendingPathComponent("Exports", isDirectory: true)
     }
-}
-
-public enum LocalLinuxSystemIntegrity: Equatable, Sendable {
-    case notInstalled
-    case installed(seedSHA256: String)
-    case damaged(String)
 }
 
 public struct LocalLinuxStorageUsage: Equatable, Sendable {
@@ -110,23 +99,7 @@ public actor LocalLinuxStorageManager {
         uuidString: "7AC179AE-1BEA-444A-B311-C322954DA4A5"
     )!
 
-    /// 工作区必须直接使用启动时同步完成的内部挂载路径，不能依赖 PID 1
-    /// 稍后创建的 `/workspace` 软链接，否则刚显示“可用”时启动 PTY 会遇到 ENOENT。
-    static func guestWorkspacePath(forHostRelativePath hostRelativePath: String) -> String {
-        let prefix = "Workspaces/"
-        guard hostRelativePath.hasPrefix(prefix) else {
-            return LocalLinuxMountManager.workspaceMountGuestPath
-        }
-        let component = String(hostRelativePath.dropFirst(prefix.count))
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard !component.isEmpty else {
-            return LocalLinuxMountManager.workspaceMountGuestPath
-        }
-        return LocalLinuxMountManager.workspaceMountGuestPath + "/" + component
-    }
-
     private static let receiptPrefix = "format=ish-rootfs-install-v1\nseed_archive_sha256="
-    private static let damageMarkerName = "ETOS-System-Damaged.txt"
     private let fileManager: FileManager
     private nonisolated let workspaceSizeRefresher: LocalLinuxWorkspaceSizeRefresher
     public nonisolated let layout: LocalLinuxStorageLayout
@@ -165,111 +138,20 @@ public actor LocalLinuxStorageManager {
         values.isExcludedFromBackup = true
         var systemURL = layout.system
         try systemURL.setResourceValues(values)
-        if layout.shared != layout.legacyShared || layout.exports != layout.legacyExports {
-            try ETOSAppGroupStorageMigrator.migrateLegacyLinuxDirectories(
-                layout: layout,
-                sharedLayout: ETOSSharedStorageLayout(
-                    container: layout.shared.deletingLastPathComponent()
-                ),
-                fileManager: fileManager
-            )
-        }
         return layout
     }
 
-    public func systemIntegrity(expectedSeedSHA256: String? = nil) -> LocalLinuxSystemIntegrity {
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: layout.rootFS.path, isDirectory: &isDirectory) else {
-            return .notInstalled
-        }
-        guard isDirectory.boolValue else {
-            return .damaged(NSLocalizedString("RootFS 不是目录。", comment: "Damaged Linux RootFS reason"))
-        }
-        let damageMarker = layout.system.appendingPathComponent(Self.damageMarkerName, isDirectory: false)
-        if let reason = try? String(contentsOf: damageMarker, encoding: .utf8), !reason.isEmpty {
-            return .damaged(reason)
-        }
-
-        let requiredURLs = [
-            layout.rootFS.appendingPathComponent("meta.db", isDirectory: false),
-            layout.rootFSData,
-            layout.rootFS.appendingPathComponent("rootfs-installation.txt", isDirectory: false)
-        ]
-        guard requiredURLs.allSatisfy({ fileManager.fileExists(atPath: $0.path) }) else {
-            return .damaged(NSLocalizedString("RootFS 缺少安装收据或文件系统数据。", comment: "Damaged Linux RootFS reason"))
-        }
-
-        let receiptURL = requiredURLs[2]
-        guard let receipt = try? String(contentsOf: receiptURL, encoding: .utf8),
-              receipt.hasPrefix(Self.receiptPrefix) else {
-            return .damaged(NSLocalizedString("RootFS 安装收据无效。", comment: "Damaged Linux RootFS reason"))
-        }
-        let digest = receipt.dropFirst(Self.receiptPrefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard digest.count == 64, digest.allSatisfy({ $0.isHexDigit }) else {
-            return .damaged(NSLocalizedString("RootFS 安装摘要无效。", comment: "Damaged Linux RootFS reason"))
-        }
-        if let expectedSeedSHA256,
-           !expectedSeedSHA256.isEmpty,
-           digest.caseInsensitiveCompare(expectedSeedSHA256) != .orderedSame {
-            return .damaged(NSLocalizedString("RootFS 版本与当前内置系统不一致。", comment: "Damaged Linux RootFS reason"))
-        }
-        return .installed(seedSHA256: digest.lowercased())
-    }
-
-    /// 直接读取 apk 的持久化数据库，避免仅为刷新页面状态启动 Linux 进程。
-    public func installedPackageNames() throws -> Set<String> {
-        let databaseURL = layout.rootFSData
-            .appendingPathComponent("lib", isDirectory: true)
-            .appendingPathComponent("apk", isDirectory: true)
-            .appendingPathComponent("db", isDirectory: true)
-            .appendingPathComponent("installed", isDirectory: false)
-        guard fileManager.fileExists(atPath: databaseURL.path) else { return [] }
-        let database = try String(contentsOf: databaseURL, encoding: .utf8)
-        return Self.installedPackageNames(inAPKDatabase: database)
-    }
-
-    static func installedPackageNames(inAPKDatabase database: String) -> Set<String> {
-        Set(
-            database.split(whereSeparator: \Character.isNewline).compactMap { line in
-                guard line.hasPrefix("P:"), line.count > 2 else { return nil }
-                return String(line.dropFirst(2))
-            }
-        )
-    }
-
-    /// 直接检查持久化 RootFS，避免用户只是打开设置页时就启动 Linux。
+    #if os(macOS)
     public func availableTerminalShellPaths() -> [String] {
-        #if os(macOS)
         let contents = try? String(contentsOfFile: "/etc/shells", encoding: .utf8)
         return LocalLinuxTerminalShellConfiguration.candidatePaths(shellsFileContents: contents)
             .filter { fileManager.isExecutableFile(atPath: $0) }
-        #else
-        let shellsFileURL = layout.rootFSData
-            .appendingPathComponent("etc", isDirectory: true)
-            .appendingPathComponent("shells", isDirectory: false)
-        let shellsFileContents = try? String(contentsOf: shellsFileURL, encoding: .utf8)
-        let availablePaths = LocalLinuxTerminalShellConfiguration.candidatePaths(
-            shellsFileContents: shellsFileContents
-        ).filter { guestPath in
-            let hostURL = layout.rootFSData.appendingPathComponent(String(guestPath.dropFirst()))
-            var isDirectory: ObjCBool = false
-            return fileManager.fileExists(atPath: hostURL.path, isDirectory: &isDirectory)
-                && !isDirectory.boolValue
-        }
-
-        // 尚未准备 RootFS 时仍允许保留默认值；系统安装完成后必然提供 /bin/sh。
-        if availablePaths.contains(LocalLinuxTerminalShellConfiguration.defaultPath) {
-            return availablePaths
-        }
-        return [LocalLinuxTerminalShellConfiguration.defaultPath] + availablePaths
-        #endif
     }
+    #endif
 
     private func executionWorkspacePath(_ relativePath: String) -> String {
         #if os(macOS)
         return layout.root.appendingPathComponent(relativePath, isDirectory: true).path
-        #else
-        return Self.guestWorkspacePath(forHostRelativePath: relativePath)
         #endif
     }
 
@@ -415,11 +297,6 @@ public actor LocalLinuxStorageManager {
         #if os(macOS)
         let workspacePath = layout.root.lastPathComponent + "/" + workspace.hostRelativePath
         return "app://" + workspacePath + (relativePath.isEmpty ? "" : "/" + relativePath)
-        #else
-        let guestPath = relativePath.isEmpty
-            ? workspace.guestPath
-            : workspace.guestPath + "/" + relativePath
-        return "linux://" + guestPath
         #endif
     }
 
@@ -678,27 +555,6 @@ public actor LocalLinuxStorageManager {
         if existed { try fileManager.removeItem(at: backup) }
     }
 
-    public func deleteSystem(deleteUserData: Bool) throws {
-        defer {
-            if deleteUserData { ETOSSharedWorkspaceFiles.notifyChange() }
-        }
-        if fileManager.fileExists(atPath: layout.system.path) {
-            try fileManager.removeItem(at: layout.system)
-        }
-        if deleteUserData {
-            for directory in [layout.home, layout.shared, layout.workspaces] where fileManager.fileExists(atPath: directory.path) {
-                try fileManager.removeItem(at: directory)
-            }
-        }
-        try prepareLayout()
-    }
-
-    public func markSystemDamaged(reason: String) throws {
-        try prepareLayout()
-        let marker = layout.system.appendingPathComponent(Self.damageMarkerName, isDirectory: false)
-        try Data(reason.utf8).write(to: marker, options: .atomic)
-    }
-
     /// 迁移只推进安装收据代表的基线版本，不覆盖用户自行安装的软件包或配置。
     public func recordInstalledSeedSHA256(_ seedSHA256: String) throws {
         guard seedSHA256.count == 64, seedSHA256.allSatisfy(\.isHexDigit) else {
@@ -714,26 +570,6 @@ public actor LocalLinuxStorageManager {
         try Data(receipt.utf8).write(to: receiptURL, options: .atomic)
     }
 
-    @discardableResult
-    public func preserveCurrentRootFS(reason: String) throws -> URL? {
-        guard fileManager.fileExists(atPath: layout.rootFS.path) else { return nil }
-        let recoveryRoot = layout.system.appendingPathComponent("Recovered", isDirectory: true)
-        try fileManager.createDirectory(at: recoveryRoot, withIntermediateDirectories: true)
-        let formatter = ISO8601DateFormatter()
-        let timestamp = formatter.string(from: Date())
-            .replacingOccurrences(of: ":", with: "-")
-        var destination = recoveryRoot.appendingPathComponent("RootFS-\(timestamp)", isDirectory: true)
-        if fileManager.fileExists(atPath: destination.path) {
-            destination = recoveryRoot.appendingPathComponent("RootFS-\(UUID().uuidString)", isDirectory: true)
-        }
-        try fileManager.moveItem(at: layout.rootFS, to: destination)
-        let note = destination.appendingPathComponent("ETOS-Recovery-Reason.txt", isDirectory: false)
-        try Data(reason.utf8).write(to: note, options: .atomic)
-        let marker = layout.system.appendingPathComponent(Self.damageMarkerName, isDirectory: false)
-        try? fileManager.removeItem(at: marker)
-        return destination
-    }
-
     public func storageUsage() -> LocalLinuxStorageUsage {
         LocalLinuxStorageUsage(
             systemBytes: directorySize(at: layout.system),
@@ -742,15 +578,6 @@ public actor LocalLinuxStorageManager {
             workspaceBytes: directorySize(at: layout.workspaces),
             exportBytes: directorySize(at: layout.exports)
         )
-    }
-
-    public func iCloudLinuxDirectory() throws -> URL? {
-        guard let container = fileManager.url(forUbiquityContainerIdentifier: nil) else { return nil }
-        let directory = container
-            .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("Linux", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
     }
 
     private nonisolated func checkedDescendant(_ candidate: URL, of parent: URL) throws -> URL {

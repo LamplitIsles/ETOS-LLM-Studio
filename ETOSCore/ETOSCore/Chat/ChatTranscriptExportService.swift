@@ -58,16 +58,13 @@ public struct ChatTranscriptExportOutput: Sendable {
 /// 平台层渲染 PNG 前所需的稳定消息范围与文件名。
 public struct ChatTranscriptPreparedImageExport: Sendable {
     public let messages: [ChatMessage]
-    public let continuationContext: ConversationContinuationContext?
     public let suggestedFileName: String
 
     public init(
         messages: [ChatMessage],
-        continuationContext: ConversationContinuationContext? = nil,
         suggestedFileName: String
     ) {
         self.messages = messages
-        self.continuationContext = continuationContext
         self.suggestedFileName = suggestedFileName
     }
 
@@ -133,20 +130,17 @@ public struct ChatTranscriptExportService {
         session: ChatSession?,
         messages: [ChatMessage],
         includeReasoning: Bool = true,
-        continuationContext: ConversationContinuationContext? = nil,
         upToMessageID: UUID? = nil,
         selectedMessageIDs: Set<UUID>? = nil,
         exportedAt: Date = Date()
     ) throws -> ChatTranscriptPreparedImageExport {
         let visibleMessages = Self.visibleImageMessages(from: messages)
-        let scopedMessages = try resolveScopedMessagesAllowingContextOnly(
+        let scopedMessages = try resolveScopedMessages(
             visibleMessages,
-            continuationContext: continuationContext,
             upToMessageID: upToMessageID,
             selectedMessageIDs: selectedMessageIDs
         ).filter { $0.role != .system }
-        let exportedContinuationContext = selectedMessageIDs == nil ? continuationContext : nil
-        guard !scopedMessages.isEmpty || exportedContinuationContext != nil else {
+        guard !scopedMessages.isEmpty else {
             throw ChatTranscriptExportError.emptyMessages
         }
         let context = ExportContext(
@@ -155,7 +149,6 @@ public struct ChatTranscriptExportService {
             format: .png,
             includeReasoning: includeReasoning,
             includeSystemPrompt: false,
-            continuationContext: exportedContinuationContext,
             exportedAt: exportedAt,
             upToMessageID: upToMessageID,
             selectedMessageIDs: selectedMessageIDs,
@@ -163,7 +156,6 @@ public struct ChatTranscriptExportService {
         )
         return ChatTranscriptPreparedImageExport(
             messages: scopedMessages,
-            continuationContext: exportedContinuationContext,
             suggestedFileName: suggestedFileName(context)
         )
     }
@@ -174,25 +166,22 @@ public struct ChatTranscriptExportService {
         format: ChatTranscriptExportFormat,
         includeReasoning: Bool = true,
         includeSystemPrompt: Bool = true,
-        continuationContext: ConversationContinuationContext? = nil,
         upToMessageID: UUID? = nil,
         selectedMessageIDs: Set<UUID>? = nil,
         imageStyle: ChatTranscriptImageStyle = ChatTranscriptImageStyle(),
         exportedAt: Date = Date()
     ) throws -> ChatTranscriptExportOutput {
-        let resolvedMessages = try resolveScopedMessagesAllowingContextOnly(
+        let resolvedMessages = try resolveScopedMessages(
             messages,
-            continuationContext: continuationContext,
             upToMessageID: upToMessageID,
             selectedMessageIDs: selectedMessageIDs
         )
-        let exportedContinuationContext = selectedMessageIDs == nil ? continuationContext : nil
         // 聊天长图只呈现用户在聊天界面中可见的消息，不泄露系统提示词。
         let effectiveIncludeSystemPrompt = format != .png && includeSystemPrompt
         let scopedMessages = resolvedMessages.filter {
             effectiveIncludeSystemPrompt || $0.role != .system
         }
-        guard !scopedMessages.isEmpty || exportedContinuationContext != nil else {
+        guard !scopedMessages.isEmpty else {
             throw ChatTranscriptExportError.emptyMessages
         }
         let context = ExportContext(
@@ -201,7 +190,6 @@ public struct ChatTranscriptExportService {
             format: format,
             includeReasoning: includeReasoning,
             includeSystemPrompt: effectiveIncludeSystemPrompt,
-            continuationContext: exportedContinuationContext,
             exportedAt: exportedAt,
             upToMessageID: upToMessageID,
             selectedMessageIDs: selectedMessageIDs,
@@ -220,16 +208,9 @@ public struct ChatTranscriptExportService {
             let plain = buildPlainText(context)
             data = Data(plain.utf8)
         case .png:
-            var imageMessages = scopedMessages
-            if let exportedContinuationContext {
-                imageMessages.insert(
-                    continuationImageFallbackMessage(exportedContinuationContext),
-                    at: 0
-                )
-            }
             data = try ChatTranscriptImageRenderer().render(
                 session: session,
-                messages: imageMessages,
+                messages: scopedMessages,
                 includeReasoning: includeReasoning,
                 style: imageStyle
             )
@@ -271,25 +252,6 @@ public struct ChatTranscriptExportService {
             throw ChatTranscriptExportError.emptyMessages
         }
         return scoped
-    }
-
-    private func resolveScopedMessagesAllowingContextOnly(
-        _ messages: [ChatMessage],
-        continuationContext: ConversationContinuationContext?,
-        upToMessageID: UUID?,
-        selectedMessageIDs: Set<UUID>?
-    ) throws -> [ChatMessage] {
-        if messages.isEmpty,
-           continuationContext != nil,
-           upToMessageID == nil,
-           selectedMessageIDs == nil {
-            return []
-        }
-        return try resolveScopedMessages(
-            messages,
-            upToMessageID: upToMessageID,
-            selectedMessageIDs: selectedMessageIDs
-        )
     }
 
     private func suggestedFileName(_ context: ExportContext) -> String {
@@ -348,8 +310,6 @@ public struct ChatTranscriptExportService {
         lines.append("- \(localizedExportText("系统提示词")): \(context.includeSystemPrompt ? localizedExportText("包含") : localizedExportText("不包含"))")
         lines.append("- \(localizedExportText("消息数量")): \(context.messages.count)")
 
-        appendContinuationContextIfNeeded(context, markdownLines: &lines)
-
         appendSystemPromptSnapshotsIfNeeded(context, markdownLines: &lines)
 
         lines.append("")
@@ -390,8 +350,6 @@ public struct ChatTranscriptExportService {
         lines.append("\(localizedExportText("思考/推理")): \(context.includeReasoning ? localizedExportText("包含") : localizedExportText("不包含"))")
         lines.append("\(localizedExportText("系统提示词")): \(context.includeSystemPrompt ? localizedExportText("包含") : localizedExportText("不包含"))")
         lines.append("\(localizedExportText("消息数量")): \(context.messages.count)")
-
-        appendContinuationContextIfNeeded(context, plainLines: &lines)
 
         appendSystemPromptSnapshotsIfNeeded(context, plainLines: &lines)
         lines.append("")
@@ -438,88 +396,6 @@ public struct ChatTranscriptExportService {
             }
             lines.append("")
         }
-    }
-
-    private func appendContinuationContextIfNeeded(
-        _ context: ExportContext,
-        markdownLines lines: inout [String]
-    ) {
-        guard let continuation = context.continuationContext else { return }
-        lines.append("")
-        lines.append("## \(localizedExportText("续聊上下文"))")
-        lines.append("")
-        lines.append("- \(localizedExportText("来源会话")): \(continuation.sourceSessionNameSnapshot)")
-        lines.append("- \(localizedExportText("摘要消息数量")): \(continuation.summarizedMessageCount)")
-        lines.append("- \(localizedExportText("保留原文轮次")): \(continuation.retainedRoundCount)")
-        lines.append("")
-        lines.append("### \(localizedExportText("较早对话摘要"))")
-        lines.append("")
-        lines.append(continuation.summary)
-        lines.append("")
-        if !continuation.retainedMessages.isEmpty {
-            lines.append("### \(localizedExportText("最近对话原文"))")
-            lines.append("")
-            for message in continuation.retainedMessages {
-                lines.append("#### \(roleTitle(message.role))")
-                lines.append("")
-                lines.append(messageBodyOrPlaceholder(message.content))
-                lines.append("")
-            }
-        }
-    }
-
-    private func appendContinuationContextIfNeeded(
-        _ context: ExportContext,
-        plainLines lines: inout [String]
-    ) {
-        guard let continuation = context.continuationContext else { return }
-        lines.append("")
-        lines.append(localizedExportText("续聊上下文"))
-        lines.append(String(repeating: "-", count: 42))
-        lines.append("\(localizedExportText("来源会话")): \(continuation.sourceSessionNameSnapshot)")
-        lines.append("\(localizedExportText("摘要消息数量")): \(continuation.summarizedMessageCount)")
-        lines.append("\(localizedExportText("保留原文轮次")): \(continuation.retainedRoundCount)")
-        lines.append("")
-        lines.append("[\(localizedExportText("较早对话摘要"))]")
-        lines.append(continuation.summary)
-        if !continuation.retainedMessages.isEmpty {
-            lines.append("")
-            lines.append("[\(localizedExportText("最近对话原文"))]")
-            for message in continuation.retainedMessages {
-                lines.append("\(roleTitle(message.role)):")
-                lines.append(messageBodyOrPlaceholder(message.content))
-            }
-        }
-    }
-
-    /// Core Graphics 兜底导出没有 SwiftUI 专用卡片，因此用单独的非用户消息完整承载交接内容。
-    private func continuationImageFallbackMessage(
-        _ continuation: ConversationContinuationContext
-    ) -> ChatMessage {
-        var lines = [
-            localizedExportText("续聊上下文"),
-            "\(localizedExportText("来源会话")): \(continuation.sourceSessionNameSnapshot)",
-            "\(localizedExportText("摘要消息数量")): \(continuation.summarizedMessageCount)",
-            "\(localizedExportText("保留原文轮次")): \(continuation.retainedRoundCount)",
-            "",
-            localizedExportText("较早对话摘要"),
-            continuation.summary
-        ]
-        if !continuation.retainedMessages.isEmpty {
-            lines.append("")
-            lines.append(localizedExportText("最近对话原文"))
-            for message in continuation.retainedMessages {
-                lines.append("")
-                lines.append("\(roleTitle(message.role)):")
-                lines.append(messageBodyOrPlaceholder(message.content))
-            }
-        }
-        return ChatMessage(
-            id: continuation.id,
-            role: .assistant,
-            content: lines.joined(separator: "\n"),
-            requestedAt: continuation.createdAt
-        )
     }
 
     private func appendSystemPromptSnapshotsIfNeeded(_ context: ExportContext, plainLines lines: inout [String]) {
@@ -828,7 +704,6 @@ public struct ChatTranscriptExportService {
         let format: ChatTranscriptExportFormat
         let includeReasoning: Bool
         let includeSystemPrompt: Bool
-        let continuationContext: ConversationContinuationContext?
         let exportedAt: Date
         let upToMessageID: UUID?
         let selectedMessageIDs: Set<UUID>?

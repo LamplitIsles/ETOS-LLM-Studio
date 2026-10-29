@@ -58,12 +58,10 @@ public enum GuideModelSetupStateResolver {
         providers: [Provider],
         selectedModel: RunnableModel?
     ) -> GuideModelSetupState {
-        let nonLocalProviders = providers.filter { !LocalModelProviderBridge.isLocalProvider($0) }
-        let hasEnabledLocalProvider = providers.contains(where: LocalModelProviderBridge.isLocalProvider)
-        guard !nonLocalProviders.isEmpty || hasEnabledLocalProvider else { return .needsProvider }
+        guard !providers.isEmpty else { return .needsProvider }
 
-        let remoteHasCredentials = nonLocalProviders.contains { !$0.apiKeys.isEmpty }
-        if !hasEnabledLocalProvider && !remoteHasCredentials {
+        let remoteHasCredentials = providers.contains { !$0.apiKeys.isEmpty }
+        if !remoteHasCredentials {
             return .needsCredential
         }
 

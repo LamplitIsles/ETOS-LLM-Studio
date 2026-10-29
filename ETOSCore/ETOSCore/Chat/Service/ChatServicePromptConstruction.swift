@@ -3,29 +3,17 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 负责 ChatService 的系统提示词拼装、世界书注入与周期性时间路标构造。
+// 负责 ChatService 的系统提示词拼装与周期性时间路标构造。
 // ============================================================================
 
 import Foundation
 
 extension ChatService {
     func buildFinalSystemPrompt(
-        global: String?,
-        conversationSystem: String? = nil,
-        topic: String?,
         includeConversationRuntime: Bool = false,
         linkedConversations: [LinkedConversationContact] = [],
-        memories: [MemoryItem],
-        recentConversationSummaries: [ConversationSessionSummary],
-        conversationProfile: ConversationUserProfile?,
         includeSystemTime: Bool,
-        worldbookBefore: [WorldbookInjection] = [],
-        worldbookAfter: [WorldbookInjection] = [],
-        worldbookANTop: [WorldbookInjection] = [],
-        worldbookANBottom: [WorldbookInjection] = [],
-        roleplayPrompt: String? = nil,
-        includeLocalLinuxInstructions: Bool = false,
-        localAgentPrompt: String? = nil
+        roleplayPrompt: String? = nil
     ) -> String {
         var parts: [String] = []
 
@@ -41,40 +29,9 @@ extension ChatService {
             """)
         }
 
-        if !worldbookBefore.isEmpty {
-            parts.append(makeWorldbookPromptBlock(tag: "worldbook_before", entries: worldbookBefore))
-        }
-        if !worldbookAfter.isEmpty {
-            parts.append(makeWorldbookPromptBlock(tag: "worldbook_after", entries: worldbookAfter))
-        }
-        if !worldbookANTop.isEmpty {
-            parts.append(makeWorldbookPromptBlock(tag: "worldbook_an_top", entries: worldbookANTop))
-        }
-        if !worldbookANBottom.isEmpty {
-            parts.append(makeWorldbookPromptBlock(tag: "worldbook_an_bottom", entries: worldbookANBottom))
-        }
-        if let global, !global.isEmpty {
-            parts.append("<system_prompt>\n\(global)\n</system_prompt>")
-        }
-
-        if let conversationSystem,
-           !conversationSystem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            parts.append("<conversation_system_prompt>\n\(conversationSystem)\n</conversation_system_prompt>")
-        }
-
         if let roleplayPrompt,
            !roleplayPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             parts.append(roleplayPrompt)
-        }
-
-        if includeLocalLinuxInstructions,
-           let localAgentPrompt,
-           !localAgentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            parts.append("<local_linux_runtime_instructions>\n\(localAgentPrompt)\n</local_linux_runtime_instructions>")
-        }
-
-        if let topic, !topic.isEmpty {
-            parts.append("<topic_prompt>\n\(topic)\n</topic_prompt>")
         }
 
         if includeConversationRuntime, !linkedConversations.isEmpty {
@@ -83,57 +40,6 @@ extension ChatService {
 
         if includeSystemTime {
             parts.append(makeSystemTimePromptBlock())
-        }
-
-        if !memories.isEmpty {
-            let sendUpdateTime = shouldSendMemoryUpdateTime()
-            let memoryStrings = memories.map { memory in
-                var metadata = ["type=\(memory.kind.promptLabel)"]
-                metadata.append("importance=\(String(format: "%.2f", memory.importance))")
-                metadata.append("confidence=\(String(format: "%.2f", memory.confidence))")
-                if !memory.entities.isEmpty {
-                    metadata.append("entities=\(memory.entities.joined(separator: ", "))")
-                }
-                if let validFrom = memory.validFrom {
-                    metadata.append("valid_from=\(validFrom.formatted(date: .abbreviated, time: .shortened))")
-                }
-                if let validUntil = memory.validUntil {
-                    metadata.append("valid_until=\(validUntil.formatted(date: .abbreviated, time: .shortened))")
-                }
-                if sendUpdateTime {
-                    let displayDate = (memory.updatedAt ?? memory.createdAt).formatted(date: .abbreviated, time: .shortened)
-                    metadata.append("updated_at=\(displayDate)")
-                }
-                return "- [\(metadata.joined(separator: "; "))] \(memory.content)"
-            }
-            let memoriesContent = memoryStrings.joined(separator: "\n")
-            parts.append(BuiltInPromptStore.render(
-                .longTermMemory,
-                variables: ["memory": memoriesContent]
-            ))
-        }
-
-        if !recentConversationSummaries.isEmpty {
-            let conversationLines = recentConversationSummaries.map { item in
-                "- (\(item.updatedAt.formatted(date: .abbreviated, time: .shortened))) [\(item.sessionName)]: \(item.summary)"
-            }
-            let conversationContent = conversationLines.joined(separator: "\n")
-            parts.append(BuiltInPromptStore.render(
-                .recentConversationMemory,
-                variables: ["memory": conversationContent]
-            ))
-        }
-
-        if let conversationProfile,
-           !conversationProfile.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let profileUpdatedAt = conversationProfile.updatedAt.formatted(date: .abbreviated, time: .shortened)
-            parts.append(BuiltInPromptStore.render(
-                .userProfileMemory,
-                variables: [
-                    "memory": conversationProfile.promptRepresentation,
-                    "updated_at": profileUpdatedAt
-                ]
-            ))
         }
 
         return parts.joined(separator: "\n\n")
@@ -157,30 +63,8 @@ extension ChatService {
         """
     }
 
-    func makeEnhancedPromptMessage(
-        _ enhancedPrompt: String?,
-        apiFormat: String,
-        openAIUsesSystemRole: Bool
-    ) -> ChatMessage? {
-        guard let enhancedPrompt else { return nil }
-        let trimmed = enhancedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let content = BuiltInPromptStore.render(
-            .enhancedPrompt,
-            variables: ["instruction": trimmed]
-        )
-        return ChatMessage(
-            role: tailContextRole(apiFormat: apiFormat, openAIUsesSystemRole: openAIUsesSystemRole),
-            content: content
-        )
-    }
-
     func tailContextRole(apiFormat: String, openAIUsesSystemRole: Bool) -> MessageRole {
         let normalizedAPIFormat = apiFormat.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalizedAPIFormat == LocalModelProviderBridge.apiFormat {
-            // 本地 GGUF chat template 直接接收角色序列，可以在尾部生成模型对应的 system token。
-            return .system
-        }
         switch ProviderAPIFormatFamily(apiFormat: normalizedAPIFormat) {
         case .anthropic, .gemini, .geminiInteractions:
             // 这两类协议会把所有 system 消息提升到请求前缀，尾部上下文统一使用 user。
@@ -249,93 +133,12 @@ extension ChatService {
         )
     }
 
-    func makeWorldbookPromptBlock(
-        tag: String,
-        entries: [WorldbookInjection],
-        attributes: [String: String] = [:]
-    ) -> String {
-        let lines = entries.map { injection in
-            let comment = injection.entryComment.trimmingCharacters(in: .whitespacesAndNewlines)
-            if comment.isEmpty {
-                return "- [\(injection.worldbookName)] \(injection.content)"
-            }
-            return "- [\(injection.worldbookName) / \(comment)] \(injection.content)"
-        }.joined(separator: "\n")
-        let attrs: String
-        if attributes.isEmpty {
-            attrs = ""
-        } else {
-            let rendered = attributes
-                .sorted(by: { $0.key < $1.key })
-                .map { key, value in
-                    "\(key)=\"\(xmlEscapedAttribute(value))\""
-                }
-                .joined(separator: " ")
-            attrs = rendered.isEmpty ? "" : " \(rendered)"
-        }
-        return "<\(tag)\(attrs)>\n\(lines)\n</\(tag)>"
-    }
-
-    func makeWorldbookOutletValues(entries: [WorldbookInjection]) -> [String: String] {
-        let grouped = Dictionary(grouping: entries) { injection -> String in
-            injection.outletName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }
-        return grouped.reduce(into: [:]) { result, item in
-            let (outletName, outletEntries) = item
-            guard !outletName.isEmpty, !outletEntries.isEmpty else { return }
-            result[outletName] = outletEntries.map(\.content).joined(separator: "\n")
-        }
-    }
-
     func xmlEscapedAttribute(_ raw: String) -> String {
         raw
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
-    }
-
-    func makeWorldbookRoleMessages(_ entries: [WorldbookInjection], tag: String) -> [ChatMessage] {
-        guard !entries.isEmpty else { return [] }
-        let grouped = Dictionary(grouping: entries, by: \.role)
-        var messages: [ChatMessage] = []
-
-        if let systemEntries = grouped[.system], !systemEntries.isEmpty {
-            let content = makeWorldbookPromptBlock(tag: tag, entries: systemEntries)
-            messages.append(ChatMessage(role: .system, content: content))
-        }
-
-        if let assistantEntries = grouped[.assistant], !assistantEntries.isEmpty {
-            let content = makeWorldbookPromptBlock(tag: tag, entries: assistantEntries)
-            messages.append(ChatMessage(role: .assistant, content: content))
-        }
-
-        if let userEntries = grouped[.user], !userEntries.isEmpty {
-            let block = makeWorldbookPromptBlock(tag: tag, entries: userEntries)
-            let wrapped = "<system>\n\(block)\n</system>"
-            messages.append(ChatMessage(role: .user, content: wrapped))
-        }
-
-        return messages
-    }
-
-    func injectAtDepthMessages(_ depthEntries: [WorldbookDepthInsertion], into chatHistory: [ChatMessage]) -> [ChatMessage] {
-        guard !depthEntries.isEmpty else { return chatHistory }
-        var updated = chatHistory
-        for insertion in depthEntries.sorted(by: { $0.depth > $1.depth }) {
-            let tag = "worldbook_at_depth_\(max(0, insertion.depth))"
-            let messages = makeWorldbookRoleMessages(insertion.items, tag: tag)
-            guard !messages.isEmpty else { continue }
-            let resolvedDepth = max(0, insertion.depth)
-            let targetIndex = max(0, updated.count - resolvedDepth)
-            let safeInsertIndex = findSafeInsertIndex(targetIndex, in: updated)
-            if safeInsertIndex >= updated.count {
-                updated.append(contentsOf: messages)
-            } else {
-                updated.insert(contentsOf: messages, at: safeInsertIndex)
-            }
-        }
-        return updated
     }
 
     func injectPeriodicTimeLandmarkIfNeeded(

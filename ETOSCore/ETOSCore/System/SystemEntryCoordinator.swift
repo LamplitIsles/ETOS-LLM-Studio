@@ -56,11 +56,9 @@ public final class SystemEntryCoordinator {
     public static let shared = SystemEntryCoordinator()
 
     private let chatService: ChatService
-    private let memoryManager: MemoryManager
 
-    public init(chatService: ChatService = .shared, memoryManager: MemoryManager = .shared) {
+    public init(chatService: ChatService = .shared) {
         self.chatService = chatService
-        self.memoryManager = memoryManager
     }
 
     public func startTask(
@@ -96,8 +94,7 @@ public final class SystemEntryCoordinator {
         }
 
         let session = chatService.createSavedSession(
-            name: resolvedTitle(title, prompt: trimmed),
-            systemPrompt: textConfig(.systemPrompt)
+            name: resolvedTitle(title, prompt: trimmed)
         )
         let persisted = await Task.detached(priority: .userInitiated) {
             guard Persistence.saveLocalAgentMode(mode, sessionID: session.id) else { return false }
@@ -124,10 +121,7 @@ public final class SystemEntryCoordinator {
         guard !trimmed.isEmpty || !fileAttachments.isEmpty || !imageAttachments.isEmpty else {
             throw ETOSSystemEntryError.emptyPrompt
         }
-        let sessionExists = await Task.detached(priority: .userInitiated) {
-            Persistence.loadChatSession(id: sessionID) != nil
-        }.value
-        guard sessionExists else { throw ETOSSystemEntryError.sessionNotFound }
+        guard chatService.conversationSession(withID: sessionID) != nil else { throw ETOSSystemEntryError.sessionNotFound }
         if let receipt = await Task.detached(priority: .userInitiated, operation: {
             Persistence.loadSystemEntryReceipt(id: requestID)
         }).value {
@@ -153,21 +147,13 @@ public final class SystemEntryCoordinator {
     }
 
     public func stop(sessionID: UUID) async throws {
-        let sessionExists = await Task.detached(priority: .userInitiated) {
-            Persistence.loadChatSession(id: sessionID) != nil
-        }.value
-        guard sessionExists else { throw ETOSSystemEntryError.sessionNotFound }
+        guard chatService.conversationSession(withID: sessionID) != nil else { throw ETOSSystemEntryError.sessionNotFound }
         await chatService.cancelRequest(for: sessionID)
     }
 
     public func status(sessionID: UUID? = nil) async throws -> ETOSSystemEntryStatus {
-        let storedSession = await Task.detached(priority: .userInitiated) {
-            if let sessionID { return Persistence.loadChatSession(id: sessionID) }
-            return Persistence.loadChatSessions().first
-        }.value
-        let session = sessionID == nil
-            ? (chatService.currentSessionSubject.value ?? storedSession)
-            : storedSession
+        let session = sessionID.flatMap { chatService.conversationSession(withID: $0) }
+            ?? (sessionID == nil ? chatService.currentSessionSubject.value : nil)
         guard let session else { throw ETOSSystemEntryError.sessionNotFound }
         let run = await Task.detached(priority: .userInitiated) {
             Persistence.loadLatestConversationRun(sessionID: session.id)
@@ -180,35 +166,6 @@ public final class SystemEntryCoordinator {
         )
     }
 
-    public func saveMemory(_ content: String, shortcutName: String) async throws -> MemoryItem {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ETOSSystemEntryError.emptyPrompt }
-        let item = await Task.detached(priority: .userInitiated) { [memoryManager] in
-            let existingIDs = Set(await memoryManager.getAllMemories().map(\.id))
-            await memoryManager.addMemory(
-                MemoryWriteRequest(content: trimmed, sourceShortcutName: shortcutName)
-            )
-            return await memoryManager.getAllMemories().first {
-                !existingIDs.contains($0.id) && $0.content == trimmed
-            }
-        }.value
-        guard let item else {
-            throw ETOSSystemEntryError.persistenceUnavailable
-        }
-        return item
-    }
-
-    public func searchMemory(_ query: String, limit: Int = 5) async throws -> [MemoryItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ETOSSystemEntryError.emptyPrompt }
-        return await Task.detached(priority: .userInitiated) { [memoryManager] in
-            await memoryManager.searchMemoriesByKeyword(
-                query: trimmed,
-                topK: min(max(limit, 1), 10)
-            )
-        }.value
-    }
-
     private func send(
         _ content: String,
         to sessionID: UUID,
@@ -219,13 +176,8 @@ public final class SystemEntryCoordinator {
             content: content,
             aiTemperature: realConfig(.aiTemperature),
             aiTopP: realConfig(.aiTopP),
-            systemPrompt: textConfig(.systemPrompt),
             maxChatHistory: AppConfigStore.integerValue(for: .maxChatHistory),
             enableStreaming: AppConfigStore.boolValue(for: .enableStreaming),
-            enhancedPrompt: nil,
-            enableMemory: AppConfigStore.boolValue(for: .enableMemory),
-            enableMemoryWrite: AppConfigStore.boolValue(for: .enableMemoryWrite),
-            enableMemoryActiveRetrieval: AppConfigStore.boolValue(for: .enableMemoryActiveRetrieval),
             includeSystemTime: AppConfigStore.boolValue(for: .includeSystemTimeInPrompt),
             systemTimeInjectionPosition: SystemTimeInjectionPosition(
                 rawValue: textConfig(.systemTimeInjectionPosition)

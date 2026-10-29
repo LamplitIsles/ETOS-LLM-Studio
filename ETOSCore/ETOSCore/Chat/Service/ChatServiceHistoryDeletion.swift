@@ -30,7 +30,6 @@ extension ChatService {
                 let deleted = source.filter { !retainedIDs.contains($0.id) }
                 for message in deleted { invalidateAttachmentCache(for: message) }
                 persistAndPublishMessages(updated, for: sessionID)
-                scheduleStoredAttachmentCleanup(for: deleted, excludingSessionIDs: [sessionID], retainedMessages: updated)
             } else if original.hasMultipleVersions {
                 var updated = source
                 guard updated[position].removeVersionAndReturnCurrentIndex(at: original.getCurrentVersionIndex()) != nil else { return false }

@@ -24,18 +24,6 @@ extension PersistenceAuxiliaryGRDBStore {
         """)
 
         try db.execute(sql: """
-            CREATE TABLE IF NOT EXISTS local_agent_prompt_profiles (
-                id TEXT PRIMARY KEY NOT NULL,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                is_built_in INTEGER NOT NULL DEFAULT 0,
-                is_enabled INTEGER NOT NULL DEFAULT 1,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
-            )
-        """)
-
-        try db.execute(sql: """
             CREATE TABLE IF NOT EXISTS local_linux_command_rules (
                 id TEXT PRIMARY KEY NOT NULL,
                 name TEXT NOT NULL,
@@ -68,7 +56,6 @@ extension PersistenceAuxiliaryGRDBStore {
         """)
 
         try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_local_linux_env_enabled ON local_linux_environment_variables(is_enabled, name COLLATE NOCASE)")
-        try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_local_agent_prompts_updated ON local_agent_prompt_profiles(updated_at DESC)")
         try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_local_linux_rules_order ON local_linux_command_rules(is_enabled, sort_index ASC, updated_at DESC)")
         try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_local_linux_mounts_enabled ON local_linux_mounts(is_enabled, updated_at DESC)")
     }

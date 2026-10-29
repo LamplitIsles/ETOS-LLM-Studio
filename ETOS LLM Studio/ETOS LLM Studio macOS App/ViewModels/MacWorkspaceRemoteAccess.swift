@@ -3,7 +3,7 @@ import Foundation
 extension MacWorkspaceModel {
     func configureRemoteAccess() {
         remoteAccess.server.documentReplacementCoordinator = { [weak self] operation in
-            guard let self, !Task.isCancelled, canManageLocalModels else { throw MacMemoryWriteError.busy }
+            guard let self, !Task.isCancelled, canManageLocalModels else { throw MacWorkspaceWriteError.busy }
             // 此回调属于调试命令队列；维护层暂停其他写入者，但不能反过来排空本队列。
             try await performDataMaintenance(remoteAccessCommand: true) { _ in
                 try Task.checkCancellation()

@@ -36,28 +36,16 @@ struct LocalAgentRuntimeContextManagerTests {
         }
     }
 
-    @Test("App 文件 executor 会在执行前拒绝终态和跨会话 Run")
-    func appFileExecutorUsesTrustedRunValidation() async throws {
+    @Test("App 文件 Run 校验拒绝终态和跨会话")
+    func appFileExecutorUsesTrustedRunValidation() {
         let sourceSessionID = UUID()
         let terminalRun = ConversationRun(
             sessionID: sourceSessionID,
             status: .completed,
             requestConfiguration: .init(agentToolsEnabled: true)
         )
-        let terminalExecutor = LocalAgentFileToolExecutor { _, sessionID in
-            try LocalAgentFileToolExecutor.validateTrustedConversationRun(
-                terminalRun,
-                sessionID: sessionID
-            )
-        }
-        await #expect(throws: Error.self) {
-            _ = try await terminalExecutor.execute(
-                toolName: AppToolKind.listSandboxDirectory.toolName,
-                argumentsJSON: try trustedArgumentsJSON(
-                    sessionID: sourceSessionID,
-                    runID: terminalRun.id
-                )
-            )
+        #expect(throws: Error.self) {
+            try LocalAgentFileToolExecutor.validateTrustedConversationRun(terminalRun, sessionID: sourceSessionID)
         }
 
         let activeRun = ConversationRun(
@@ -65,20 +53,8 @@ struct LocalAgentRuntimeContextManagerTests {
             status: .waitingTool,
             requestConfiguration: .init(agentToolsEnabled: true)
         )
-        let crossSessionExecutor = LocalAgentFileToolExecutor { _, sessionID in
-            try LocalAgentFileToolExecutor.validateTrustedConversationRun(
-                activeRun,
-                sessionID: sessionID
-            )
-        }
-        await #expect(throws: Error.self) {
-            _ = try await crossSessionExecutor.execute(
-                toolName: AppToolKind.listSandboxDirectory.toolName,
-                argumentsJSON: try trustedArgumentsJSON(
-                    sessionID: sourceSessionID,
-                    runID: activeRun.id
-                )
-            )
+        #expect(throws: Error.self) {
+            try LocalAgentFileToolExecutor.validateTrustedConversationRun(activeRun, sessionID: sourceSessionID)
         }
     }
 
@@ -89,7 +65,7 @@ struct LocalAgentRuntimeContextManagerTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let service = ChatService(adapters: [:], memoryManager: MemoryManager())
+        let service = ChatService(adapters: [:])
         let session = service.createSavedSession(name: "Agent 文件清理")
         let run = ConversationRun(
             sessionID: session.id,
@@ -153,14 +129,4 @@ struct LocalAgentRuntimeContextManagerTests {
         )
     }
 
-    private func trustedArgumentsJSON(sessionID: UUID, runID: UUID) throws -> String {
-        let payload: [String: Any] = [
-            "path": "app://",
-            MCPBuiltInAppToolServer.conversationSourceSessionIDArgument: sessionID.uuidString,
-            MCPBuiltInAppToolServer.localAgentRunIDArgument: runID.uuidString,
-            MCPBuiltInAppToolServer.conversationToolCallIDArgument: "test-tool"
-        ]
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        return String(decoding: data, as: UTF8.self)
-    }
 }

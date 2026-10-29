@@ -20,12 +20,8 @@ extension ChatService {
         wasTemporarySession: Bool,
         aiTemperature: Double,
         aiTopP: Double,
-        systemPrompt: String,
         maxChatHistory: Int,
         availableTools: [InternalToolDefinition]?,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool,
         includeSystemTime: Bool,
         systemTimeInjectionPosition: SystemTimeInjectionPosition,
         enablePeriodicTimeLandmark: Bool,
@@ -558,12 +554,8 @@ extension ChatService {
                     availableTools: availableTools,
                     aiTemperature: aiTemperature,
                     aiTopP: aiTopP,
-                    systemPrompt: systemPrompt,
                     maxChatHistory: maxChatHistory,
                     enableStreaming: true,
-                    enableMemory: enableMemory,
-                    enableMemoryWrite: enableMemoryWrite,
-                    enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                     includeSystemTime: includeSystemTime,
                     systemTimeInjectionPosition: systemTimeInjectionPosition,
                     enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -628,12 +620,8 @@ extension ChatService {
                     wasTemporarySession: wasTemporarySession,
                     aiTemperature: aiTemperature,
                     aiTopP: aiTopP,
-                    systemPrompt: systemPrompt,
                     maxChatHistory: maxChatHistory,
                     availableTools: availableTools,
-                    enableMemory: enableMemory,
-                    enableMemoryWrite: enableMemoryWrite,
-                    enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                     includeSystemTime: includeSystemTime,
                     systemTimeInjectionPosition: systemTimeInjectionPosition,
                     enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -761,12 +749,8 @@ extension ChatService {
         availableTools: [InternalToolDefinition]?,
         aiTemperature: Double,
         aiTopP: Double,
-        systemPrompt: String,
         maxChatHistory: Int,
         enableStreaming: Bool = false,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool = false,
         includeSystemTime: Bool,
         systemTimeInjectionPosition: SystemTimeInjectionPosition = .front,
         enablePeriodicTimeLandmark: Bool = false,
@@ -823,8 +807,6 @@ extension ChatService {
         guard let toolCalls = responseMessage.toolCalls, !toolCalls.isEmpty else {
             await updateMessage(with: responseMessage, for: loadingMessageID, in: currentSessionID)
             scheduleReasoningSummaryIfNeeded(for: loadingMessageID, in: currentSessionID)
-            scheduleConversationMemoryUpdateIfNeeded(for: currentSessionID, enableMemory: enableMemory)
-            scheduleLongTermMemoryConsolidationIfNeeded(for: currentSessionID, enableMemory: enableMemory)
             await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
             return
         }
@@ -1015,12 +997,8 @@ extension ChatService {
             await executeMessageRequest(
                 messages: updatedMessages, loadingMessageID: followUpLoadingMessage.id, currentSessionID: currentSessionID,
                 userMessage: userMessage, wasTemporarySession: wasTemporarySession, aiTemperature: aiTemperature,
-                aiTopP: aiTopP, systemPrompt: systemPrompt, maxChatHistory: maxChatHistory,
-                enableStreaming: enableStreaming, enhancedPrompt: nil, tools: availableTools,
-                localAgentPrompt: conversationRunIDs(for: currentSessionID)
-                    .flatMap { Persistence.loadLocalAgentRun(id: $0.runID)?.context.promptContent },
-                enableMemory: enableMemory, enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
+                aiTopP: aiTopP, maxChatHistory: maxChatHistory,
+                enableStreaming: enableStreaming, tools: availableTools,
                 includeSystemTime: includeSystemTime,
                 systemTimeInjectionPosition: systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -1031,8 +1009,6 @@ extension ChatService {
                 currentFileAttachments: []
             )
         } else {
-            scheduleConversationMemoryUpdateIfNeeded(for: currentSessionID, enableMemory: enableMemory)
-            scheduleLongTermMemoryConsolidationIfNeeded(for: currentSessionID, enableMemory: enableMemory)
             await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
         }
     }

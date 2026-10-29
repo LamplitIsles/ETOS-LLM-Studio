@@ -170,64 +170,6 @@ extension PersistenceGRDBStore {
         }
     }
 
-    func loadLinkedConversationContacts(sourceSessionID: UUID) throws -> [LinkedConversationContact] {
-        try dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                SELECT
-                    capability.target_session_id,
-                    session.name,
-                    session.container_session_id,
-                    capability.relation,
-                    capability.can_read,
-                    capability.can_send,
-                    capability.can_trigger_reply,
-                    capability.can_interrupt,
-                    (
-                        SELECT run.status FROM conversation_runs AS run
-                        WHERE run.session_id = capability.target_session_id
-                        ORDER BY run.created_at DESC, run.id DESC
-                        LIMIT 1
-                    ) AS run_status,
-                    (
-                        SELECT COUNT(*) FROM conversation_events AS event
-                        WHERE event.destination_session_id = capability.source_session_id
-                          AND event.source_session_id = capability.target_session_id
-                          AND event.state = 'pending'
-                    ) AS unread_event_count
-                FROM conversation_capabilities AS capability
-                JOIN sessions AS session ON session.id = capability.target_session_id
-                WHERE capability.source_session_id = ?
-                  AND capability.revoked_at IS NULL
-                  AND session.is_temporary = 0
-                ORDER BY session.updated_at DESC, session.name COLLATE NOCASE ASC
-                """,
-                arguments: [sourceSessionID.uuidString]
-            )
-
-            return rows.compactMap { row in
-                guard let sessionID = UUID(uuidString: row["target_session_id"]),
-                      let relation = ConversationCapabilityRelation(rawValue: row["relation"]) else {
-                    return nil
-                }
-                let statusRaw: String? = row["run_status"]
-                return LinkedConversationContact(
-                    sessionID: sessionID,
-                    title: row["name"],
-                    containerSessionID: (row["container_session_id"] as String?).flatMap(UUID.init(uuidString:)),
-                    relation: relation,
-                    runStatus: statusRaw.flatMap(ConversationRunStatus.init(rawValue:)),
-                    unreadEventCount: row["unread_event_count"],
-                    canRead: (row["can_read"] as Int) != 0,
-                    canSend: (row["can_send"] as Int) != 0,
-                    canTriggerReply: (row["can_trigger_reply"] as Int) != 0,
-                    canInterrupt: (row["can_interrupt"] as Int) != 0
-                )
-            }
-        }
-    }
-
     private func conversationCapability(from row: Row) -> ConversationCapability? {
         guard let id = UUID(uuidString: row["id"]),
               let sourceID = UUID(uuidString: row["source_session_id"]),

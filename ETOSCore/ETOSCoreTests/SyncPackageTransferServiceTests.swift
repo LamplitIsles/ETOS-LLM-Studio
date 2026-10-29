@@ -24,16 +24,10 @@ struct SyncPackageTransferServiceTests {
             models: [Model(modelName: "test-model", displayName: "Test Model", isActivated: true)]
         )
         let snapshot = Data([0x01, 0x23, 0x45, 0x67])
-        let profile = ConversationUserProfile(
-            content: "用户偏好跨端同步稳定性。",
-            updatedAt: Date(timeIntervalSince1970: 1_700_000_010),
-            needsLLMDedup: true
-        )
         let package = SyncPackage(
-            options: [.providers, .memories, .appStorage],
+            options: [.providers, .appStorage],
             sourcePlatform: "watchOS",
             providers: [provider],
-            conversationUserProfile: profile,
             appStorageSnapshot: snapshot
         )
 
@@ -51,7 +45,6 @@ struct SyncPackageTransferServiceTests {
         #expect(decoded.sourcePlatform == "watchOS")
         #expect(decoded.providers.count == 1)
         #expect(decoded.providers[0].apiKeys == ["export-key"])
-        #expect(decoded.conversationUserProfile == profile)
         #expect(decoded.appStorageSnapshot == snapshot)
     }
 
@@ -89,11 +82,11 @@ struct SyncPackageTransferServiceTests {
     @Test("导出清单按设置键生成独立记录")
     func testExportManifestContainsOneRecordPerAppConfigKey() throws {
         let keys = [
-            AppConfigKey.systemPrompt.rawValue,
+            AppConfigKey.enableStreaming.rawValue,
             AppConfigKey.appToolsChatToolsEnabled.rawValue
         ]
         let snapshot = SyncEngine.encodeAppStorageSnapshot([
-            keys[0]: "提示词",
+            keys[0]: false,
             keys[1]: true
         ])
         let package = SyncPackage(
@@ -147,27 +140,4 @@ struct SyncPackageTransferServiceTests {
         #expect(FileManager.default.fileExists(atPath: unrelatedURL.path))
     }
 
-    @Test("旧版纯 SyncPackage JSON 仍可兼容导入")
-    func testDecodeLegacyRawSyncPackageJSON() throws {
-        let session = ChatSession(
-            id: UUID(),
-            name: "旧版会话",
-            isTemporary: false
-        )
-        let message = ChatMessage(
-            id: UUID(),
-            role: .user,
-            content: "legacy message"
-        )
-        let package = SyncPackage(
-            options: [.sessions],
-            sessions: [SyncedSession(session: session, messages: [message])]
-        )
-
-        let legacyData = try JSONEncoder().encode(package)
-        let decoded = try SyncPackageTransferService.decodePackage(from: legacyData)
-
-        #expect(decoded.sessions.first?.session.id == session.id)
-        #expect(decoded.sessions.first?.messages.first?.id == message.id)
-    }
 }

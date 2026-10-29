@@ -46,7 +46,6 @@ extension ShortcutToolPersistenceWorker {
         guard let result = Persistence.withConfigDatabaseWrite({ try ShortcutToolStore.insertPrepared(preview, in: $0) }) else {
             throw ShortcutToolSettingsWriteError.persistenceFailed
         }
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
         return (snapshot(tools: result.0), result.1)
     }
@@ -56,7 +55,6 @@ extension ShortcutToolPersistenceWorker {
             throw ShortcutToolSettingsWriteError.persistenceFailed
         }
         guard let tools = result else { throw ShortcutToolSettingsWriteError.changedExternally }
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
         return snapshot(tools: tools)
     }

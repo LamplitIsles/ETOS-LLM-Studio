@@ -28,11 +28,7 @@ public final class AppToolManager: ObservableObject {
     nonisolated static let toolApprovalPoliciesUserDefaultsKey = "appTools.toolApprovalPolicies"
     // 记录已经向用户"首次引入"过的默认工具 ID，防止每次启动都强制重新启用
     nonisolated static let knownDefaultToolIDsUserDefaultsKey = "appTools.knownDefaultToolIDs"
-    #if os(watchOS)
-    nonisolated static let defaultEnabledToolKinds: Set<AppToolKind> = [.askUserInput, .getSystemTime]
-    #else
     nonisolated static let defaultEnabledToolKinds: Set<AppToolKind> = [.showWidget, .askUserInput, .getSystemTime]
-    #endif
     nonisolated static let builtInToolKinds: Set<AppToolKind> = [.showWidget, .askUserInput, .getSystemTime]
 
     @Published public internal(set) var chatToolsEnabled: Bool

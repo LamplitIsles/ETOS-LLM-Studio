@@ -16,9 +16,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
     case fillUserInput = "fill_user_input"
     case executeJSCJavaScript = "execute_jsc_javascript"
     case createCustomJSCJSTool = "create_custom_jsc_js_tool"
-    case executeWebKitJavaScript = "execute_webkit_javascript"
-    case createCustomWebKitJSTool = "create_custom_webkit_js_tool"
-    case editMemory = "edit_memory"
     case submitFeedbackTicket = "submit_feedback_ticket"
     case listSandboxDirectory = "list_sandbox_directory"
     case readSandboxFile = "read_sandbox_file"
@@ -29,7 +26,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
     case copySandboxItem = "copy_sandbox_item"
     case createSandboxDirectory = "create_sandbox_directory"
     case batchEditSandboxFile = "batch_edit_sandbox_file"
-    case listMemories = "list_memories"
     case listSQLiteTables = "list_sqlite_tables"
     case querySQLite = "query_sqlite"
     case mutateSQLite = "mutate_sqlite"
@@ -65,12 +61,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return "app_execute_jsc_javascript"
         case .createCustomJSCJSTool:
             return "app_create_custom_jsc_js_tool"
-        case .executeWebKitJavaScript:
-            return "app_execute_webkit_javascript"
-        case .createCustomWebKitJSTool:
-            return "app_create_custom_webkit_js_tool"
-        case .editMemory:
-            return "app_edit_memory"
         case .submitFeedbackTicket:
             return "app_submit_feedback_ticket"
         case .listSandboxDirectory:
@@ -91,8 +81,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return "app_create_sandbox_directory"
         case .batchEditSandboxFile:
             return "app_batch_edit_sandbox_file"
-        case .listMemories:
-            return "app_list_memories"
         case .listSQLiteTables:
             return "app_list_sqlite_tables"
         case .querySQLite:
@@ -126,12 +114,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return NSLocalizedString("执行 JSC JavaScript", comment: "Execute JSC JavaScript tool name")
         case .createCustomJSCJSTool:
             return NSLocalizedString("创建自定义 JSC 工具", comment: "Create custom JSC JS tool name")
-        case .executeWebKitJavaScript:
-            return NSLocalizedString("执行 WebKit JavaScript", comment: "Execute WebKit JavaScript tool name")
-        case .createCustomWebKitJSTool:
-            return NSLocalizedString("创建自定义 WebKit JS 工具", comment: "Create custom WebKit JS tool name")
-        case .editMemory:
-            return NSLocalizedString("记忆编辑", comment: "Memory edit tool name")
         case .submitFeedbackTicket:
             return NSLocalizedString("提交反馈工单", comment: "Submit feedback ticket tool name")
         case .listSandboxDirectory:
@@ -152,8 +134,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return NSLocalizedString("创建沙盒目录", comment: "Create sandbox directory tool name")
         case .batchEditSandboxFile:
             return NSLocalizedString("批量编辑沙盒文件", comment: "Batch edit sandbox file tool name")
-        case .listMemories:
-            return NSLocalizedString("列出记忆", comment: "List memories tool name")
         case .listSQLiteTables:
             return NSLocalizedString("列出数据库表", comment: "List SQLite tables tool name")
         case .querySQLite:
@@ -187,12 +167,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return NSLocalizedString("使用 Apple JavaScriptCore 运行同步 JavaScript 算法。", comment: "Execute JSC JavaScript tool summary")
         case .createCustomJSCJSTool:
             return NSLocalizedString("保存 AI 可复用的 JavaScriptCore 自定义工具。", comment: "Create custom JSC JS tool summary")
-        case .executeWebKitJavaScript:
-            return NSLocalizedString("使用 watchOS WebKit bridge 运行同步 JavaScript 算法。", comment: "Execute WebKit JavaScript tool summary")
-        case .createCustomWebKitJSTool:
-            return NSLocalizedString("保存 AI 可复用的 WebKit bridge 自定义工具。", comment: "Create custom WebKit JS tool summary")
-        case .editMemory:
-            return NSLocalizedString("按记忆 ID 编辑既有记忆内容，并在需要时自动重新嵌入。", comment: "Memory edit tool summary")
         case .submitFeedbackTicket:
             return NSLocalizedString("向反馈助手提交问题或建议工单，并返回工单编号与状态。", comment: "Submit feedback ticket tool summary")
         case .listSandboxDirectory:
@@ -213,8 +187,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return NSLocalizedString("在沙盒内创建目录结构。", comment: "Create sandbox directory tool summary")
         case .batchEditSandboxFile:
             return NSLocalizedString("按多条规则批量替换沙盒文本文件内容。", comment: "Batch edit sandbox file tool summary")
-        case .listMemories:
-            return NSLocalizedString("分页查看记忆列表并支持关键词筛选。", comment: "List memories tool summary")
         case .listSQLiteTables:
             return NSLocalizedString("查看聊天/配置/记忆 SQLite 数据库中的表结构。", comment: "List SQLite tables tool summary")
         case .querySQLite:
@@ -248,12 +220,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return NSLocalizedString("工具详情：执行 JSC JavaScript", comment: "Execute JSC JavaScript tool detail description")
         case .createCustomJSCJSTool:
             return NSLocalizedString("工具详情：创建自定义 JSC 工具", comment: "Create custom JSC JS tool detail description")
-        case .executeWebKitJavaScript:
-            return NSLocalizedString("工具详情：执行 WebKit JavaScript", comment: "Execute WebKit JavaScript tool detail description")
-        case .createCustomWebKitJSTool:
-            return NSLocalizedString("工具详情：创建自定义 WebKit JS 工具", comment: "Create custom WebKit JS tool detail description")
-        case .editMemory:
-            return NSLocalizedString("工具详情：记忆编辑", comment: "Memory edit tool detail description")
         case .submitFeedbackTicket:
             return NSLocalizedString("工具详情：提交反馈工单", comment: "Submit feedback ticket tool detail description")
         case .listSandboxDirectory:
@@ -274,8 +240,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
             return NSLocalizedString("工具详情：创建沙盒目录", comment: "Create sandbox directory tool detail description")
         case .batchEditSandboxFile:
             return NSLocalizedString("工具详情：批量编辑沙盒文件", comment: "Batch edit sandbox file tool detail description")
-        case .listMemories:
-            return NSLocalizedString("工具详情：列出记忆", comment: "List memories tool detail description")
         case .listSQLiteTables:
             return NSLocalizedString("工具详情：列出数据库表", comment: "List SQLite tables tool detail description")
         case .querySQLite:
@@ -297,12 +261,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
         switch self {
         case .executeJSCJavaScript, .createCustomJSCJSTool:
             #if canImport(JavaScriptCore) && !os(watchOS)
-            return true
-            #else
-            return false
-            #endif
-        case .executeWebKitJavaScript, .createCustomWebKitJSTool:
-            #if os(watchOS)
             return true
             #else
             return false

@@ -16,24 +16,15 @@
 		07434143302B3FC300F29D76 /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07434142302B3FC300F29D76 /* ETOSCore.framework */; };
 		07434147302B40CF00F29D76 /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07434146302B40CF00F29D76 /* ETOSCore.framework */; };
 		0743414B302B414600F29D76 /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0743414A302B414600F29D76 /* ETOSCore.framework */; };
-		0743415D302B4A3100F29D76 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 074340A6302B0DB700F29D76 /* WidgetKit.framework */; };
-		0743415E302B4A3100F29D76 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 074340A8302B0DB800F29D76 /* SwiftUI.framework */; };
-		07434169302B4A3B00F29D76 /* ETOS Agent Watch WidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0743415C302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		077CD2622E962D8D00AD6556 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 077CD2612E962D8D00AD6556 /* MarkdownUI */; };
-		0796796F2F1278F5006562BC /* ETOS LLM Studio Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 0796794F2F1278F2006562BC /* ETOS LLM Studio Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		079679BE2F1279C8006562BC /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 079679BD2F1279C8006562BC /* MarkdownUI */; };
 		07B50FB8307B711D00A5CC32 /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 07B50FB7307B711D00A5CC32 /* SQLCipher */; };
 		07B81F10302B56450028B43A /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07B81F0F302B56450028B43A /* ETOSCore.framework */; };
 		07BEEE072FB6DAAB000D31FC /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 07BEEE062FB6DAAB000D31FC /* SQLCipher */; };
-		07BEEE0A2FB6DAB8000D31FC /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 07BEEE092FB6DAB8000D31FC /* SQLCipher */; };
 		07BEEE0C2FB6DB57000D31FC /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07BEEE0B2FB6DB57000D31FC /* ETOSCore.framework */; };
 		07BEEE0D2FB6DB57000D31FC /* ETOSCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 07BEEE0B2FB6DB57000D31FC /* ETOSCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		07BEEE0F2FB6DB5E000D31FC /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07BEEE0E2FB6DB5E000D31FC /* ETOSCore.framework */; };
-		07BEEE102FB6DB5E000D31FC /* ETOSCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 07BEEE0E2FB6DB5E000D31FC /* ETOSCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		07CE334D307A6860003E244E /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07CE334C307A6860003E244E /* ETOSCore.framework */; };
 		07CE334E307A6860003E244E /* ETOSCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 07CE334C307A6860003E244E /* ETOSCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		07CE3351307A6883003E244E /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 07CE3350307A6883003E244E /* MarkdownUI */; };
-		07E153EA2FC0EBA90056CC91 /* CepheusKeyboardKit in Frameworks */ = {isa = PBXBuildFile; productRef = 07E153E92FC0EBA90056CC91 /* CepheusKeyboardKit */; };
 		09A06C4C2F75031D0089D1E1 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 09A06C4B2F75031D0089D1E1 /* SwiftMath */; };
 /* End PBXBuildFile section */
 
@@ -58,27 +49,6 @@
 			proxyType = 1;
 			remoteGlobalIDString = 074340BF302B0EC000F29D76;
 			remoteInfo = "ETOS Workspace Provider";
-		};
-		07434167302B4A3B00F29D76 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 073CA6D32E8CFD65004516A0 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 0743415B302B4A2F00F29D76;
-			remoteInfo = "ETOS Agent Watch WidgetsExtension";
-		};
-		0796795C2F1278F5006562BC /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 073CA6D32E8CFD65004516A0 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 0796794E2F1278F2006562BC;
-			remoteInfo = "ETOS LLM Studio Watch App";
-		};
-		0796796D2F1278F5006562BC /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 073CA6D32E8CFD65004516A0 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 0796794E2F1278F2006562BC;
-			remoteInfo = "ETOS LLM Studio Watch App";
 		};
 		07FA9DC52FD6C92600C6EEE9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -114,39 +84,6 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		0743416E302B4A3B00F29D76 /* Embed Foundation Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				07434169302B4A3B00F29D76 /* ETOS Agent Watch WidgetsExtension.appex in Embed Foundation Extensions */,
-			);
-			name = "Embed Foundation Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		0785DA3A2F1277EA003A89BD /* Embed Watch Content */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
-			dstSubfolderSpec = 16;
-			files = (
-				0796796F2F1278F5006562BC /* ETOS LLM Studio Watch App.app in Embed Watch Content */,
-			);
-			name = "Embed Watch Content";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		079679C22F1279CC006562BC /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				07BEEE102FB6DB5E000D31FC /* ETOSCore.framework in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		07CE334F307A6861003E244E /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -172,28 +109,15 @@
 		07434142302B3FC300F29D76 /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		07434146302B40CF00F29D76 /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		0743414A302B414600F29D76 /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		0743415C302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "ETOS Agent Watch WidgetsExtension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
-		0743416F302B4B1B00F29D76 /* ETOS Agent Watch WidgetsExtensionRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "ETOS Agent Watch WidgetsExtensionRelease.entitlements"; sourceTree = "<group>"; };
-		07434172302B4FD800F29D76 /* ETOS Agent Watch WidgetsExtensionDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "ETOS Agent Watch WidgetsExtensionDebug.entitlements"; sourceTree = "<group>"; };
-		0796794F2F1278F2006562BC /* ETOS LLM Studio Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ETOS LLM Studio Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		0796795B2F1278F5006562BC /* ETOS LLM Studio Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ETOS LLM Studio Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		07B81F0F302B56450028B43A /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		07BB6116307A667600780EDE /* ETOS LLM Studio macOS App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ETOS LLM Studio macOS App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		07BB6344307A67A200780EDE /* ETOS-LLM-Studio-macOS-App-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "ETOS-LLM-Studio-macOS-App-Info.plist"; sourceTree = "<group>"; };
 		07BEEE0B2FB6DB57000D31FC /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		07BEEE0E2FB6DB5E000D31FC /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		07CE334C307A6860003E244E /* ETOSCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = ETOSCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		07FA9DC12FD6C92600C6EEE9 /* ETOS LLM Studio AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ETOS LLM Studio AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		0733CA502F23B450007931E8 /* Exceptions for "ETOS LLM Studio Watch App" folder in "ETOS LLM Studio Watch App" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 0796794E2F1278F2006562BC /* ETOS LLM Studio Watch App */;
-		};
 		0743409B302B0CBB00F29D76 /* Exceptions for "ETOS Agent Share" folder in "ETOS Agent Share" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -215,13 +139,6 @@
 			);
 			target = 074340BF302B0EC000F29D76 /* ETOS Workspace Provider */;
 		};
-		0743416D302B4A3B00F29D76 /* Exceptions for "ETOS Agent Watch Widgets" folder in "ETOS Agent Watch WidgetsExtension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 0743415B302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension */;
-		};
 		07CE335C307A6910003E244E /* Exceptions for "ETOS LLM Studio iOS App" folder in "ETOS LLM Studio macOS App" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -229,9 +146,7 @@
 				"/Localized: Localizable.strings",
 				Assets.xcassets,
 				PrivacyInfo.xcprivacy,
-				Resources/LocalLinux/ETOSLocalLinuxRootFSMigrations.json,
-				Resources/LocalLinux/ETOSLocalLinuxRootFSSeed.json,
-				Resources/LocalLinux/ETOSLocalLinuxRootFSSeed.tar.gz,
+				"Resources/LocalLinux/ETOSLocalLinuxRootFSMigrations.json",
 				"Resources/LocalLinux/iSH-PROJECT-LICENSES.txt",
 				"Resources/LocalLinux/LocalLinuxRootFS-Compliance.json",
 				"Resources/LocalLinux/LocalLinuxRootFS-Packages.tsv",
@@ -276,27 +191,6 @@
 				074340CF302B0EC200F29D76 /* Exceptions for "ETOS Workspace Provider" folder in "ETOS Workspace Provider" target */,
 			);
 			path = "ETOS Workspace Provider";
-			sourceTree = "<group>";
-		};
-		0743415F302B4A3100F29D76 /* ETOS Agent Watch Widgets */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				0743416D302B4A3B00F29D76 /* Exceptions for "ETOS Agent Watch Widgets" folder in "ETOS Agent Watch WidgetsExtension" target */,
-			);
-			path = "ETOS Agent Watch Widgets";
-			sourceTree = "<group>";
-		};
-		079679502F1278F3006562BC /* ETOS LLM Studio Watch App */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				0733CA502F23B450007931E8 /* Exceptions for "ETOS LLM Studio Watch App" folder in "ETOS LLM Studio Watch App" target */,
-			);
-			path = "ETOS LLM Studio Watch App";
-			sourceTree = "<group>";
-		};
-		0796795E2F1278F5006562BC /* ETOS LLM Studio Watch AppTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "ETOS LLM Studio Watch AppTests";
 			sourceTree = "<group>";
 		};
 		07BB6117307A667600780EDE /* ETOS LLM Studio macOS App */ = {
@@ -350,34 +244,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		07434159302B4A2F00F29D76 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				0743415E302B4A3100F29D76 /* SwiftUI.framework in Frameworks */,
-				0743415D302B4A3100F29D76 /* WidgetKit.framework in Frameworks */,
-				07B81F10302B56450028B43A /* ETOSCore.framework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		0796794C2F1278F2006562BC /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				07E153EA2FC0EBA90056CC91 /* CepheusKeyboardKit in Frameworks */,
-				07BEEE0A2FB6DAB8000D31FC /* SQLCipher in Frameworks */,
-				07BEEE0F2FB6DB5E000D31FC /* ETOSCore.framework in Frameworks */,
-				079679BE2F1279C8006562BC /* MarkdownUI in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		079679582F1278F5006562BC /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		07BB6113307A667600780EDE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -402,17 +268,12 @@
 			isa = PBXGroup;
 			children = (
 				07BB6344307A67A200780EDE /* ETOS-LLM-Studio-macOS-App-Info.plist */,
-				07434172302B4FD800F29D76 /* ETOS Agent Watch WidgetsExtensionDebug.entitlements */,
-				0743416F302B4B1B00F29D76 /* ETOS Agent Watch WidgetsExtensionRelease.entitlements */,
 				0743408B302B092800F29D76 /* ETOS LLM Studio AppRelease.entitlements */,
 				073CA6DD2E8CFD65004516A0 /* ETOS LLM Studio iOS App */,
-				079679502F1278F3006562BC /* ETOS LLM Studio Watch App */,
-				0796795E2F1278F5006562BC /* ETOS LLM Studio Watch AppTests */,
 				07FA9DC22FD6C92600C6EEE9 /* ETOS LLM Studio AppTests */,
 				07434091302B0CB900F29D76 /* ETOS Agent Share */,
 				074340AA302B0DB800F29D76 /* ETOS Agent Widgets */,
 				074340C3302B0EC100F29D76 /* ETOS Workspace Provider */,
-				0743415F302B4A3100F29D76 /* ETOS Agent Watch Widgets */,
 				07BB6117307A667600780EDE /* ETOS LLM Studio macOS App */,
 				07BEEE082FB6DAB8000D31FC /* Frameworks */,
 				073CA6DC2E8CFD65004516A0 /* Products */,
@@ -423,13 +284,10 @@
 			isa = PBXGroup;
 			children = (
 				073CA6DB2E8CFD65004516A0 /* ETOS LLM Studio App.app */,
-				0796794F2F1278F2006562BC /* ETOS LLM Studio Watch App.app */,
-				0796795B2F1278F5006562BC /* ETOS LLM Studio Watch AppTests.xctest */,
 				07FA9DC12FD6C92600C6EEE9 /* ETOS LLM Studio AppTests.xctest */,
 				07434090302B0CB900F29D76 /* ETOS Agent Share.appex */,
 				074340A5302B0DB700F29D76 /* ETOS Agent Widgets.appex */,
 				074340C0302B0EC000F29D76 /* ETOS Workspace Provider.appex */,
-				0743415C302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension.appex */,
 				07BB6116307A667600780EDE /* ETOS LLM Studio macOS App.app */,
 			);
 			name = Products;
@@ -443,7 +301,6 @@
 				0743414A302B414600F29D76 /* ETOSCore.framework */,
 				07434146302B40CF00F29D76 /* ETOSCore.framework */,
 				07434142302B3FC300F29D76 /* ETOSCore.framework */,
-				07BEEE0E2FB6DB5E000D31FC /* ETOSCore.framework */,
 				07BEEE0B2FB6DB57000D31FC /* ETOSCore.framework */,
 				074340A6302B0DB700F29D76 /* WidgetKit.framework */,
 				074340A8302B0DB800F29D76 /* SwiftUI.framework */,
@@ -463,13 +320,11 @@
 				073CA6D82E8CFD65004516A0 /* Frameworks */,
 				073CA6D92E8CFD65004516A0 /* Resources */,
 				073D1C582E8F55EB00E6D9E1 /* Embed Frameworks */,
-				0785DA3A2F1277EA003A89BD /* Embed Watch Content */,
 				0743409F302B0CBB00F29D76 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				0796796E2F1278F5006562BC /* PBXTargetDependency */,
 				07434099302B0CBB00F29D76 /* PBXTargetDependency */,
 				074340B5302B0DBA00F29D76 /* PBXTargetDependency */,
 				074340CD302B0EC200F29D76 /* PBXTargetDependency */,
@@ -553,80 +408,6 @@
 			productReference = 074340C0302B0EC000F29D76 /* ETOS Workspace Provider.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		0743415B302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 0743416A302B4A3B00F29D76 /* Build configuration list for PBXNativeTarget "ETOS Agent Watch WidgetsExtension" */;
-			buildPhases = (
-				07434158302B4A2F00F29D76 /* Sources */,
-				07434159302B4A2F00F29D76 /* Frameworks */,
-				0743415A302B4A2F00F29D76 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				0743415F302B4A3100F29D76 /* ETOS Agent Watch Widgets */,
-			);
-			name = "ETOS Agent Watch WidgetsExtension";
-			packageProductDependencies = (
-			);
-			productName = "ETOS Agent Watch WidgetsExtension";
-			productReference = 0743415C302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
-		0796794E2F1278F2006562BC /* ETOS LLM Studio Watch App */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 079679762F1278F5006562BC /* Build configuration list for PBXNativeTarget "ETOS LLM Studio Watch App" */;
-			buildPhases = (
-				0796794B2F1278F2006562BC /* Sources */,
-				0796794C2F1278F2006562BC /* Frameworks */,
-				0796794D2F1278F2006562BC /* Resources */,
-				079679C22F1279CC006562BC /* Embed Frameworks */,
-				0743416E302B4A3B00F29D76 /* Embed Foundation Extensions */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				07967AF32F1281AE006562BC /* PBXTargetDependency */,
-				07434168302B4A3B00F29D76 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				079679502F1278F3006562BC /* ETOS LLM Studio Watch App */,
-			);
-			name = "ETOS LLM Studio Watch App";
-			packageProductDependencies = (
-				079679BD2F1279C8006562BC /* MarkdownUI */,
-				07BEEE092FB6DAB8000D31FC /* SQLCipher */,
-				07E153E92FC0EBA90056CC91 /* CepheusKeyboardKit */,
-			);
-			productName = "ETOS LLM Studio Watch App";
-			productReference = 0796794F2F1278F2006562BC /* ETOS LLM Studio Watch App.app */;
-			productType = "com.apple.product-type.application";
-		};
-		0796795A2F1278F5006562BC /* ETOS LLM Studio Watch AppTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 079679772F1278F5006562BC /* Build configuration list for PBXNativeTarget "ETOS LLM Studio Watch AppTests" */;
-			buildPhases = (
-				079679572F1278F5006562BC /* Sources */,
-				079679582F1278F5006562BC /* Frameworks */,
-				079679592F1278F5006562BC /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				0796795D2F1278F5006562BC /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				0796795E2F1278F5006562BC /* ETOS LLM Studio Watch AppTests */,
-			);
-			name = "ETOS LLM Studio Watch AppTests";
-			packageProductDependencies = (
-			);
-			productName = "ETOS LLM Studio Watch AppTests";
-			productReference = 0796795B2F1278F5006562BC /* ETOS LLM Studio Watch AppTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 		07BB6115307A667600780EDE /* ETOS LLM Studio macOS App */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 07BB6120307A667C00780EDE /* Build configuration list for PBXNativeTarget "ETOS LLM Studio macOS App" */;
@@ -697,16 +478,6 @@
 					074340BF302B0EC000F29D76 = {
 						CreatedOnToolsVersion = 26.6;
 					};
-					0743415B302B4A2F00F29D76 = {
-						CreatedOnToolsVersion = 26.6;
-					};
-					0796794E2F1278F2006562BC = {
-						CreatedOnToolsVersion = 26.2;
-					};
-					0796795A2F1278F5006562BC = {
-						CreatedOnToolsVersion = 26.2;
-						TestTargetID = 0796794E2F1278F2006562BC;
-					};
 					07BB6115307A667600780EDE = {
 						CreatedOnToolsVersion = 27.0;
 					};
@@ -736,7 +507,6 @@
 				077CD2602E962D8D00AD6556 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				09A06C4A2F75031D0089D1E1 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				07BEEE052FB6DAAA000D31FC /* XCRemoteSwiftPackageReference "SQLCipher.swift" */,
-				07E153E82FC0EBA90056CC91 /* XCRemoteSwiftPackageReference "Cepheus" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 073CA6DC2E8CFD65004516A0 /* Products */;
@@ -744,13 +514,10 @@
 			projectRoot = "";
 			targets = (
 				073CA6DA2E8CFD65004516A0 /* ETOS LLM Studio App */,
-				0796794E2F1278F2006562BC /* ETOS LLM Studio Watch App */,
-				0796795A2F1278F5006562BC /* ETOS LLM Studio Watch AppTests */,
 				07FA9DC02FD6C92600C6EEE9 /* ETOS LLM Studio AppTests */,
 				0743408F302B0CB900F29D76 /* ETOS Agent Share */,
 				074340A4302B0DB700F29D76 /* ETOS Agent Widgets */,
 				074340BF302B0EC000F29D76 /* ETOS Workspace Provider */,
-				0743415B302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension */,
 				07BB6115307A667600780EDE /* ETOS LLM Studio macOS App */,
 			);
 		};
@@ -779,27 +546,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		074340BE302B0EC000F29D76 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		0743415A302B4A2F00F29D76 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		0796794D2F1278F2006562BC /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		079679592F1278F5006562BC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -851,27 +597,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		07434158302B4A2F00F29D76 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		0796794B2F1278F2006562BC /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		079679572F1278F5006562BC /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		07BB6112307A667600780EDE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -903,25 +628,6 @@
 			isa = PBXTargetDependency;
 			target = 074340BF302B0EC000F29D76 /* ETOS Workspace Provider */;
 			targetProxy = 074340CC302B0EC200F29D76 /* PBXContainerItemProxy */;
-		};
-		07434168302B4A3B00F29D76 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 0743415B302B4A2F00F29D76 /* ETOS Agent Watch WidgetsExtension */;
-			targetProxy = 07434167302B4A3B00F29D76 /* PBXContainerItemProxy */;
-		};
-		0796795D2F1278F5006562BC /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 0796794E2F1278F2006562BC /* ETOS LLM Studio Watch App */;
-			targetProxy = 0796795C2F1278F5006562BC /* PBXContainerItemProxy */;
-		};
-		0796796E2F1278F5006562BC /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 0796794E2F1278F2006562BC /* ETOS LLM Studio Watch App */;
-			targetProxy = 0796796D2F1278F5006562BC /* PBXContainerItemProxy */;
-		};
-		07967AF32F1281AE006562BC /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 07967AF22F1281AE006562BC /* MarkdownUI */;
 		};
 		07FA9DC62FD6C92600C6EEE9 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -972,7 +678,6 @@
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
-				"EXCLUDED_ARCHS[sdk=watchsimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -1376,208 +1081,6 @@
 			};
 			name = Release;
 		};
-		0743416B302B4A3B00F29D76 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
-				CODE_SIGN_ENTITLEMENTS = "ETOS Agent Watch WidgetsExtensionDebug.entitlements";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K9LDK6LF4H;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "ETOS Agent Watch Widgets/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "ETOS Agent Watch Widgets";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MARKETING_VERSION = 1.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericterminal.els.watchkitapp.widgets;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 10.0;
-			};
-			name = Debug;
-		};
-		0743416C302B4A3B00F29D76 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
-				CODE_SIGN_ENTITLEMENTS = "ETOS Agent Watch WidgetsExtensionRelease.entitlements";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K9LDK6LF4H;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "ETOS Agent Watch Widgets/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "ETOS Agent Watch Widgets";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MARKETING_VERSION = 1.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericterminal.els.watchkitapp.widgets;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 10.0;
-			};
-			name = Release;
-		};
-		079679702F1278F5006562BC /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "ETOS LLM Studio Watch App/ETOS LLM Studio Watch App.entitlements";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K9LDK6LF4H;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "ETOS LLM Studio Watch App/Info.plist";
-				INFOPLIST_KEY_AppIdentifierPrefix = "$(AppIdentifierPrefix)";
-				INFOPLIST_KEY_CFBundleDisplayName = ELS;
-				INFOPLIST_KEY_ETKeychainAccessGroup = "$(AppIdentifierPrefix)com.ericterminal.els.shared";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "语音输入需要访问麦克风";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ericterminal.els;
-				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericterminal.els.watchkitapp;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 10.0;
-			};
-			name = Debug;
-		};
-		079679712F1278F5006562BC /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "ETOS LLM Studio Watch App/ETOS LLM Studio Watch App.entitlements";
-				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = "ETOS LLM Studio Watch App/ETOS LLM Studio Watch App.entitlements";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K9LDK6LF4H;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "ETOS LLM Studio Watch App/Info.plist";
-				INFOPLIST_KEY_AppIdentifierPrefix = "$(AppIdentifierPrefix)";
-				INFOPLIST_KEY_CFBundleDisplayName = ELS;
-				INFOPLIST_KEY_ETKeychainAccessGroup = "$(AppIdentifierPrefix)com.ericterminal.els.shared";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "语音输入需要访问麦克风";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
-				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ericterminal.els;
-				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.9.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericterminal.els.watchkitapp;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 10.0;
-			};
-			name = Release;
-		};
-		079679722F1278F5006562BC /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K9LDK6LF4H;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericterminal.els.watchappTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ETOS LLM Studio Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ETOS LLM Studio Watch App";
-				WATCHOS_DEPLOYMENT_TARGET = 26.2;
-			};
-			name = Debug;
-		};
-		079679732F1278F5006562BC /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = K9LDK6LF4H;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ericterminal.els.watchappTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ETOS LLM Studio Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ETOS LLM Studio Watch App";
-				WATCHOS_DEPLOYMENT_TARGET = 26.2;
-			};
-			name = Release;
-		};
 		07BB611E307A667C00780EDE /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1802,33 +1305,6 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		0743416A302B4A3B00F29D76 /* Build configuration list for PBXNativeTarget "ETOS Agent Watch WidgetsExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				0743416B302B4A3B00F29D76 /* Debug */,
-				0743416C302B4A3B00F29D76 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		079679762F1278F5006562BC /* Build configuration list for PBXNativeTarget "ETOS LLM Studio Watch App" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				079679702F1278F5006562BC /* Debug */,
-				079679712F1278F5006562BC /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		079679772F1278F5006562BC /* Build configuration list for PBXNativeTarget "ETOS LLM Studio Watch AppTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				079679722F1278F5006562BC /* Debug */,
-				079679732F1278F5006562BC /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		07BB6120307A667C00780EDE /* Build configuration list for PBXNativeTarget "ETOS LLM Studio macOS App" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1866,14 +1342,6 @@
 				minimumVersion = 4.16.0;
 			};
 		};
-		07E153E82FC0EBA90056CC91 /* XCRemoteSwiftPackageReference "Cepheus" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Serene-Garden/Cepheus";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
-			};
-		};
 		09A06C4A2F75031D0089D1E1 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/mgriebling/SwiftMath";
@@ -1886,11 +1354,6 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		077CD2612E962D8D00AD6556 /* MarkdownUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 077CD2602E962D8D00AD6556 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
-			productName = MarkdownUI;
-		};
-		079679BD2F1279C8006562BC /* MarkdownUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 077CD2602E962D8D00AD6556 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
@@ -1910,20 +1373,10 @@
 			package = 07BEEE052FB6DAAA000D31FC /* XCRemoteSwiftPackageReference "SQLCipher.swift" */;
 			productName = SQLCipher;
 		};
-		07BEEE092FB6DAB8000D31FC /* SQLCipher */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 07BEEE052FB6DAAA000D31FC /* XCRemoteSwiftPackageReference "SQLCipher.swift" */;
-			productName = SQLCipher;
-		};
 		07CE3350307A6883003E244E /* MarkdownUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 077CD2602E962D8D00AD6556 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
-		};
-		07E153E92FC0EBA90056CC91 /* CepheusKeyboardKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 07E153E82FC0EBA90056CC91 /* XCRemoteSwiftPackageReference "Cepheus" */;
-			productName = CepheusKeyboardKit;
 		};
 		09A06C4B2F75031D0089D1E1 /* SwiftMath */ = {
 			isa = XCSwiftPackageProductDependency;

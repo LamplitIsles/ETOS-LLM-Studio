@@ -352,14 +352,13 @@ enum RoleplayHTMLCompatibilityRuntime {
     getMvuData: (option = { type: 'chat' }) => {
       const data = api.getVariables(option);
       if (!data.stat_data) data.stat_data = {};
-      if (!data.initialized_lorebooks) data.initialized_lorebooks = {};
       return data;
     },
     replaceMvuData: async (data, option = { type: 'chat' }) => {
       api.replaceVariables(data, option);
     },
     parseMessage: async (message, oldData) => {
-      const before = clone(oldData || { stat_data: {}, initialized_lorebooks: {} });
+      const before = clone(oldData || { stat_data: {} });
       const updated = clone(before);
       await api.eventEmitAndWait(mvuEvents.VARIABLE_UPDATE_STARTED, updated);
       const commands = parseCommands(message);
@@ -394,29 +393,6 @@ enum RoleplayHTMLCompatibilityRuntime {
     },
     getCurrentMvuData: () => mvu.getMvuData({ type: 'message', message_id: api.getCurrentMessageId() }),
     replaceCurrentMvuData: data => mvu.replaceMvuData(data, { type: 'message', message_id: api.getCurrentMessageId() }),
-    reloadInitVar: async data => {
-      const names = window.getCharWorldbookNames?.('current') || {};
-      const lorebooks = [names.primary, ...(names.additional || [])].filter(Boolean);
-      data.initialized_lorebooks ||= {};
-      data.stat_data ||= {};
-      let changed = false;
-      for (const name of lorebooks) {
-        if (Object.prototype.hasOwnProperty.call(data.initialized_lorebooks, name)) continue;
-        const entries = await window.getLorebookEntries?.(name) || [];
-        const initialized = [];
-        for (const entry of entries) {
-          if (!String(entry.name || entry.comment || '').toLowerCase().includes('[initvar]')) continue;
-          try {
-            const parsed = window.YAML?.parse?.(window.substitudeMacros?.(entry.content) || entry.content) || {};
-            data.stat_data = { ...parsed, ...data.stat_data };
-            initialized.push(entry.uid ?? entry.id);
-            changed = true;
-          } catch (error) { console.error(error); }
-        }
-        data.initialized_lorebooks[name] = initialized;
-      }
-      return changed;
-    },
     getMvuVariable: (data, path, { category = 'stat', default_value = undefined } = {}) => {
       const record = data?.[`${category}_data`] || {};
       const value = getPath(record, path, default_value);

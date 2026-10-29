@@ -30,7 +30,6 @@ struct ContentView: View {
     @StateObject private var announcementManager = AnnouncementManager.shared
     @StateObject private var surveyManager = SurveyManager.shared
     @StateObject private var deviceMessages = DeviceMessageManager.shared
-    @StateObject private var legacyJSONMigrationManager = LegacyJSONMigrationManager.shared
     @ObservedObject private var notificationCenter = AppLocalNotificationCenter.shared
     @ObservedObject private var appConfig = AppConfigStore.shared
     @ObservedObject private var appLockManager = AppLockManager.shared
@@ -44,19 +43,16 @@ struct ContentView: View {
     @State private var launchRecoveryErrorMessage: String?
     @State private var rootBodyFont: Font = .body
     @State private var rootFontPreparationTask: Task<Void, Never>?
-    @State private var legacyMigrationErrorMessage: String?
-    @State private var isLegacyMigrationErrorPresented: Bool = false
     @State private var isNativeSettingsPresented: Bool = false
     @State private var incomingSnapshotRestorePayload: IncomingSnapshotRestorePayload?
     @State private var systemEntryInboxPayload: SystemEntryInboxPayload?
     @State private var systemEntryRoute: SystemEntryRoute?
     @State private var newAPIProviderImportNoticeMessage: String?
     @State private var newAPIProviderImportErrorMessage: String?
-    @State private var didEnterBackgroundSinceLastActivation = false
     @State private var settingsGuideContextToken: GuideContextCoordinator.RegistrationToken?
     
     var body: some View {
-        contentWithMigrationOverlays
+        contentWithNewAPIImportAlerts
             .localLinuxDiagnosticFeedback(
                 blocked: rootToolPermissionAutoPresentationBlocked
                     || toolPermissionCenter.activeRequest != nil
@@ -101,10 +97,6 @@ struct ContentView: View {
                     TTSManager.shared.setApplicationIsInBackground(false)
                     appLockManager.handleSceneDidBecomeActive()
                     ChatAppearanceProfileManager.shared.handleAppBecameActive()
-                    if didEnterBackgroundSinceLastActivation {
-                        ChatService.shared.openNewSessionIfRestoreWindowExpired()
-                        didEnterBackgroundSinceLastActivation = false
-                    }
                     scheduleDailyPulsePreparation(after: 1_500_000_000)
                 case .background:
                     Task {
@@ -114,8 +106,6 @@ struct ContentView: View {
                     LocalLinuxBackgroundTaskManager.shared.sceneDidEnterBackground()
                     TTSManager.shared.setApplicationIsInBackground(true)
                     appLockManager.handleSceneDidEnterBackground()
-                    ChatService.recordAppDidEnterBackground()
-                    didEnterBackgroundSinceLastActivation = true
                     Task {
                         await AppConfigStore.shared.flushPendingWrites()
                     }
@@ -203,15 +193,6 @@ struct ContentView: View {
                 switch route {
                 case .browser:
                     BrowserAgentFeatureView(sessionID: viewModel.currentSession?.id)
-                case .terminal:
-                    LocalLinuxFeatureView(sessionID: viewModel.currentSession?.id)
-                case .memory(let memory):
-                    if let memory {
-                        MemoryEditView(memory: memory)
-                            .environmentObject(viewModel)
-                    } else {
-                        LongTermMemoryFeatureView()
-                    }
                 }
             }
         }
@@ -230,9 +211,6 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenChatSession)) { _ in
             openChatSessionFromNotification()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestContextCompression)) { _ in
-            openContextCompressionFromNotification()
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenAchievementJournal)) { _ in
             openAchievementJournalFromNotification()
@@ -353,49 +331,6 @@ struct ContentView: View {
             }
     }
 
-    private var contentWithMigrationOverlays: some View {
-        contentWithNewAPIImportAlerts
-            .sheet(isPresented: $legacyJSONMigrationManager.isMigrationPromptPresented) {
-                NavigationStack {
-                    legacyJSONMigrationPromptSheet
-                }
-                .interactiveDismissDisabled(true)
-            }
-            .sheet(isPresented: migrationInProgressPresented) {
-                NavigationStack {
-                    legacyJSONMigrationProgressSheet
-                }
-                .interactiveDismissDisabled(true)
-            }
-            .alert(NSLocalizedString("是否清理旧版 JSON 文件？", comment: ""),
-                isPresented: $legacyJSONMigrationManager.isCleanupPromptPresented
-            ) {
-                Button(NSLocalizedString("保留 JSON（稍后再说）", comment: ""), role: .cancel) {
-                    legacyJSONMigrationManager.keepLegacyJSONForNow()
-                }
-                Button(NSLocalizedString("删除 JSON", comment: "")) {
-                    legacyJSONMigrationManager.cleanupLegacyJSONArtifacts()
-                }
-            } message: {
-                Text(NSLocalizedString("SQLite 迁移已完成。建议删除旧 JSON 文件释放空间，后续版本可能不再支持旧格式。", comment: ""))
-            }
-            .alert(NSLocalizedString("迁移失败", comment: ""), isPresented: $isLegacyMigrationErrorPresented) {
-                Button(NSLocalizedString("好的", comment: ""), role: .cancel) {
-                    legacyMigrationErrorMessage = nil
-                }
-            } message: {
-                Text(legacyMigrationErrorMessage ?? "")
-            }
-            .onReceive(legacyJSONMigrationManager.$errorMessage) { message in
-                guard let message, !message.isEmpty else { return }
-                legacyMigrationErrorMessage = message
-                isLegacyMigrationErrorPresented = true
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .legacyJSONMigrationDidFinish)) { _ in
-                viewModel.reloadPersistedDataAfterLegacyJSONMigration()
-            }
-    }
-
     private var globalToolPermissionRequestBinding: Binding<ToolPermissionRequest?> {
         Binding(
             get: { globalToolPermissionRequest },
@@ -426,10 +361,6 @@ struct ContentView: View {
             || launchRecoveryErrorMessage != nil
             || newAPIProviderImportNoticeMessage != nil
             || newAPIProviderImportErrorMessage != nil
-            || legacyJSONMigrationManager.isMigrationPromptPresented
-            || legacyJSONMigrationManager.isMigrating
-            || legacyJSONMigrationManager.isCleanupPromptPresented
-            || isLegacyMigrationErrorPresented
             || appLockManager.state == .locked
     }
 
@@ -543,13 +474,6 @@ struct ContentView: View {
         )
     }
 
-    private var migrationInProgressPresented: Binding<Bool> {
-        Binding(
-            get: { legacyJSONMigrationManager.isMigrating },
-            set: { _ in }
-        )
-    }
-
     private func openFeedbackFromNotification() {
         _ = notificationCenter.consumePendingRoute()
         openFeedback(issueNumber: notificationCenter.consumePendingFeedbackIssueNumber())
@@ -558,12 +482,6 @@ struct ContentView: View {
     private func openChatSessionFromNotification() {
         _ = notificationCenter.consumePendingRoute()
         guard let sessionID = notificationCenter.consumePendingChatSessionID() else { return }
-        openChatSession(sessionID: sessionID)
-    }
-
-    private func openContextCompressionFromNotification() {
-        _ = notificationCenter.consumePendingRoute()
-        guard let sessionID = notificationCenter.pendingContextCompressionSessionID else { return }
         openChatSession(sessionID: sessionID)
     }
 
@@ -604,7 +522,6 @@ struct ContentView: View {
     private func handleLaunchTasks() async {
         launchRecoveryRequest = Persistence.currentLaunchRecoveryRequest()
         launchRecoveryNoticeMessage = Persistence.consumeLaunchRecoveryNotice()
-        legacyJSONMigrationManager.refreshStatus()
         await announcementManager.checkAnnouncement()
         await surveyManager.checkSurveys(canPresent: !announcementManager.shouldShowAlert)
         await deviceMessages.checkMessages()
@@ -620,10 +537,6 @@ struct ContentView: View {
                 openFeedback(issueNumber: notificationCenter.consumePendingFeedbackIssueNumber())
             case .chatSession:
                 if let sessionID = notificationCenter.consumePendingChatSessionID() {
-                    openChatSession(sessionID: sessionID)
-                }
-            case .contextCompression:
-                if let sessionID = notificationCenter.pendingContextCompressionSessionID {
                     openChatSession(sessionID: sessionID)
                 }
             case .achievementJournal:
@@ -749,75 +662,4 @@ struct ContentView: View {
         }
     }
 
-    private var legacyJSONMigrationPromptSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("检测到旧版 JSON 聊天数据", comment: ""))
-                .etFont(.title3.bold())
-            Text(NSLocalizedString("为避免后续兼容风险，强烈建议现在迁移到 SQLite。迁移会在后台分批进行，不会阻塞当前界面。", comment: ""))
-                .foregroundStyle(.secondary)
-
-            if let status = legacyJSONMigrationManager.status {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(String(format: NSLocalizedString("预计会话数：%d", comment: ""), status.estimatedSessionCount))
-                    Text(String(format: NSLocalizedString("预计数据量：%.1f MB", comment: ""), status.estimatedLegacyMegabytes))
-                }
-                .etFont(.footnote)
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            VStack(spacing: 10) {
-                Button(NSLocalizedString("立即迁移（推荐）", comment: "")) {
-                    legacyJSONMigrationManager.startMigration()
-                }
-                .buttonStyle(.borderedProminent)
-                .frame(maxWidth: .infinity)
-
-                Button(NSLocalizedString("稍后再说", comment: "")) {
-                    legacyJSONMigrationManager.postponeMigrationPrompt()
-                }
-                .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(20)
-        .navigationTitle(NSLocalizedString("数据迁移", comment: ""))
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private var legacyJSONMigrationProgressSheet: some View {
-        VStack(spacing: 16) {
-            Text(NSLocalizedString("正在迁移聊天数据", comment: ""))
-                .etFont(.title3.bold())
-            if let progress = legacyJSONMigrationManager.progress {
-                ProgressView(value: progress.fractionCompleted)
-                    .progressViewStyle(.linear)
-                Text(String(format: NSLocalizedString("已处理会话 %d/%d", comment: ""), progress.processedSessions, max(progress.totalSessions, progress.processedSessions)))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-                Text(String(format: NSLocalizedString("已导入消息 %d", comment: ""), progress.importedMessages))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-                let currentSessionName = progress.currentSessionName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let currentSessionDisplayName = currentSessionName.isEmpty ? NSLocalizedString("正在整理会话…", comment: "") : currentSessionName
-                Text(String(format: NSLocalizedString("当前：%@", comment: ""), currentSessionDisplayName))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            } else {
-                ProgressView()
-                Text(NSLocalizedString("当前：正在准备迁移…", comment: ""))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            Text(NSLocalizedString("迁移完成后会再次询问是否删除旧 JSON 文件。", comment: ""))
-                .etFont(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(20)
-        .navigationTitle(NSLocalizedString("迁移中", comment: ""))
-        .navigationBarTitleDisplayMode(.inline)
-    }
 }

@@ -299,16 +299,11 @@ extension MCPManager {
         serverID: UUID,
         toolId: String,
         inputs: [String: JSONValue],
-        options: MCPManagedToolCallOptions,
-        clientOverride: MCPClient? = nil
+        options: MCPManagedToolCallOptions
     ) async throws -> JSONValue {
         let macUsage = beginMacStdioUse(serverID: serverID)
         defer { endMacStdioUse(serverID: serverID, usage: macUsage) }
-        let client = if let clientOverride {
-            clientOverride
-        } else {
-            try await ensureClientReady(serverID: serverID, refreshMetadataIfCacheMissing: false)
-        }
+        let client = try await ensureClientReady(serverID: serverID, refreshMetadataIfCacheMissing: false)
         let startedAt = Date()
         let resolvedProgressToken = options.progressToken ?? .string(UUID().uuidString)
         let tokenKey = resolvedProgressToken.canonicalValue

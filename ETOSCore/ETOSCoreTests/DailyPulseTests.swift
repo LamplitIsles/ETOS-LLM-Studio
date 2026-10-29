@@ -321,28 +321,6 @@ struct DailyPulseTests {
         ))
     }
 
-    @Test("手表仅在同步开启且 iPhone 可达时让出自动生成")
-    func watchGenerationDefersToReachablePhone() {
-        #expect(!DailyPulseManager.shouldGenerateOnCurrentDevice(
-            trigger: .automatic,
-            isWatchOS: true,
-            syncEnabled: true,
-            companionReachable: true
-        ))
-        #expect(DailyPulseManager.shouldGenerateOnCurrentDevice(
-            trigger: .delivery,
-            isWatchOS: true,
-            syncEnabled: true,
-            companionReachable: false
-        ))
-        #expect(DailyPulseManager.shouldGenerateOnCurrentDevice(
-            trigger: .manual,
-            isWatchOS: true,
-            syncEnabled: true,
-            companionReachable: true
-        ))
-    }
-
     // 上下文与交付类测试已拆分到 `DailyPulseContextAndDeliveryTests.swift`。
 }
 

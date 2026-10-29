@@ -265,10 +265,6 @@ extension SessionFolderBrowserView {
         switch source {
         case .sessionName:
             return NSLocalizedString("标题", comment: "")
-        case .topicPrompt:
-            return NSLocalizedString("主题提示", comment: "")
-        case .enhancedPrompt:
-            return NSLocalizedString("增强提示词", comment: "")
         case .userMessage:
             return NSLocalizedString("用户消息", comment: "")
         case .assistantMessage:
@@ -317,7 +313,7 @@ extension SessionFolderBrowserView {
                 currentSessionID: currentSessionIDSnapshot,
                 currentSessionMessages: currentMessagesSnapshot,
                 messageLoader: { sessionID in
-                    Persistence.loadMessages(for: sessionID)
+                    ChatService.shared.messagesSnapshot(for: sessionID)
                 }
             )
             DispatchQueue.main.async {

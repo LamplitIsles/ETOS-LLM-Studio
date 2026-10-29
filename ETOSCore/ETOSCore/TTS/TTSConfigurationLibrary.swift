@@ -179,7 +179,6 @@ enum TTSConfigurationStore {
 
     static func notifyChange(serviceJSON: String) {
         AppConfigStore.publishPersistedValue(.text(serviceJSON), for: .ttsServiceConfiguration)
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
     }
 }

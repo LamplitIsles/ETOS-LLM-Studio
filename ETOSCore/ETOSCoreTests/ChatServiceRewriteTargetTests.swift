@@ -103,8 +103,7 @@ extension ChatServiceTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SuspendedRewriteURLProtocol.self]
         let network = URLSession(configuration: configuration)
-        let service = ChatService(adapters: [dummyModel.provider.apiFormat: mockAdapter], memoryManager: memoryManager, urlSession: network)
-        await service.waitForInitialPersistenceStateIfNeeded()
+        let service = ChatService(adapters: [dummyModel.provider.apiFormat: mockAdapter], urlSession: network)
         let source = service.createSavedSession(name: "取消重写")
         let original = ChatMessage(role: .assistant, content: "取消后保留的原文")
         service.updateMessages([original], for: source.id)

@@ -9,7 +9,6 @@ struct MacWorkspaceView: View {
     @ObservedObject private var appLock = AppLockManager.shared
     @State private var sessionToEdit: ChatSession?
     @State private var sessionToDelete: ChatSession?
-    @State private var sessionToBind: ChatSession?
     @State private var sessionToRoleplay: ChatSession?
     @State private var sessionToAnalyze: ChatSession?
     @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -34,9 +33,6 @@ struct MacWorkspaceView: View {
                             Button { sessionToRoleplay = workspace.currentSession } label: {
                                 Label(NSLocalizedString("会话角色绑定", comment: ""), systemImage: "person.text.rectangle")
                             }
-                            Button { sessionToBind = workspace.currentSession } label: {
-                                Label(NSLocalizedString("绑定世界书", comment: ""), systemImage: "books.vertical")
-                            }
                             Button {
                                 if let session = workspace.currentSession { showAnalytics(session) }
                             } label: {
@@ -59,12 +55,10 @@ struct MacWorkspaceView: View {
 
     private var presentedContent: some View {
         navigationContent
-        // 压缩工作表必须保留“停止”；历史修改仍由各操作自身的互斥检查拦截。
-        .disabled(workspace.isRestoringData || (workspace.isMutatingHistory && !workspace.contextCompression.isWorking))
+        .disabled(workspace.isRestoringData || workspace.isMutatingHistory)
         .sheet(item: $sessionToEdit) { session in
             MacSessionEditor(session: session)
         }
-        .sheet(item: $sessionToBind) { MacWorldbookBindingView(model: workspace.worldbookModel, session: $0) }
         .sheet(item: $sessionToRoleplay) { MacRoleplayBindingView(session: $0) }
         .sheet(item: $sessionToAnalyze) { MacSessionUsageAnalyticsSheet(session: $0) }
         .sheet(item: Binding(
@@ -85,7 +79,7 @@ struct MacWorkspaceView: View {
         }
         .networkConnectionApprovalHost(isEnabled: workspace.canManageLocalModels)
         .modifier(MacDailyPulseHost(model: workspace.dailyPulse))
-        .modifier(MacFeedbackNotificationHost(dailyPulse: workspace.dailyPulse, isBlocked: sessionToEdit != nil || sessionToBind != nil || sessionToRoleplay != nil || sessionToAnalyze != nil || sessionToDelete != nil))
+        .modifier(MacFeedbackNotificationHost(dailyPulse: workspace.dailyPulse, isBlocked: sessionToEdit != nil || sessionToRoleplay != nil || sessionToAnalyze != nil || sessionToDelete != nil))
         .modifier(MacAppInformationHost())
         .overlay { if appLock.state == .locked { AppLockOverlayView() } }
     }

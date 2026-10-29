@@ -214,7 +214,6 @@ public struct RoleplayCharacter: Codable, Identifiable, Hashable, Sendable {
     public var alternateGreetings: [String]
     public var messageExamples: String
     public var creatorNotes: String
-    public var systemPrompt: String
     public var postHistoryInstructions: String
     public var tags: [String]
     public var creator: String
@@ -222,7 +221,6 @@ public struct RoleplayCharacter: Codable, Identifiable, Hashable, Sendable {
     public var sourceFileName: String?
     public var sourceSpec: String?
     public var sourceSpecVersion: String?
-    public var embeddedWorldbookID: UUID?
     public var regexRules: [RoleplayRegexRule]
     public var helperScripts: [RoleplayHelperScript]
     public var assets: [RoleplayCardAsset]?
@@ -244,7 +242,6 @@ public struct RoleplayCharacter: Codable, Identifiable, Hashable, Sendable {
         alternateGreetings: [String] = [],
         messageExamples: String = "",
         creatorNotes: String = "",
-        systemPrompt: String = "",
         postHistoryInstructions: String = "",
         tags: [String] = [],
         creator: String = "",
@@ -252,7 +249,6 @@ public struct RoleplayCharacter: Codable, Identifiable, Hashable, Sendable {
         sourceFileName: String? = nil,
         sourceSpec: String? = nil,
         sourceSpecVersion: String? = nil,
-        embeddedWorldbookID: UUID? = nil,
         regexRules: [RoleplayRegexRule] = [],
         helperScripts: [RoleplayHelperScript] = [],
         assets: [RoleplayCardAsset] = [],
@@ -273,7 +269,6 @@ public struct RoleplayCharacter: Codable, Identifiable, Hashable, Sendable {
         self.alternateGreetings = alternateGreetings
         self.messageExamples = messageExamples
         self.creatorNotes = creatorNotes
-        self.systemPrompt = systemPrompt
         self.postHistoryInstructions = postHistoryInstructions
         self.tags = tags
         self.creator = creator
@@ -281,7 +276,6 @@ public struct RoleplayCharacter: Codable, Identifiable, Hashable, Sendable {
         self.sourceFileName = sourceFileName
         self.sourceSpec = sourceSpec
         self.sourceSpecVersion = sourceSpecVersion
-        self.embeddedWorldbookID = embeddedWorldbookID
         self.regexRules = regexRules
         self.helperScripts = helperScripts
         self.assets = assets
@@ -330,7 +324,6 @@ public struct SessionRoleplayBinding: Codable, Identifiable, Hashable, Sendable 
     public var sessionID: UUID
     public var characterIDs: [UUID]
     public var personaID: UUID?
-    public var additionalWorldbookIDs: [UUID]
     public var selectedGreetingIndex: Int
     public var htmlRenderingEnabled: Bool
     public var helperScriptsEnabled: Bool
@@ -341,7 +334,6 @@ public struct SessionRoleplayBinding: Codable, Identifiable, Hashable, Sendable 
         sessionID: UUID,
         characterIDs: [UUID] = [],
         personaID: UUID? = nil,
-        additionalWorldbookIDs: [UUID] = [],
         selectedGreetingIndex: Int = 0,
         htmlRenderingEnabled: Bool = true,
         helperScriptsEnabled: Bool = true,
@@ -351,7 +343,6 @@ public struct SessionRoleplayBinding: Codable, Identifiable, Hashable, Sendable 
         self.sessionID = sessionID
         self.characterIDs = characterIDs
         self.personaID = personaID
-        self.additionalWorldbookIDs = additionalWorldbookIDs
         self.selectedGreetingIndex = max(0, selectedGreetingIndex)
         self.htmlRenderingEnabled = htmlRenderingEnabled
         self.helperScriptsEnabled = helperScriptsEnabled

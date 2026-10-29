@@ -19,7 +19,6 @@ struct ThirdPartyImportView: View {
     @State private var preparedResult: ThirdPartyImportPreparedResult?
     @State private var conflictPreview: ConflictPreview = .empty
     @State private var includeProviders: Bool = true
-    @State private var includeSessions: Bool = true
     @State private var includeMCPServers: Bool = true
     @State private var includeSkills: Bool = true
     @State private var sensitiveCredentialsAcknowledged: Bool = false
@@ -86,23 +85,7 @@ struct ThirdPartyImportView: View {
                         title: NSLocalizedString("识别到提供商", comment: "Parsed providers row"),
                         value: "\(preparedResult.parsedProvidersCount)"
                     )
-                    row(
-                        title: NSLocalizedString("识别到会话", comment: "Parsed sessions row"),
-                        value: "\(preparedResult.parsedSessionsCount)"
-                    )
                     if preparedResult.source == .openMinis {
-                        row(
-                            title: NSLocalizedString("识别到消息", comment: "Parsed OpenMinis messages row"),
-                            value: "\(preparedResult.parsedMessagesCount)"
-                        )
-                        row(
-                            title: NSLocalizedString("附件占位", comment: "OpenMinis attachment placeholders row"),
-                            value: "\(preparedResult.attachmentPlaceholderCount)"
-                        )
-                        row(
-                            title: NSLocalizedString("降级项", comment: "OpenMinis degraded items row"),
-                            value: "\(preparedResult.degradedItemCount)"
-                        )
                         row(
                             title: NSLocalizedString("识别到 MCP Server", comment: "Parsed MCP servers row"),
                             value: "\(preparedResult.parsedMCPServersCount)"
@@ -118,16 +101,8 @@ struct ThirdPartyImportView: View {
                             value: "\(conflictPreview.providerConflicts)"
                         )
                         row(
-                            title: NSLocalizedString("可能冲突会话", comment: "Potential session conflicts"),
-                            value: "\(conflictPreview.sessionConflicts)"
-                        )
-                        row(
                             title: NSLocalizedString("预计新增提供商", comment: "Estimated new providers"),
                             value: "\(conflictPreview.providerAdds)"
-                        )
-                        row(
-                            title: NSLocalizedString("预计新增会话", comment: "Estimated new sessions"),
-                            value: "\(conflictPreview.sessionAdds)"
                         )
                     }
                 }
@@ -142,13 +117,6 @@ struct ThirdPartyImportView: View {
                             Toggle(
                                 NSLocalizedString("导入提供商配置", comment: "Import providers toggle"),
                                 isOn: $includeProviders
-                            )
-                        }
-
-                        if preparedResult.parsedSessionsCount > 0 {
-                            Toggle(
-                                NSLocalizedString("导入会话记录", comment: "Import sessions toggle"),
-                                isOn: $includeSessions
                             )
                         }
 
@@ -216,24 +184,12 @@ struct ThirdPartyImportView: View {
                         value: "\(importReport.parsedProvidersCount)"
                     )
                     row(
-                        title: NSLocalizedString("本次解析会话", comment: "Parsed sessions in selected scope row"),
-                        value: "\(importReport.parsedSessionsCount)"
-                    )
-                    row(
                         title: NSLocalizedString("新增提供商", comment: "Imported providers row"),
                         value: "\(importReport.summary.importedProviders)"
                     )
                     row(
                         title: NSLocalizedString("跳过提供商", comment: "Skipped providers row"),
                         value: "\(importReport.summary.skippedProviders)"
-                    )
-                    row(
-                        title: NSLocalizedString("新增会话", comment: "Imported sessions row"),
-                        value: "\(importReport.summary.importedSessions)"
-                    )
-                    row(
-                        title: NSLocalizedString("跳过会话", comment: "Skipped sessions row"),
-                        value: "\(importReport.summary.skippedSessions)"
                     )
                 }
 
@@ -286,10 +242,9 @@ struct ThirdPartyImportView: View {
             return !preparedResult.package.options.isEmpty
         }
         let hasProviderSelection = includeProviders && preparedResult.parsedProvidersCount > 0
-        let hasSessionSelection = includeSessions && preparedResult.parsedSessionsCount > 0
         let hasMCPSelection = includeMCPServers && preparedResult.parsedMCPServersCount > 0
         let hasSkillSelection = includeSkills && preparedResult.parsedSkillsCount > 0
-        let hasSelection = hasProviderSelection || hasSessionSelection || hasMCPSelection || hasSkillSelection
+        let hasSelection = hasProviderSelection || hasMCPSelection || hasSkillSelection
         let needsSensitiveConfirmation = preparedResult.containsSensitiveCredentials
             && (hasProviderSelection || hasMCPSelection)
         return hasSelection && (!needsSensitiveConfirmation || sensitiveCredentialsAcknowledged)
@@ -335,13 +290,11 @@ struct ThirdPartyImportView: View {
         case .rikkahub:
             return NSLocalizedString("支持 RikkaHub 的 settings.json（可直接选文件或解压目录，当前先导入提供商配置）。", comment: "Rikka source hint")
         case .kelivo:
-            return NSLocalizedString("支持 Kelivo 的 settings.json + chats.json（建议选择解压后的目录一次导入）。", comment: "Kelivo source hint")
-        case .chatgpt:
-            return NSLocalizedString("支持 ChatGPT 官方 conversations.json（可直接选文件或包含该文件的目录）。", comment: "ChatGPT source hint")
+            return NSLocalizedString("支持 Kelivo 的 settings.json 提供商配置。", comment: "Kelivo source hint")
         case .chatbox:
-            return NSLocalizedString("支持 ChatBox 导出的 chatbox-exported-data JSON，可导入提供商配置与会话记录。", comment: "ChatBox source hint")
+            return NSLocalizedString("支持 ChatBox 导出的 chatbox-exported-data JSON，可导入提供商配置。", comment: "ChatBox source hint")
         case .openMinis:
-            return NSLocalizedString("支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON、MCP JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。", comment: "OpenMinis source hint")
+            return NSLocalizedString("支持 OpenMinis Provider JSON、MCP JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。", comment: "OpenMinis source hint")
         }
     }
 
@@ -381,7 +334,6 @@ struct ThirdPartyImportView: View {
                     guard preparationRequestID == requestID else { return }
                     preparedResult = prepared
                     includeProviders = prepared.package.options.contains(.providers)
-                    includeSessions = prepared.package.options.contains(.sessions)
                     includeMCPServers = prepared.package.options.contains(.mcpServers)
                     includeSkills = prepared.package.options.contains(.skills)
                     sensitiveCredentialsAcknowledged = false
@@ -417,7 +369,6 @@ struct ThirdPartyImportView: View {
             let package = preparedResult.package
             let source = preparedResult.source
             let parsedProvidersCount = preparedResult.parsedProvidersCount
-            let parsedSessionsCount = preparedResult.parsedSessionsCount
             let warnings = preparedResult.warnings
             Task {
                 let summary = await Task.detached(priority: .userInitiated) {
@@ -426,7 +377,6 @@ struct ThirdPartyImportView: View {
                 let report = ThirdPartyImportReport(
                     source: source,
                     parsedProvidersCount: parsedProvidersCount,
-                    parsedSessionsCount: parsedSessionsCount,
                     summary: summary,
                     warnings: warnings
                 )
@@ -441,7 +391,6 @@ struct ThirdPartyImportView: View {
 
         var options: SyncOptions = []
         let providers: [Provider]
-        let sessions: [SyncedSession]
         let mcpServers: [MCPServerConfiguration]
         let skills: [SyncedSkillBundle]
 
@@ -450,13 +399,6 @@ struct ThirdPartyImportView: View {
             providers = preparedResult.package.providers
         } else {
             providers = []
-        }
-
-        if includeSessions, preparedResult.parsedSessionsCount > 0 {
-            options.insert(.sessions)
-            sessions = preparedResult.package.sessions
-        } else {
-            sessions = []
         }
 
         if includeMCPServers, preparedResult.parsedMCPServersCount > 0 {
@@ -487,7 +429,6 @@ struct ThirdPartyImportView: View {
             let scopedPackage = SyncPackage(
                 options: options,
                 providers: providers,
-                sessions: sessions,
                 mcpServers: mcpServers,
                 skills: skills
             )
@@ -498,7 +439,6 @@ struct ThirdPartyImportView: View {
             let report = ThirdPartyImportReport(
                 source: source,
                 parsedProvidersCount: providers.count,
-                parsedSessionsCount: sessions.count,
                 summary: summary,
                 warnings: warnings
             )
@@ -518,7 +458,6 @@ struct ThirdPartyImportView: View {
         importError = nil
         conflictPreview = .empty
         includeProviders = true
-        includeSessions = true
         includeMCPServers = true
         includeSkills = true
         sensitiveCredentialsAcknowledged = false
@@ -527,15 +466,12 @@ struct ThirdPartyImportView: View {
     private func syncOptionSummary(_ options: SyncOptions) -> String {
         var items: [String] = []
         if options.contains(.providers) { items.append(NSLocalizedString("提供商配置", comment: "")) }
-        if options.contains(.sessions) { items.append(NSLocalizedString("会话记录", comment: "")) }
         if options.contains(.backgrounds) { items.append(NSLocalizedString("背景图片", comment: "")) }
-        if options.contains(.memories) { items.append(NSLocalizedString("记忆", comment: "")) }
         if options.contains(.mcpServers) { items.append(NSLocalizedString("MCP 服务器", comment: "")) }
         if options.contains(.audioFiles) { items.append(NSLocalizedString("音频文件", comment: "")) }
         if options.contains(.imageFiles) { items.append(NSLocalizedString("图片文件", comment: "")) }
         if options.contains(.skills) { items.append(NSLocalizedString("Agent Skills", comment: "Agent Skills sync option")) }
         if options.contains(.shortcutTools) { items.append(NSLocalizedString("快捷指令工具", comment: "")) }
-        if options.contains(.worldbooks) { items.append(NSLocalizedString("世界书", comment: "")) }
         if options.contains(.feedbackTickets) { items.append(NSLocalizedString("反馈工单", comment: "")) }
         if options.contains(.dailyPulse) { items.append(NSLocalizedString("每日脉冲", comment: "")) }
         if options.contains(.usageStats) { items.append(NSLocalizedString("用量统计", comment: "")) }
@@ -570,14 +506,9 @@ private enum ThirdPartyImportConflictPreviewBuilder {
         let providerConflicts = estimateProviderConflicts(incoming: package.providers)
         let providerAdds = max(0, package.providers.count - providerConflicts)
 
-        let sessionConflicts = estimateSessionConflicts(incoming: package.sessions)
-        let sessionAdds = max(0, package.sessions.count - sessionConflicts)
-
         return ConflictPreview(
             providerConflicts: providerConflicts,
-            sessionConflicts: sessionConflicts,
-            providerAdds: providerAdds,
-            sessionAdds: sessionAdds
+            providerAdds: providerAdds
         )
     }
 
@@ -592,38 +523,6 @@ private enum ThirdPartyImportConflictPreviewBuilder {
         }
     }
 
-    nonisolated private static func estimateSessionConflicts(incoming: [SyncedSession]) -> Int {
-        guard !incoming.isEmpty else { return 0 }
-
-        let localSessions = Persistence.loadChatSessions().filter { !$0.isTemporary }
-        let localSessionIDs = Set(localSessions.map(\.id))
-
-        var localSignatures: Set<String> = []
-        localSignatures.reserveCapacity(localSessions.count)
-        for session in localSessions {
-            localSignatures.insert(
-                sessionPreviewSignature(
-                    name: session.name,
-                    messageCount: Persistence.loadMessageCount(for: session.id)
-                )
-            )
-        }
-
-        return incoming.reduce(into: 0) { count, incomingSession in
-            if localSessionIDs.contains(incomingSession.session.id) {
-                count += 1
-                return
-            }
-            let signature = sessionPreviewSignature(
-                name: incomingSession.session.name,
-                messageCount: incomingSession.messages.count
-            )
-            if localSignatures.contains(signature) {
-                count += 1
-            }
-        }
-    }
-
     nonisolated private static func providerSignature(_ provider: Provider) -> String {
         [
             provider.name.lowercased(),
@@ -633,36 +532,22 @@ private enum ThirdPartyImportConflictPreviewBuilder {
         ].joined(separator: "|")
     }
 
-    nonisolated private static func sessionPreviewSignature(name: String, messageCount: Int) -> String {
-        return [
-            name.lowercased(),
-            "\(messageCount)"
-        ].joined(separator: "|")
-    }
 }
 
 private struct ConflictPreview {
     var providerConflicts: Int
-    var sessionConflicts: Int
     var providerAdds: Int
-    var sessionAdds: Int
 
     nonisolated init(
         providerConflicts: Int,
-        sessionConflicts: Int,
-        providerAdds: Int,
-        sessionAdds: Int
+        providerAdds: Int
     ) {
         self.providerConflicts = providerConflicts
-        self.sessionConflicts = sessionConflicts
         self.providerAdds = providerAdds
-        self.sessionAdds = sessionAdds
     }
 
     static let empty = ConflictPreview(
         providerConflicts: 0,
-        sessionConflicts: 0,
-        providerAdds: 0,
-        sessionAdds: 0
+        providerAdds: 0
     )
 }

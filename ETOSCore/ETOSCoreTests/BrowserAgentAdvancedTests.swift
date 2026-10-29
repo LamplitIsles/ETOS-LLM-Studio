@@ -10,34 +10,6 @@ import Testing
 
 @Suite("Browser Agent 高级能力测试")
 struct BrowserAgentAdvancedTests {
-    @Test("能力模型可解码旧版伴侣响应")
-    func capabilitiesDecodeWithoutSupportedActions() throws {
-        let data = Data(
-            """
-            {
-              "platform": "watchOS",
-              "isExperimental": true,
-              "supportsNavigation": true,
-              "supportsSnapshot": true,
-              "supportsClick": true,
-              "supportsTyping": true,
-              "supportsScrolling": true,
-              "supportsJavaScript": true,
-              "supportsScreenshot": false,
-              "supportsDownload": false,
-              "supportsUserTakeover": true,
-              "supportsIPhoneDelegation": true,
-              "notes": []
-            }
-            """.utf8
-        )
-
-        let capabilities = try JSONDecoder().decode(BrowserAgentCapabilities.self, from: data)
-
-        #expect(capabilities.platform == "watchOS")
-        #expect(capabilities.supportedActions == nil)
-    }
-
     @Test("工具协议包含高级动作但不暴露 Cookie 操作")
     func actionSurfaceExcludesCookies() {
         let actions = Set(BrowserAgentAction.allCases.map(\.rawValue))

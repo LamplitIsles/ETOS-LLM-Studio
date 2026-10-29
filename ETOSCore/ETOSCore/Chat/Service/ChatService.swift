@@ -19,7 +19,6 @@ public class ChatService {
     let logger = Logger(subsystem: "com.ETOS.LLM.Studio", category: "ChatService")
     static let modelOrderStorageKey = "modelOrder.runnableModels"
     static let selectedRunnableModelStorageKey = "selectedRunnableModelID"
-    static let lastActiveSessionIDStorageKey = "launch.lastActiveSessionID"
     struct RetryAchievementSignature: Equatable {
         let sessionID: UUID
         let content: String
@@ -151,17 +150,6 @@ public class ChatService {
         }
     }
 
-    public enum WorldbookExportRequestError: LocalizedError {
-        case bookNotFound
-
-        public var errorDescription: String? {
-            switch self {
-            case .bookNotFound:
-                return NSLocalizedString("导出失败：未找到对应世界书。", comment: "Worldbook export book missing")
-            }
-        }
-    }
-
     // MARK: - 私有状态
     
     private var cancellables = Set<AnyCancellable>()
@@ -174,26 +162,15 @@ public class ChatService {
     let sessionSelectionLock = NSRecursiveLock()
     var sessionSelectionToken = UUID()
     /// 显式临时对话只保留运行期消息，和“尚未发送首条消息”的占位会话语义分开。
-    var ephemeralSessionStates: [UUID: TemporaryChatRuntimeState] = [:]
+    var ephemeralSessionIDs: Set<UUID> = []
     let ephemeralSessionLock = NSLock()
     /// 记录每个会话上一次注入周期性时间路标的时间，保证路标按周期出现且不会过于频繁。
     var periodicTimeLandmarkLastInjectedAtBySessionID: [UUID: Date] = [:]
     var providers: [Provider]
-    let localModelStore: LocalModelStore
-    let startupTemporarySession: ChatSession
     let adapters: [String: APIAdapter]
-    let memoryManager: MemoryManager
-    let worldbookStore: WorldbookStore
-    let worldbookImportService: WorldbookImportService
-    let worldbookExportService: WorldbookExportService
-    let worldbookEngine: WorldbookEngine
     let roleplayStore: RoleplayStore
     let urlSession: URLSession
     let fileAttachmentTextExtractor: FileAttachmentTextExtractor
-    let startupStateLoadLock = NSLock()
-    var hasTriggeredStartupStateLoad = false
-    var hasCompletedStartupStateLoad = false
-    var startupStateLoadTask: Task<Void, Never>?
     private let audioAttachmentDataCache: NSCache<NSString, NSData> = {
         let cache = NSCache<NSString, NSData>()
         cache.countLimit = 24
@@ -287,36 +264,22 @@ public class ChatService {
         }
     }
 
-    /// 优先读取运行期消息；历史检索等调用方须在后台执行，未缓存时会读持久化层。
     public func messagesSnapshot(for sessionID: UUID) -> [ChatMessage] {
         if currentSessionSubject.value?.id == sessionID {
             return messagesForSessionSubject.value
         }
-        if let cachedMessages = runtimeMessagesSnapshot(for: sessionID) {
-            return cachedMessages
-        }
-        return Persistence.loadMessages(for: sessionID)
+        return runtimeMessagesSnapshot(for: sessionID) ?? []
     }
 
-    /// 常规列表只持有可见会话；会话运行时还需要按 ID 定点访问内嵌子代理。
     func conversationSession(withID sessionID: UUID) -> ChatSession? {
         if let current = currentSessionSubject.value, current.id == sessionID {
             return current
         }
         return chatSessionsSubject.value.first(where: { $0.id == sessionID })
-            ?? Persistence.loadChatSession(id: sessionID)
     }
 
     func messagesForSessionActivation(_ sessionID: UUID) -> [ChatMessage] {
-        if isTemporaryChatEnabled(for: sessionID) {
-            return runtimeMessagesSnapshot(for: sessionID) ?? []
-        }
-        if hasActiveRequestContext(for: sessionID),
-           let cachedMessages = runtimeMessagesSnapshot(for: sessionID) {
-            return cachedMessages
-        }
-        Persistence.flushPendingMessageWritesForSyncSnapshot()
-        return Persistence.loadMessages(for: sessionID)
+        runtimeMessagesSnapshot(for: sessionID) ?? []
     }
 
     func runtimeMessagesSnapshot(for sessionID: UUID) -> [ChatMessage]? {
@@ -352,26 +315,9 @@ public class ChatService {
         afterMessageID: UUID? = nil,
         keepingSpeedSamplesFor preferredMessageID: UUID? = nil
     ) async throws -> ChatMessage {
-        let cachedMessages = runtimeMessagesLock.withLock {
-            runtimeMessagesBySessionID[sessionID]
-        }
-
-        let writeResult = try await Task.detached(priority: .userInitiated) {
-            let storedMessage = try Persistence.upsertConversationMessage(
-                message,
-                to: sessionID,
-                afterMessageID: afterMessageID
-            )
-            let persistedMessages = cachedMessages == nil ? Persistence.loadMessages(for: sessionID) : nil
-            return (storedMessage, persistedMessages)
-        }.value
-
-        let storedMessage = writeResult.0
+        let storedMessage = message
         let messages = runtimeMessagesLock.withLock {
-            var messages = runtimeMessagesBySessionID[sessionID]
-                ?? writeResult.1
-                ?? cachedMessages
-                ?? []
+            var messages = runtimeMessagesBySessionID[sessionID] ?? []
             if let index = messages.firstIndex(where: { $0.id == storedMessage.id }) {
                 messages[index] = storedMessage
             } else if let afterMessageID,
@@ -397,23 +343,14 @@ public class ChatService {
         id messageID: UUID,
         from sessionID: UUID
     ) async throws -> Bool {
-        let cachedMessages = runtimeMessagesSnapshot(for: sessionID)
-        let writeResult = try await Task.detached(priority: .userInitiated) {
-            let deleted = try Persistence.deleteConversationMessage(id: messageID, from: sessionID)
-            let persistedMessages = cachedMessages == nil ? Persistence.loadMessages(for: sessionID) : nil
-            return (deleted, persistedMessages)
-        }.value
-        guard writeResult.0 else { return false }
-
-        let messages = runtimeMessagesLock.withLock {
-            var messages = runtimeMessagesBySessionID[sessionID]
-                ?? writeResult.1
-                ?? cachedMessages
-                ?? []
+        let messages = runtimeMessagesLock.withLock { () -> [ChatMessage]? in
+            guard var messages = runtimeMessagesBySessionID[sessionID],
+                  messages.contains(where: { $0.id == messageID }) else { return nil }
             messages.removeAll { $0.id == messageID }
             runtimeMessagesBySessionID[sessionID] = messages
             return messages
         }
+        guard let messages else { return false }
         publishMessagesIfCurrentSession(messages, for: sessionID)
         return true
     }
@@ -522,7 +459,7 @@ public class ChatService {
     ) {
         storeRuntimeMessagesSnapshot(messages, for: sessionID)
         publishMessagesIfCurrentSession(messages, for: sessionID, keepingSpeedSamplesFor: preferredMessageID)
-        persistMessages(messages, for: sessionID)
+        storeRuntimeMessagesSnapshot(messages, for: sessionID)
     }
 
     private func withRequestStateLock<T>(_ body: () -> T) -> T {
@@ -582,12 +519,9 @@ public class ChatService {
             return true
         }
         guard canFinish else { return }
-        // 刷盘期间允许新请求接管；清理快照前再次核对 token，防止清掉新请求的内存结果。
-        Persistence.flushPendingMessageWritesForSyncSnapshot()
         let didClear = withRequestStateLock { () -> Bool in
             guard let context = requestContextBySessionID[sessionID], context.token == token else { return false }
             requestContextBySessionID.removeValue(forKey: sessionID)
-            clearRuntimeMessagesSnapshot(for: sessionID)
             return true
         }
         guard didClear else { return }
@@ -811,41 +745,23 @@ public class ChatService {
     
     public init(
         adapters: [String: APIAdapter]? = nil,
-        memoryManager: MemoryManager = .shared,
-        worldbookStore: WorldbookStore = .shared,
-        worldbookImportService: WorldbookImportService = WorldbookImportService(),
-        worldbookExportService: WorldbookExportService = WorldbookExportService(),
-        worldbookEngine: WorldbookEngine = WorldbookEngine(),
         roleplayStore: RoleplayStore = .shared,
         fileAttachmentTextExtractor: FileAttachmentTextExtractor = FileAttachmentTextExtractor(),
-        localModelStore: LocalModelStore = .shared,
         urlSession: URLSession = NetworkSessionConfiguration.shared
     ) {
         logger.info("ChatService 正在初始化...")
 
-        self.memoryManager = memoryManager
-        self.worldbookStore = worldbookStore
-        self.worldbookImportService = worldbookImportService
-        self.worldbookExportService = worldbookExportService
-        self.worldbookEngine = worldbookEngine
         self.roleplayStore = roleplayStore
         self.fileAttachmentTextExtractor = fileAttachmentTextExtractor
-        self.localModelStore = localModelStore
         self.urlSession = urlSession
         ConfigLoader.setupInitialProviderConfigs()
         ConfigLoader.setupBackgroundsDirectory()
-        self.providers = LocalModelProviderBridge.applyingLocalProvider(
-            to: ConfigLoader.loadProviders(),
-            records: localModelStore.models,
-            isEnabled: localModelStore.isProviderEnabled,
-            preferRecordBasics: true
-        )
+        self.providers = ConfigLoader.loadProviders()
         let startupTemporarySession = ChatSession(
             id: UUID(),
             name: NSLocalizedString("新的对话", comment: "Default new chat session name"),
             isTemporary: true
         )
-        self.startupTemporarySession = startupTemporarySession
         self.adapters = adapters ?? [
             "openai-compatible": OpenAIAdapter(),
             "openai-responses": OpenAIResponsesAdapter(),
@@ -854,39 +770,25 @@ public class ChatService {
             "anthropic": AnthropicAdapter(),
         ]
 
-        let launchState = Self.isRunningUnitTests
-            ? Self.loadLaunchPersistenceState(using: startupTemporarySession)
-            : nil
-
         self.providersSubject = CurrentValueSubject(self.providers)
         self.selectedModelSubject = CurrentValueSubject(nil)
         self.chatSessionsSubject = CurrentValueSubject(
-            launchState?.loadedSessions ?? [startupTemporarySession]
+            [startupTemporarySession]
         )
         self.sessionFoldersSubject = CurrentValueSubject(
-            launchState?.sessionFolders ?? []
+            []
         )
         self.sessionTagsSubject = CurrentValueSubject(
-            launchState?.sessionTags ?? []
+            []
         )
         self.currentSessionSubject = CurrentValueSubject(
-            launchState?.initialSession ?? startupTemporarySession
+            startupTemporarySession
         )
         self.messagesForSessionSubject = CurrentValueSubject(
-            launchState?.initialMessages ?? []
+            []
         )
         self.reconcileStoredModelOrder()
         self.reconcileStoredProviderOrder()
-        self.currentSessionSubject
-            .sink { [weak self] session in
-                self?.persistLastActiveSessionIDIfNeeded(session)
-            }
-            .store(in: &cancellables)
-        NotificationCenter.default.publisher(for: .localModelStoreDidChange)
-            .sink { [weak self] _ in
-                self?.reloadProviders()
-            }
-            .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .officialDataDidUpdate)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -909,10 +811,8 @@ public class ChatService {
 
         logger.info("  - 初始选中模型为: \(initialModel?.model.displayName ?? "无")")
         if !Self.isRunningUnitTests {
-            logger.info("  - 已切换为启动后异步加载持久化会话状态。")
             Task { [weak self] in
                 guard let self else { return }
-                await self.waitForInitialPersistenceStateIfNeeded(priority: .utility)
                 await ConversationRunCoordinator.shared.start(chatService: self)
             }
         }
@@ -973,55 +873,6 @@ public class ChatService {
                 localeIdentifier: language
             )
             logger.info("系统语音识别完成，长度 \(transcript.count) 字符。")
-            return transcript
-        }
-
-        if LocalModelProviderBridge.isLocalRunnableModel(model) {
-            guard let record = localModelRecord(for: model, requiresExistingFile: false) else {
-                throw LocalSpeechEngineError.modelFileMissing(model.model.modelName)
-            }
-            let decoderRecord = record.speechDecoderModelID.flatMap { decoderID in
-                localModelStore.models.first {
-                    $0.id == decoderID && localModelStore.fileExists(for: $0)
-                }
-            }
-            if record.speechArchitecture?.requiresDecoderModel == true,
-               decoderRecord == nil {
-                throw LocalSpeechEngineError.transcriptionFailed(
-                    NSLocalizedString("Fun-ASR-Nano 尚未关联可用的本地 Qwen 解码模型。", comment: "Fun-ASR-Nano decoder not configured")
-                )
-            }
-            let vadRecord = record.speechVADModelID.flatMap { vadID in
-                localModelStore.models.first {
-                    $0.id == vadID
-                        && $0.speechArchitecture == .fsmnVAD
-                        && localModelStore.fileExists(for: $0)
-                }
-            }
-            let extensionFromName = URL(fileURLWithPath: fileName).pathExtension
-            let fallbackExtension = mimeType.lowercased().contains("wav") ? "wav" : "m4a"
-            let localModelCacheEnabled = await MainActor.run {
-                AppConfigStore.shared.localModelCacheEnabled
-            }
-            #if os(watchOS)
-            let gpuLayers = 0
-            #else
-            let gpuLayers = record.effectiveGPULayers
-            #endif
-            let transcript = try await LocalSpeechEngine.transcribe(
-                audioData: audioData,
-                fileExtension: extensionFromName.isEmpty ? fallbackExtension : extensionFromName,
-                modelURL: localModelStore.fileURL(for: record),
-                decoderModelURL: decoderRecord.map(localModelStore.fileURL(for:)),
-                vadModelURL: vadRecord.map(localModelStore.fileURL(for:)),
-                options: LocalSpeechTranscriptionOptions(
-                    contextSize: record.effectiveContextSize,
-                    maxOutputTokens: record.effectiveMaxOutputTokens,
-                    gpuLayers: gpuLayers,
-                    useModelCache: localModelCacheEnabled
-                )
-            )
-            logger.info("本地语音识别完成，长度 \(transcript.count) 字符。")
             return transcript
         }
 

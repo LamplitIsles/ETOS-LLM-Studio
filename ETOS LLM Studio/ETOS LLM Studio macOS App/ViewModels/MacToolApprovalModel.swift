@@ -34,7 +34,7 @@ final class MacToolApprovalModel: ObservableObject {
 
     func update(_ change: ToolApprovalPreferenceChange, expectedEpoch: UUID, requestID: UUID? = nil) async throws {
         guard canWrite, expectedEpoch == epoch, let center,
-              requestID == nil || center.activeRequest?.id == requestID else { throw MacMemoryWriteError.busy }
+              requestID == nil || center.activeRequest?.id == requestID else { throw MacWorkspaceWriteError.busy }
         isWorking = true
         let task = Task { try await center.updatePreferencesInBackground(change) }
         writeTask = task

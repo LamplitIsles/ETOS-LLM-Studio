@@ -112,7 +112,7 @@ final class MacShortcutToolsModel: ObservableObject {
     }
 
     private func perform<T: Sendable>(expectedEpoch: UUID, action: @escaping @MainActor (ShortcutToolManager) async throws -> T) async throws -> T {
-        guard canWrite, epoch == expectedEpoch, let manager else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch, let manager else { throw MacWorkspaceWriteError.busy }
         isWorking = true
         let task = Task { try await action(manager) }
         writeTask = Task { _ = try await task.value }
@@ -121,7 +121,7 @@ final class MacShortcutToolsModel: ObservableObject {
     }
 
     func prepare(_ source: MacShortcutImportSource, expectedEpoch: UUID) async throws -> MacShortcutImportPreview {
-        guard canWrite, epoch == expectedEpoch, let manager else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch, let manager else { throw MacWorkspaceWriteError.busy }
         isPreparing = true; progress = nil
         let task = Task { [weak self] in
             let data = try await Task.detached(priority: .utility) { try source.readData() }.value
@@ -146,7 +146,7 @@ final class MacShortcutToolsModel: ObservableObject {
     }
 
     func generateDescription(for tool: ShortcutToolDefinition, expectedEpoch: UUID) async throws -> String {
-        guard canWrite, epoch == expectedEpoch, let manager else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch, let manager else { throw MacWorkspaceWriteError.busy }
         isPreparing = true
         let task = Task { try await manager.prepareDescriptionInBackground(for: tool) }
         descriptionTask = task
@@ -160,7 +160,7 @@ final class MacShortcutToolsModel: ObservableObject {
     func cancelPreparation() { importTask?.cancel(); descriptionTask?.cancel() }
 
     func launchOfficial(name: String, expectedEpoch: UUID) async throws {
-        guard canWrite, epoch == expectedEpoch else { throw MacMemoryWriteError.busy }
+        guard canWrite, epoch == expectedEpoch else { throw MacWorkspaceWriteError.busy }
         isLaunchingOfficial = true
         defer { isLaunchingOfficial = false }
         let url = await Task.detached(priority: .utility) {

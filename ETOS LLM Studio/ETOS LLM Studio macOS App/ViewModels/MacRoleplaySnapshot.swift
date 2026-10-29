@@ -33,7 +33,6 @@ struct MacRoleplaySnapshot: Sendable {
                                     "id": .string(character.id.uuidString), "name": .string(character.name),
                                     "creator": .string(character.creator), "version": .string(character.characterVersion), "format": .string(format),
                                     "description_characters": .int(character.description.count), "first_message_characters": .int(character.firstMessage.count),
-                                    "embedded_worldbook_id": .string(character.embeddedWorldbookID?.uuidString ?? ""),
                                     "greetings": .int(character.alternateGreetings.count), "regex_rules": .int(character.regexRules.count),
                                     "scripts": .int(character.helperScripts.count), "assets": .int(character.assets?.count ?? 0)
                                    ]))

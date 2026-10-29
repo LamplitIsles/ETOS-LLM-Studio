@@ -60,42 +60,7 @@ extension Model {
         requestBodyOverrideMode == other.requestBodyOverrideMode &&
         rawRequestBodyJSON == other.rawRequestBodyJSON &&
         requestBodyControls == other.requestBodyControls &&
-        prompt == other.prompt &&
         pricing?.normalized == other.pricing?.normalized
-    }
-}
-
-extension ChatSession {
-    /// 判断两个会话是否逻辑等价（忽略 ID 与临时状态）
-    func isEquivalent(to other: ChatSession) -> Bool {
-        name == other.name &&
-        topicPrompt == other.topicPrompt &&
-        enhancedPrompt == other.enhancedPrompt &&
-        folderID == other.folderID &&
-        memoryContextIsolationEnabled == other.memoryContextIsolationEnabled &&
-        toolContextIsolationEnabled == other.toolContextIsolationEnabled &&
-        globalSystemPromptIsolationEnabled == other.globalSystemPromptIsolationEnabled &&
-        Set(lorebookIDs) == Set(other.lorebookIDs) &&
-        Set(tagIDs) == Set(other.tagIDs)
-    }
-    
-    /// 去除所有同步后缀的基础名称
-    var baseNameWithoutSyncSuffix: String {
-        removeSyncSuffixes(from: name)
-    }
-    
-    /// 判断两个会话是否逻辑等价（忽略同步后缀、ID 与临时状态）
-    /// 用于同步时判断是否为"同一个"会话的不同版本
-    func isEquivalentIgnoringSyncSuffix(to other: ChatSession) -> Bool {
-        baseNameWithoutSyncSuffix == other.baseNameWithoutSyncSuffix &&
-        topicPrompt == other.topicPrompt &&
-        enhancedPrompt == other.enhancedPrompt &&
-        folderID == other.folderID &&
-        memoryContextIsolationEnabled == other.memoryContextIsolationEnabled &&
-        toolContextIsolationEnabled == other.toolContextIsolationEnabled &&
-        globalSystemPromptIsolationEnabled == other.globalSystemPromptIsolationEnabled &&
-        Set(lorebookIDs) == Set(other.lorebookIDs) &&
-        Set(tagIDs) == Set(other.tagIDs)
     }
 }
 
@@ -128,17 +93,6 @@ extension ShortcutToolDefinition {
         isEnabled == other.isEnabled &&
         userDescription == other.userDescription &&
         generatedDescription == other.generatedDescription
-    }
-}
-
-extension Array where Element == ChatMessage {
-    /// 对比两组消息是否完全一致（逐条比较）
-    func isContentEqual(to other: [ChatMessage]) -> Bool {
-        guard count == other.count else { return false }
-        for (lhs, rhs) in zip(self, other) {
-            if lhs != rhs { return false }
-        }
-        return true
     }
 }
 

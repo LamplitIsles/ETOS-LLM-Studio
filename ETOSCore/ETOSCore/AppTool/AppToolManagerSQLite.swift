@@ -28,7 +28,7 @@ extension AppToolManager {
     static func sqliteDatabaseURL(for database: AppToolSQLiteDatabase) -> URL {
         switch database {
         case .chat:
-            return Persistence.getChatsDirectory().appendingPathComponent("chat-store.sqlite", isDirectory: false)
+            return Persistence.getChatsDirectory().appendingPathComponent("runtime-store.sqlite", isDirectory: false)
         case .config:
             let documents = StorageUtility.documentsDirectory
             let configDirectory = documents.appendingPathComponent("Config", isDirectory: true)
@@ -36,8 +36,6 @@ extension AppToolManager {
                 try? FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
             }
             return configDirectory.appendingPathComponent("config-store.sqlite", isDirectory: false)
-        case .memory:
-            return MemoryStoragePaths.rootDirectory().appendingPathComponent("memory-store.sqlite", isDirectory: false)
         }
     }
 

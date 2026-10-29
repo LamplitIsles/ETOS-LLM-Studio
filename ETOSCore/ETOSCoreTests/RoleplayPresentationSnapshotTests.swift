@@ -20,7 +20,7 @@ struct RoleplayPresentationSnapshotTests {
         store.upsertBinding(.init(sessionID: sessionID, characterIDs: [character.id], helperScriptsEnabled: true))
         defer { store.removeBinding(sessionID: sessionID); store.deleteCharacter(id: character.id) }
         let message = ChatMessage(role: .assistant, content: "状态占位")
-        let first = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [message], worldbooks: [])
+        let first = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [message])
         let visual = first.visualContent(message, rules: [])
         let extraction = try #require(first.extraction(for: message, content: visual))
         let html = try #require(first.documents(for: message, extraction: extraction).first)
@@ -34,18 +34,18 @@ struct RoleplayPresentationSnapshotTests {
 
         let draft = try store.dataDraft(sessionID: sessionID, target: .variables(.chat, messageID: nil, versionIndex: 0))
         try store.saveDataDraft(draft, values: ["value": .int(9)])
-        let second = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [message], worldbooks: [])
+        let second = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [message])
         let updated = try #require(second.scriptDocuments().first)
         #expect(updated.id == firstScript.id)
         #expect(updated.variableUpdate != firstScript.variableUpdate)
         var edited = message
         edited.content = "修改后的历史"
-        let changed = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [edited], worldbooks: [])
+        let changed = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [edited])
         #expect(changed.scriptDocuments().first?.id != updated.id)
 
         var streaming = ChatMessage(role: .assistant, content: "尚未完整的 HTML")
         streaming.isReceivingStream = true
-        let pending = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [message, streaming], worldbooks: [])
+        let pending = RoleplayPresentationSnapshot(sessionID: sessionID, messages: [message, streaming])
         #expect(pending.extraction(for: streaming, content: "<div>未完成") == nil)
         #expect(pending.scriptDocuments().first?.id == updated.id)
     }

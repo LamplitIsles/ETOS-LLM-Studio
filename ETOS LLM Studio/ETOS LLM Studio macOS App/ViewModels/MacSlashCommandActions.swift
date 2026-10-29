@@ -14,45 +14,15 @@ final class MacSlashCommandActions: ObservableObject {
     func waitForCompletion() async { await task?.value }
 
     func temporary(workspace: MacWorkspaceModel) {
-        guard !suspended, workspace.canManageLocalModels,
-              let service = workspace.service, let sessionID = workspace.currentSession?.id else { return }
-        guard !isWorking, workspace.canModifyCurrentHistory else {
-            workspace.errorMessage = MacMemoryWriteError.busy.localizedDescription; return
-        }
-        let expected = epoch, hasContinuation = workspace.contextCompression.presentation?.context != nil
-        let preferred: TemporaryChatMemoryMode = AppConfigStore.shared.temporaryChatMemoryEnabled ? .enabled : .isolated
-        workspace.incomingDocuments.invalidateAttachmentContext()
-        isWorking = true
-        task = Task { [weak self, weak workspace] in
-            defer { self?.isWorking = false; self?.task = nil }
-            do {
-                let outcome = try await Task.detached(priority: .userInitiated) {
-                    guard service.currentSessionSubject.value?.id == sessionID else { throw GuideError.pageChanged }
-                    if let temporary = service.chatSessionsSubject.value.first(where: \.isTemporary),
-                       service.runningSessionIDsSubject.value.contains(temporary.id) { throw MacMemoryWriteError.busy }
-                    let canEnable = service.isTemporaryChatEnabled(for: sessionID)
-                        || (service.messagesSnapshot(for: sessionID).isEmpty && !hasContinuation)
-                    return service.performTemporaryChatTap(preferredMemoryMode: preferred, canEnable: canEnable)
-                }.value
-                // 轻点窗口与保存语义完全交给 Core；已经接受的操作在锁定或退出时也收尾。
-                switch outcome {
-                case .enabled(let mode), .memoryModeChanged(let mode): AppConfigStore.shared.temporaryChatMemoryEnabled = mode.isMemoryEnabled
-                case .disabled: break
-                case .unavailable:
-                    if self?.epoch == expected { workspace?.errorMessage = NSLocalizedString("临时对话仅可在对话开始前开启。", comment: "") }
-                }
-                if self?.epoch == expected, self?.suspended == false {
-                    workspace?.sessionLibrary.scope = .all; workspace?.sessionLibrary.query = ""
-                }
-            } catch { if self?.epoch == expected { workspace?.errorMessage = error.localizedDescription } }
-        }
+        guard !suspended, !isWorking else { return }
+        workspace.enableTemporaryChat()
     }
 
     func retry(workspace: MacWorkspaceModel) {
         guard !suspended, workspace.canManageLocalModels,
               let service = workspace.service, let sessionID = workspace.currentSession?.id else { return }
         guard !isWorking, workspace.canModifyCurrentHistory else {
-            workspace.errorMessage = MacMemoryWriteError.busy.localizedDescription; return
+            workspace.errorMessage = MacWorkspaceWriteError.busy.localizedDescription; return
         }
         guard workspace.effectiveModelName != nil else {
             workspace.errorMessage = NSLocalizedString("请先激活一个聊天模型。", comment: ""); return

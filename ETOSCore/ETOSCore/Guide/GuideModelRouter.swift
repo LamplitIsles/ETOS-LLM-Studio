@@ -19,7 +19,6 @@ public struct GuideModelOptions {
 
     public init(providers: [Provider]) {
         models = providers.flatMap { provider -> [RunnableModel] in
-            guard !LocalModelProviderBridge.isLocalProvider(provider) else { return [] }
             return provider.models.compactMap { model in
                 guard model.isActivated,
                       model.isConversationModel,

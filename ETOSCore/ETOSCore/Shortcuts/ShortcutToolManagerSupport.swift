@@ -9,8 +9,6 @@ import Combine
 import os.log
 #if os(iOS)
 import UIKit
-#elseif os(watchOS)
-import WatchKit
 #endif
 
 extension ShortcutToolManager {
@@ -53,41 +51,6 @@ extension ShortcutToolManager {
             }
             lastFailure = localResult
 
-            #if os(watchOS)
-            if allowRelayOnWatch {
-                let relayRequest = ShortcutToolExecutionRequest(
-                    toolName: ShortcutToolNaming.alias(for: tool),
-                    argumentsJSON: argumentsJSON,
-                    preferredTransport: transport
-                )
-                do {
-                    let relayResult = try await ShortcutExecutionRelay.shared.executeViaCompanion(request: relayRequest)
-                    if Task.isCancelled {
-                        return cancelledExecutionResult(
-                            requestID: relayResult.requestID,
-                            toolName: tool.name,
-                            transport: .relay,
-                            startedAt: relayResult.startedAt
-                        )
-                    }
-                    if relayResult.success {
-                        return relayResult
-                    }
-                    lastFailure = relayResult
-                } catch {
-                    lastFailure = ShortcutToolExecutionResult(
-                        requestID: relayRequest.requestID,
-                        toolName: tool.name,
-                        success: false,
-                        result: nil,
-                        errorMessage: error.localizedDescription,
-                        transport: .relay,
-                        startedAt: relayRequest.requestedAt,
-                        finishedAt: Date()
-                    )
-                }
-            }
-            #endif
         }
 
         return lastFailure ?? ShortcutToolExecutionResult(

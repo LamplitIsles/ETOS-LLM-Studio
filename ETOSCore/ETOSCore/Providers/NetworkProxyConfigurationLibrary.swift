@@ -93,7 +93,6 @@ enum NetworkProxyConfigurationStore {
     }
 
     static func notifyChange() {
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .cloudSyncLocalDataDidChange, object: nil)
     }
 }

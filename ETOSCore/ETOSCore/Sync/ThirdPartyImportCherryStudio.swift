@@ -3,23 +3,17 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 本文件负责解析 Cherry Studio 导出的提供商与会话数据。
+// 本文件负责解析 Cherry Studio 导出的提供商配置。
 // ============================================================================
 
 import Foundation
 
 extension ThirdPartyImportService {
-    struct CherryBlockBundle {
-        var textByBlockID: [String: String]
-        var textByMessageID: [String: String]
-    }
-
     static func parseCherryStudio(fileURL: URL) throws -> ParsedPayload {
         let root = try loadCherryRoot(fileURL: fileURL)
 
         var warnings: [String] = []
         var providers: [Provider] = []
-        var sessions: [SyncedSession] = []
 
         let localStorage = dictionary(root["localStorage"])
         let indexedDB = dictionary(root["indexedDB"])
@@ -43,109 +37,7 @@ extension ThirdPartyImportService {
             providers = parseCherryProviders(providerList)
         }
 
-        var topicNameByID: [String: String] = [:]
-        if let assistantsRaw = string(persist["assistants"]),
-           let assistantsSlice = parseJSONStringToDictionary(assistantsRaw),
-           let assistants = array(assistantsSlice["assistants"]) {
-            for assistantAny in assistants {
-                guard let assistant = dictionary(assistantAny),
-                      let topics = array(assistant["topics"]) else {
-                    continue
-                }
-                for topicAny in topics {
-                    guard let topic = dictionary(topicAny),
-                          let topicID = nonEmpty(string(topic["id"])) else {
-                        continue
-                    }
-                    let topicName = nonEmpty(string(topic["name"]))
-                    if let topicName {
-                        topicNameByID[topicID] = topicName
-                    }
-                }
-            }
-        }
-
-        let topicsAny = indexedDB?["topics"]
-        let messageBlocksAny = indexedDB?["message_blocks"]
-        let topics = normalizeJSONArray(topicsAny)
-        let messageBlocks = normalizeJSONArray(messageBlocksAny)
-        let blockBundle = parseCherryMessageBlocks(messageBlocks)
-
-        for (index, topicAny) in topics.enumerated() {
-            guard let topic = dictionary(topicAny) else { continue }
-            let topicID = nonEmpty(string(topic["id"])) ?? "cherry-topic-\(index)"
-            let topicName = nonEmpty(string(topic["name"]))
-                ?? topicNameByID[topicID]
-                ?? String(
-                    format: NSLocalizedString("Cherry 对话 %d", comment: "Imported Cherry Studio conversation fallback name"),
-                    index + 1
-                )
-
-            let rawMessages = normalizeJSONArray(topic["messages"])
-            guard !rawMessages.isEmpty else { continue }
-
-            var messages: [ChatMessage] = []
-            messages.reserveCapacity(rawMessages.count)
-
-            for messageAny in rawMessages {
-                guard let message = dictionary(messageAny) else { continue }
-
-                let messageID = string(message["id"])
-                let role = mapMessageRole(string(message["role"]))
-                var content = nonEmpty(string(message["content"])) ?? ""
-
-                if content.isEmpty {
-                    if let blocks = array(message["blocks"]) {
-                        let pieces = blocks.compactMap { blockAny -> String? in
-                            guard let blockID = nonEmpty(string(blockAny)) else { return nil }
-                            return blockBundle.textByBlockID[blockID]
-                        }
-                        if !pieces.isEmpty {
-                            content = pieces.joined(separator: "\n")
-                        }
-                    }
-
-                    if content.isEmpty,
-                       let messageID,
-                       let fallback = blockBundle.textByMessageID[messageID] {
-                        content = fallback
-                    }
-                }
-
-                guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    continue
-                }
-
-                var chatMessage = ChatMessage(
-                    id: stableUUID(from: messageID) ?? UUID(),
-                    role: role,
-                    content: content
-                )
-                let timestamp = parseDate(
-                    message["createdAt"]
-                        ?? message["created_at"]
-                        ?? message["timestamp"]
-                )
-                if let timestamp {
-                    chatMessage.responseMetrics = MessageResponseMetrics(
-                        requestStartedAt: timestamp,
-                        responseCompletedAt: timestamp
-                    )
-                }
-                messages.append(chatMessage)
-            }
-
-            guard !messages.isEmpty else { continue }
-
-            let session = ChatSession(
-                id: stableUUID(from: topicID) ?? UUID(),
-                name: topicName,
-                isTemporary: false
-            )
-            sessions.append(SyncedSession(session: session, messages: messages))
-        }
-
-        if providers.isEmpty && sessions.isEmpty {
+        if providers.isEmpty {
             throw ThirdPartyImportError.unsupportedBackupFormat(
                 reason: NSLocalizedString("Cherry 备份格式无法识别，或文件中没有可导入数据。", comment: "Cherry import unrecognized or empty backup")
             )
@@ -153,7 +45,6 @@ extension ThirdPartyImportService {
 
         return ParsedPayload(
             providers: dedupeProviders(providers),
-            sessions: sessions,
             warnings: warnings
         )
     }
@@ -242,53 +133,4 @@ extension ThirdPartyImportService {
         return result
     }
 
-    static func parseCherryMessageBlocks(_ blocks: [Any]) -> CherryBlockBundle {
-        var textByBlockID: [String: String] = [:]
-        var textByMessageIDPieces: [String: [String]] = [:]
-
-        for blockAny in blocks {
-            guard let block = dictionary(blockAny) else { continue }
-            let blockID = nonEmpty(string(block["id"]))
-            let messageID = nonEmpty(string(block["messageId"]))
-            let type = string(block["type"])?.lowercased() ?? ""
-
-            var text: String = ""
-            switch type {
-            case "main_text", "text":
-                text = nonEmpty(string(block["content"])) ?? ""
-            case "code":
-                let code = nonEmpty(string(block["content"])) ?? ""
-                if !code.isEmpty {
-                    let language = nonEmpty(string(block["language"])) ?? ""
-                    text = "```\(language)\n\(code)\n```"
-                }
-            case "thinking":
-                text = nonEmpty(string(block["content"])) ?? ""
-            case "error":
-                if let content = nonEmpty(string(block["content"])) {
-                    text = String(
-                        format: NSLocalizedString("[错误] %@", comment: "Imported message error prefix"),
-                        content
-                    )
-                }
-            case "tool":
-                if let content = nonEmpty(string(block["content"])) {
-                    text = content
-                }
-            default:
-                text = nonEmpty(string(block["content"])) ?? ""
-            }
-
-            guard !text.isEmpty else { continue }
-            if let blockID {
-                textByBlockID[blockID] = text
-            }
-            if let messageID {
-                textByMessageIDPieces[messageID, default: []].append(text)
-            }
-        }
-
-        let textByMessageID = textByMessageIDPieces.mapValues { $0.joined(separator: "\n") }
-        return CherryBlockBundle(textByBlockID: textByBlockID, textByMessageID: textByMessageID)
-    }
 }

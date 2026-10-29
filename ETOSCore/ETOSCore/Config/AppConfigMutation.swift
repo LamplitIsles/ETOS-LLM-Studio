@@ -29,21 +29,17 @@ extension AppConfigStore {
     func setBool(_ value: Bool, for key: AppConfigKey) {
         switch key {
         case .syncProviders: syncProviders = value
-        case .syncSessions: syncSessions = value
         case .syncBackgrounds: syncBackgrounds = value
-        case .syncMemories: syncMemories = value
         case .syncMCPServers: syncMCPServers = value
         case .syncAudioFiles: syncAudioFiles = value
         case .syncImageFiles: syncImageFiles = value
         case .syncSkills: syncSkills = value
         case .syncShortcutTools: syncShortcutTools = value
-        case .syncWorldbooks: syncWorldbooks = value
         case .syncFeedbackTickets: syncFeedbackTickets = value
         case .syncDailyPulse: syncDailyPulse = value
         case .syncUsageStats: syncUsageStats = value
         case .syncFontFiles: syncFontFiles = value
         case .syncAppStorage: syncAppStorage = value
-        case .syncGlobalPrompt: syncGlobalPrompt = value
         case .syncAutoSyncEnabled: syncAutoSyncEnabled = value
         case .cloudSyncEnabled: cloudSyncEnabled = value
         case .cloudSyncAutoSyncEnabled: cloudSyncAutoSyncEnabled = value
@@ -55,21 +51,16 @@ extension AppConfigStore {
              .skillsChatToolsEnabled,
              .shortcutChatToolsEnabled,
              .browserAgentDelegateToIPhone:
-            Self.persistSynchronously(.bool(value), for: key, quickSync: false)
+            Self.persistSynchronously(.bool(value), for: key)
         case .appLockEnabled: appLockEnabled = value
         case .appLockBiometricEnabled: appLockBiometricEnabled = value
         case .databaseEncryptionEnabled: databaseEncryptionEnabled = value
-        case .localModelsEnabled: localModelsEnabled = value
-        case .localModelPerformanceMonitorEnabled: localModelPerformanceMonitorEnabled = value
-        case .localModelCacheEnabled: localModelCacheEnabled = value
-        case .localModelKVCacheEnabled: localModelKVCacheEnabled = value
         case .localLinuxEnabled: localLinuxEnabled = value
         case .localLinuxEnvironmentPrivacyEnabled: localLinuxEnvironmentPrivacyEnabled = value
         case .localLinuxCommandSafetyEnabled: localLinuxCommandSafetyEnabled = value
         case .localLinuxLocalMCPOnDemand: localLinuxLocalMCPOnDemand = value
         case .aiTemperatureEnabled: aiTemperatureEnabled = value
         case .aiTopPEnabled: aiTopPEnabled = value
-        case .enableContextCompressionReminder: enableContextCompressionReminder = value
         case .enableStreaming: enableStreaming = value
         case .requestRetrySmartDetectionEnabled: requestRetrySmartDetectionEnabled = value
         case .enableResponseSpeedMetrics: enableResponseSpeedMetrics = value
@@ -80,14 +71,6 @@ extension AppConfigStore {
         case .automaticHistoryLoadingEnabled: automaticHistoryLoadingEnabled = value
         case .enableAutoSessionNaming: enableAutoSessionNaming = value
         case .enableVideoAnalysisForNonNativeModels: enableVideoAnalysisForNonNativeModels = value
-        case .enableMemory: enableMemory = value
-        case .enableMemoryWrite: enableMemoryWrite = value
-        case .temporaryChatMemoryEnabled: temporaryChatMemoryEnabled = value
-        case .enableMemoryActiveRetrieval: enableMemoryActiveRetrieval = value
-        case .memorySendUpdateTime: memorySendUpdateTime = value
-        case .enableMemoryAutoConsolidation: enableMemoryAutoConsolidation = value
-        case .enableConversationMemoryAsync: enableConversationMemoryAsync = value
-        case .enableConversationProfileDailyUpdate: enableConversationProfileDailyUpdate = value
         case .enableMarkdown: enableMarkdown = value
         case .enableAdvancedRenderer: enableAdvancedRenderer = value
         case .enableExperimentalToolResultDisplay: enableExperimentalToolResultDisplay = value
@@ -110,12 +93,8 @@ extension AppConfigStore {
         case .guideOverlayEnabled: guideOverlayEnabled = value
         case .iOSModelPickerGroupsByProvider: iOSModelPickerGroupsByProvider = value
         case .watchModelPickerGroupsByProvider: watchModelPickerGroupsByProvider = value
-        case .modelPickerPromptShortcutEnabled: modelPickerPromptShortcutEnabled = value
-        case .modelPickerWorldbookShortcutEnabled: modelPickerWorldbookShortcutEnabled = value
         case .enableSlashCommands: enableSlashCommands = value
         case .iOSHardwareKeyboardReturnSendsMessage: iOSHardwareKeyboardReturnSendsMessage = value
-        case .restoreLastSessionOnLaunch: restoreLastSessionOnLaunch = value
-        case .restoreLastSessionOnlyIfRecent: restoreLastSessionOnlyIfRecent = value
         case .providerDetailGroupByMainstream: providerDetailGroupByMainstream = value
         case .openAITailContextUsesSystemRole: openAITailContextUsesSystemRole = value
         case .includeSystemTimeInPrompt: includeSystemTimeInPrompt = value
@@ -141,10 +120,6 @@ extension AppConfigStore {
         switch key {
         case .maxChatHistory: maxChatHistory = value
         case .maximumRequestRetries: maximumRequestRetries = Self.normalizedIntegerValue(value, for: key)
-        case .contextCompressionReminderTokenThreshold:
-            contextCompressionReminderTokenThreshold = Self.normalizedIntegerValue(value, for: key)
-        case .restoreLastSessionWithinMinutes:
-            restoreLastSessionWithinMinutes = Self.normalizedIntegerValue(value, for: key)
         case .lazyLoadMessageCount: lazyLoadMessageCount = value
         case .userMessagePreviewCharacterLimit:
             userMessagePreviewCharacterLimit = Self.normalizedIntegerValue(value, for: key)
@@ -155,11 +130,6 @@ extension AppConfigStore {
             localLinuxDefaultTimeoutSeconds = Self.normalizedIntegerValue(value, for: key)
         case .localLinuxOutputPreviewBytes:
             localLinuxOutputPreviewBytes = Self.normalizedIntegerValue(value, for: key)
-        case .memoryTopK: memoryTopK = value
-        case .memoryReembeddingConcurrencyLimit: memoryReembeddingConcurrencyLimit = Self.normalizedIntegerValue(value, for: key)
-        case .conversationMemoryRecentLimit: conversationMemoryRecentLimit = value
-        case .conversationMemoryRoundThreshold: conversationMemoryRoundThreshold = value
-        case .conversationMemorySummaryMinIntervalMinutes: conversationMemorySummaryMinIntervalMinutes = value
         case .periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes = value
         case .lastAnnouncementId: lastAnnouncementId = value
         case .appLockTimeoutSeconds: appLockTimeoutSeconds = value
@@ -215,7 +185,6 @@ extension AppConfigStore {
         case .modelOrderRunnableModels,
              .providerOrderIDs,
              .selectedRunnableModelID,
-             .lastActiveSessionID,
              .appToolsEnabledToolIDs,
              .appToolsKnownDefaultToolIDs,
              .appToolsToolApprovalPolicies,
@@ -224,8 +193,7 @@ extension AppConfigStore {
              .messageRegexRules,
              .customChatSlashCommands,
              .localDebugLastServerAddress:
-            Self.persistSynchronously(.text(value), for: key, quickSync: false)
-        case .systemPrompt: systemPrompt = value
+            Self.persistSynchronously(.text(value), for: key)
         case .localLinuxDefaultSessionMode:
             localLinuxDefaultSessionMode = LocalAgentMode(rawValue: value)?.rawValue ?? LocalAgentMode.chat.rawValue
         case .localLinuxDefaultMountAccess:
@@ -253,10 +221,8 @@ extension AppConfigStore {
         case .ttsModelIdentifier: ttsModelIdentifier = value
         case .ttsServiceConfiguration: ttsServiceConfiguration = value
         case .ttsTextSelectionMode: ttsTextSelectionMode = value
-        case .memoryEmbeddingModelIdentifier: memoryEmbeddingModelIdentifier = value
         case .titleGenerationModelIdentifier: titleGenerationModelIdentifier = value
         case .dailyPulseModelIdentifier: dailyPulseModelIdentifier = value
-        case .conversationSummaryModelIdentifier: conversationSummaryModelIdentifier = value
         case .reasoningSummaryModelIdentifier: reasoningSummaryModelIdentifier = value
         case .ocrModelIdentifier: ocrModelIdentifier = value
         case .imageGenerationModelIdentifier: imageGenerationModelIdentifier = value
@@ -348,9 +314,6 @@ extension AppConfigStore {
                 guard shouldWrite else { return }
                 let didWrite = await AppConfigPersistenceWorker.shared.write(key: rawKey, value: normalizedValue)
                 if didWrite {
-                    if Self.shouldTouchWatchConfigDatabase(for: key) {
-                        WatchDatabaseSyncService.markDatabaseChanged(.config)
-                    }
                     await MainActor.run {
                         self?.markChatComposerDraftPersisted(normalizedValue)
                     }
@@ -358,10 +321,7 @@ extension AppConfigStore {
             }
         } else {
             task = Task(priority: .utility) {
-                let didWrite = await AppConfigPersistenceWorker.shared.write(key: rawKey, value: normalizedValue)
-                if didWrite, Self.shouldTouchWatchConfigDatabase(for: key) {
-                    WatchDatabaseSyncService.markDatabaseChanged(.config)
-                }
+                _ = await AppConfigPersistenceWorker.shared.write(key: rawKey, value: normalizedValue)
             }
         }
         pendingWriteTasks[writeID] = task
@@ -376,13 +336,6 @@ extension AppConfigStore {
             }
         }
 
-        #if canImport(WatchConnectivity)
-        if !Self.shouldSkipQuickSyncForCurrentProcess,
-           !isApplyingSnapshot,
-           key.participatesInSync {
-            WatchSyncManager.shared.performQuickSync(key: rawKey, value: normalizedValue.anyValue)
-        }
-        #endif
         if !Self.shouldSkipRealtimeCloudSyncForCurrentProcess,
            !isApplyingSnapshot,
            key.participatesInSync {
@@ -425,13 +378,9 @@ extension AppConfigStore {
     }
 
     static func initialValues(userDefaults: UserDefaults) -> [AppConfigKey: AppConfigValue] {
-        var values = Dictionary(uniqueKeysWithValues: AppConfigKey.allCases.map { key in
+        let values = Dictionary(uniqueKeysWithValues: AppConfigKey.allCases.map { key in
             (key, userDefaultsValue(for: key, userDefaults: userDefaults) ?? key.defaultValue)
         })
-        if userDefaults.object(forKey: AppConfigKey.syncAppStorage.rawValue) == nil,
-           let legacyValue = userDefaultsValue(for: .syncGlobalPrompt, userDefaults: userDefaults) {
-            values[.syncAppStorage] = legacyValue
-        }
         return values
     }
 
@@ -642,12 +591,7 @@ extension AppConfigStore {
         case .userMessagePreviewCharacterLimit:
             let range = ChatUserMessagePreview.characterLimitRange
             return min(max(value, range.lowerBound), range.upperBound)
-        case .contextCompressionReminderTokenThreshold:
-            return ContextCompressionReminderPolicy.normalizedTokenThreshold(value)
-        case .restoreLastSessionWithinMinutes:
-            return LaunchSessionPolicy.normalizedRestoreWindowMinutes(value)
         case .modelConnectivityTestConcurrencyLimit,
-             .memoryReembeddingConcurrencyLimit,
              .conversationRuntimeExecutionBudget:
             return max(1, value)
         case .localLinuxDefaultTimeoutSeconds:

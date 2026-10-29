@@ -350,12 +350,8 @@ extension ChatServiceTests {
             content: "F",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 20,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -371,12 +367,12 @@ extension ChatServiceTests {
         let session = chatService.currentSessionSubject.value!
         let originalMessage = ChatMessage(role: .user, content: "Original Content")
         chatService.messagesForSessionSubject.send([originalMessage])
-        Persistence.saveMessages([originalMessage], for: session.id)
+        chatService.storeRuntimeMessagesSnapshot([originalMessage], for: session.id)
 
         let updatedMessage = ChatMessage(id: originalMessage.id, role: .user, content: "Updated Content")
         chatService.updateMessageContent(updatedMessage, with: updatedMessage.content)
 
-        let finalMessages = Persistence.loadMessages(for: session.id)
+        let finalMessages = chatService.messagesSnapshot(for: session.id)
         #expect(finalMessages.count == 1)
         #expect(finalMessages.first?.content == "Updated Content")
     }
@@ -384,11 +380,11 @@ extension ChatServiceTests {
     @Test("Retry Last Message")
     func testRetryLastMessage() async {
         let firstUserMessage = "Hello, what is the weather?"
-        await chatService.sendAndProcessMessage(content: firstUserMessage, aiTemperature: 0, aiTopP: 1, systemPrompt: "", maxChatHistory: 5, enableStreaming: false, enhancedPrompt: nil, enableMemory: false, enableMemoryWrite: false, includeSystemTime: false)
+        await chatService.sendAndProcessMessage(content: firstUserMessage, aiTemperature: 0, aiTopP: 1, maxChatHistory: 5, enableStreaming: false, includeSystemTime: false)
         let firstRequestMessages = mockAdapter.receivedMessages
         #expect(firstRequestMessages?.last?.content == firstUserMessage)
 
-        await chatService.retryLastMessage(aiTemperature: 0, aiTopP: 1, systemPrompt: "", maxChatHistory: 5, enableStreaming: false, enhancedPrompt: nil, enableMemory: false, enableMemoryWrite: false, includeSystemTime: false)
+        await chatService.retryLastMessage(aiTemperature: 0, aiTopP: 1, maxChatHistory: 5, enableStreaming: false, includeSystemTime: false)
         let secondRequestMessages = mockAdapter.receivedMessages
 
         #expect(secondRequestMessages?.last?.content == firstUserMessage)
@@ -421,12 +417,8 @@ extension ChatServiceTests {
             assistantToRetry,
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 10,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -471,12 +463,8 @@ extension ChatServiceTests {
             content: "请继续回答",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 10,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 
@@ -504,12 +492,8 @@ extension ChatServiceTests {
             content: "第二轮问题",
             aiTemperature: 0,
             aiTopP: 1,
-            systemPrompt: "",
             maxChatHistory: 2,
             enableStreaming: false,
-            enhancedPrompt: nil,
-            enableMemory: false,
-            enableMemoryWrite: false,
             includeSystemTime: false
         )
 

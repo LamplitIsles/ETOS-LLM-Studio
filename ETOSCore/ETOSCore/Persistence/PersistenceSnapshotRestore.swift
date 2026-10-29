@@ -13,7 +13,6 @@ import GRDB
 struct SnapshotRestoreDatabaseURLs {
     let chatStoreURL: URL
     let configStoreURL: URL
-    let memoryStoreURL: URL
 }
 
 extension Persistence {
@@ -55,8 +54,7 @@ extension Persistence {
         } else {
             replacements = [
                 DatabaseReplacement(sourceURL: sources.chatStoreURL, targetURL: targets.chatStoreURL),
-                DatabaseReplacement(sourceURL: sources.configStoreURL, targetURL: targets.configStoreURL),
-                DatabaseReplacement(sourceURL: sources.memoryStoreURL, targetURL: targets.memoryStoreURL)
+                DatabaseReplacement(sourceURL: sources.configStoreURL, targetURL: targets.configStoreURL)
             ]
         }
         let rollbackDirectory = try SyncTemporaryFileCleaner.makeDirectoryURL(
@@ -80,7 +78,6 @@ extension Persistence {
                 }
             }
             bootstrapGRDBStoreOnLaunch()
-            activeGRDBStore()?.rebuildMessagesFTSIndex()
             if shouldPreserveDatabaseEncryption {
                 writeDatabaseEncryptionEnabled(true)
             }
@@ -92,9 +89,8 @@ extension Persistence {
 
     static func snapshotRestoreTargetURLs() -> SnapshotRestoreDatabaseURLs {
         SnapshotRestoreDatabaseURLs(
-            chatStoreURL: getChatsDirectory().appendingPathComponent("chat-store.sqlite", isDirectory: false),
-            configStoreURL: auxiliaryStoreDatabaseURL(for: .config),
-            memoryStoreURL: auxiliaryStoreDatabaseURL(for: .memory)
+            chatStoreURL: getChatsDirectory().appendingPathComponent("runtime-store.sqlite", isDirectory: false),
+            configStoreURL: auxiliaryStoreDatabaseURL(for: .config)
         )
     }
 }

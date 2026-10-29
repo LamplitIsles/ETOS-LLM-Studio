@@ -31,8 +31,7 @@ extension Persistence {
         let targets = databaseEncryptionTargetURLs()
         let existingDatabaseURLs = [
             targets.chatStoreURL,
-            targets.configStoreURL,
-            targets.memoryStoreURL
+            targets.configStoreURL
         ].filter { FileManager.default.fileExists(atPath: $0.path) }
 
         guard !existingDatabaseURLs.isEmpty else { return true }
@@ -372,19 +371,13 @@ extension Persistence {
             try makeEncryptedSnapshotRestoreReplacement(
                 sourceURL: sources.chatStoreURL,
                 targetURL: targets.chatStoreURL,
-                fileName: "chat-store.sqlite",
+                fileName: "runtime-store.sqlite",
                 temporaryDirectory: temporaryDirectory
             ),
             try makeEncryptedSnapshotRestoreReplacement(
                 sourceURL: sources.configStoreURL,
                 targetURL: targets.configStoreURL,
                 fileName: "config-store.sqlite",
-                temporaryDirectory: temporaryDirectory
-            ),
-            try makeEncryptedSnapshotRestoreReplacement(
-                sourceURL: sources.memoryStoreURL,
-                targetURL: targets.memoryStoreURL,
-                fileName: "memory-store.sqlite",
                 temporaryDirectory: temporaryDirectory
             )
         ]
@@ -471,8 +464,7 @@ private extension Persistence {
         let targets = snapshotRestoreTargetURLs()
         let databaseURLs = [
             targets.chatStoreURL,
-            targets.configStoreURL,
-            targets.memoryStoreURL
+            targets.configStoreURL
         ]
         let backupURLs = databaseURLs.map { databaseURL in
             databaseURL.deletingLastPathComponent()
@@ -494,19 +486,13 @@ private extension Persistence {
         [
             try makeEncryptedReplacement(
                 sourceURL: targets.chatStoreURL,
-                fileName: "chat-store.sqlite",
+                fileName: "runtime-store.sqlite",
                 temporaryDirectory: temporaryDirectory,
                 newPassphrase: newPassphrase
             ),
             try makeEncryptedReplacement(
                 sourceURL: targets.configStoreURL,
                 fileName: "config-store.sqlite",
-                temporaryDirectory: temporaryDirectory,
-                newPassphrase: newPassphrase
-            ),
-            try makeEncryptedReplacement(
-                sourceURL: targets.memoryStoreURL,
-                fileName: "memory-store.sqlite",
                 temporaryDirectory: temporaryDirectory,
                 newPassphrase: newPassphrase
             )
@@ -520,17 +506,12 @@ private extension Persistence {
         [
             try makePlainReplacement(
                 sourceURL: targets.chatStoreURL,
-                fileName: "chat-store.sqlite",
+                fileName: "runtime-store.sqlite",
                 temporaryDirectory: temporaryDirectory
             ),
             try makePlainReplacement(
                 sourceURL: targets.configStoreURL,
                 fileName: "config-store.sqlite",
-                temporaryDirectory: temporaryDirectory
-            ),
-            try makePlainReplacement(
-                sourceURL: targets.memoryStoreURL,
-                fileName: "memory-store.sqlite",
                 temporaryDirectory: temporaryDirectory
             )
         ].compactMap { $0 }

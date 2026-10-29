@@ -3,18 +3,15 @@ import ETOSCore
 import Foundation
 import UniformTypeIdentifiers
 
-/// Finder、拖放和附件面板共用队列；权重文件不能先作为聊天附件读进内存。
+/// Finder、拖放和附件面板共用附件队列。
 @MainActor
 final class MacIncomingDocumentsModel: ObservableObject {
     typealias AttachmentLoader = @Sendable ([URL]) throws -> [MacComposerAttachment]
     @Published private(set) var isWorking = false
     @Published private(set) var contextID = UUID()
-    @Published private(set) var importedModelCount = 0
-    private let library: MacLocalModelLibraryModel
     private let loadAttachments: AttachmentLoader
     private let applyAttachments: @MainActor ([MacComposerAttachment]) -> Void
     private let reportError: @MainActor (String) -> Void
-    private var subscription: AnyCancellable?
     private var pending: [Batch] = []
     private var task: Task<Void, Never>?
     private var isSuspended = true
@@ -29,23 +26,19 @@ final class MacIncomingDocumentsModel: ObservableObject {
     }
 
     init(
-        library: MacLocalModelLibraryModel,
         loadAttachments: @escaping AttachmentLoader = { try MacIncomingDocumentSelection.loadAttachments($0) },
         applyAttachments: @escaping @MainActor ([MacComposerAttachment]) -> Void,
         reportError: @escaping @MainActor (String) -> Void
     ) {
-        self.library = library; self.loadAttachments = loadAttachments
+        self.loadAttachments = loadAttachments
         self.applyAttachments = applyAttachments; self.reportError = reportError
-        subscription = library.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
-            self?.drain()
-        }
     }
 
     @discardableResult
     func enqueue(_ urls: [URL]) -> Bool {
         guard acceptsNewFiles, !urls.isEmpty else { return false }
         pending.append(Batch(urls: urls, sessionRevision: isSuspended ? nil : sessionRevision))
-        importedModelCount = 0; isWorking = true
+        isWorking = true
         drain()
         return true
     }
@@ -69,7 +62,7 @@ final class MacIncomingDocumentsModel: ObservableObject {
         // 启动解锁期间尚未处理的 Finder 请求仍可保留；已运行工作区的旧请求必须失效。
         if !isSuspended || !acceptNewFiles {
             epoch = UUID(); contextID = UUID()
-            pending.removeAll(); task?.cancel(); importedModelCount = 0
+            pending.removeAll(); task?.cancel()
         }
         isSuspended = true; acceptsNewFiles = acceptNewFiles
         isWorking = task != nil || !pending.isEmpty
@@ -79,7 +72,7 @@ final class MacIncomingDocumentsModel: ObservableObject {
     func waitForPendingOperations() async { await task?.value }
 
     private func drain() {
-        guard !isSuspended, sessionID != nil, task == nil, !pending.isEmpty, library.canWrite else { return }
+        guard !isSuspended, sessionID != nil, task == nil, !pending.isEmpty else { return }
         let batch = pending.removeFirst(), token = epoch
         let sourceSession = batch.sessionRevision ?? sessionRevision
         task = Task { [weak self] in
@@ -96,17 +89,6 @@ final class MacIncomingDocumentsModel: ObservableObject {
                 try MacIncomingDocumentSelection(urls: batch.urls)
             }.value
             guard canFinish(token) else { return }
-            if !selection.weights.isEmpty {
-                // 分类期间设置页可能开始写入，保留整个批次，等库的变化通知再次调度。
-                guard library.canWrite else { pending.insert(batch, at: 0); return }
-                let succeeded = await library.importFiles(selection.weights, expectedEpoch: library.epoch)
-                guard canFinish(token) else { return }
-                guard succeeded else {
-                    if let error = library.error { reportError(error); library.error = nil }
-                    return
-                }
-                importedModelCount += selection.weightCount
-            }
             guard !selection.attachments.isEmpty else { return }
             guard sourceSession == sessionRevision else { throw MacIncomingDocumentError.sessionChanged }
             let loader = loadAttachments, urls = selection.attachments
@@ -128,19 +110,11 @@ final class MacIncomingDocumentsModel: ObservableObject {
 }
 
 struct MacIncomingDocumentSelection: Sendable {
-    let weights: [URL]
     let attachments: [URL]
-    let weightCount: Int
 
     init(urls: [URL]) throws {
-        var weights: [URL] = [], attachments: [URL] = []
-        for url in urls {
-            guard url.isFileURL else { throw MacIncomingDocumentError.localFilesOnly }
-            if url.pathExtension.caseInsensitiveCompare("gguf") == .orderedSame { weights.append(url) }
-            else { attachments.append(url) }
-        }
-        self.weights = weights; self.attachments = attachments
-        weightCount = weights.filter { !$0.lastPathComponent.lowercased().contains("mmproj") }.count
+        guard urls.allSatisfy(\.isFileURL) else { throw MacIncomingDocumentError.localFilesOnly }
+        attachments = urls
     }
 
     static func loadAttachments(_ urls: [URL]) throws -> [MacComposerAttachment] {
@@ -160,7 +134,7 @@ enum MacIncomingDocumentError: LocalizedError {
     case localFilesOnly, sessionChanged
     var errorDescription: String? {
         switch self {
-        case .localFilesOnly: return NSLocalizedString("请选择本机文件；模型下载请使用本地模型页。", comment: "")
+        case .localFilesOnly: return NSLocalizedString("请选择本机文件。", comment: "")
         case .sessionChanged: return NSLocalizedString("导入期间会话已切换，请重新选择附件。", comment: "")
         }
     }

@@ -113,49 +113,22 @@ public final class AppConfigStore: ObservableObject {
     var persistedChatComposerDraftValue: AppConfigValue = .text("")
     @Published public internal(set) var didLoadPersistentStore = false
     var locallyChangedKeysBeforePersistentLoad: Set<AppConfigKey> = []
-    nonisolated static var shouldSkipQuickSyncForCurrentProcess: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    }
     nonisolated static var shouldSkipRealtimeCloudSyncForCurrentProcess: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
-    nonisolated static func shouldTouchWatchConfigDatabase(for key: AppConfigKey) -> Bool {
-        guard key.participatesInSync else { return false }
-        let rawKey = key.rawValue
-        guard !rawKey.hasPrefix("sync."),
-              !rawKey.hasPrefix("cloudSync.") else {
-            return false
-        }
-        switch key {
-        case .chatComposerDraft,
-             .lastActiveSessionID,
-             .appLockEnabled,
-             .appLockTimeoutSeconds,
-             .appLockBiometricEnabled,
-             .databaseEncryptionEnabled,
-             .localDebugLastServerAddress:
-            return false
-        default:
-            return true
-        }
-    }
 
     @Published public var syncProviders: Bool { didSet { write(.syncProviders, syncProviders) } }
-    @Published public var syncSessions: Bool { didSet { write(.syncSessions, syncSessions) } }
     @Published public var syncBackgrounds: Bool { didSet { write(.syncBackgrounds, syncBackgrounds) } }
-    @Published public var syncMemories: Bool { didSet { write(.syncMemories, syncMemories) } }
     @Published public var syncMCPServers: Bool { didSet { write(.syncMCPServers, syncMCPServers) } }
     @Published public var syncAudioFiles: Bool { didSet { write(.syncAudioFiles, syncAudioFiles) } }
     @Published public var syncImageFiles: Bool { didSet { write(.syncImageFiles, syncImageFiles) } }
     @Published public var syncSkills: Bool { didSet { write(.syncSkills, syncSkills) } }
     @Published public var syncShortcutTools: Bool { didSet { write(.syncShortcutTools, syncShortcutTools) } }
-    @Published public var syncWorldbooks: Bool { didSet { write(.syncWorldbooks, syncWorldbooks) } }
     @Published public var syncFeedbackTickets: Bool { didSet { write(.syncFeedbackTickets, syncFeedbackTickets) } }
     @Published public var syncDailyPulse: Bool { didSet { write(.syncDailyPulse, syncDailyPulse) } }
     @Published public var syncUsageStats: Bool { didSet { write(.syncUsageStats, syncUsageStats) } }
     @Published public var syncFontFiles: Bool { didSet { write(.syncFontFiles, syncFontFiles) } }
     @Published public var syncAppStorage: Bool { didSet { write(.syncAppStorage, syncAppStorage) } }
-    @Published public var syncGlobalPrompt: Bool { didSet { write(.syncGlobalPrompt, syncGlobalPrompt) } }
     @Published public var syncAutoSyncEnabled: Bool { didSet { write(.syncAutoSyncEnabled, syncAutoSyncEnabled) } }
     @Published public var cloudSyncEnabled: Bool { didSet { write(.cloudSyncEnabled, cloudSyncEnabled) } }
     @Published public var cloudSyncAutoSyncEnabled: Bool { didSet { write(.cloudSyncAutoSyncEnabled, cloudSyncAutoSyncEnabled) } }
@@ -172,10 +145,6 @@ public final class AppConfigStore: ObservableObject {
     @Published public var appLockTimeoutSeconds: Int { didSet { write(.appLockTimeoutSeconds, appLockTimeoutSeconds) } }
     @Published public var appLockBiometricEnabled: Bool { didSet { write(.appLockBiometricEnabled, appLockBiometricEnabled) } }
     @Published public var databaseEncryptionEnabled: Bool { didSet { write(.databaseEncryptionEnabled, databaseEncryptionEnabled) } }
-    @Published public var localModelsEnabled: Bool { didSet { write(.localModelsEnabled, localModelsEnabled) } }
-    @Published public var localModelPerformanceMonitorEnabled: Bool { didSet { write(.localModelPerformanceMonitorEnabled, localModelPerformanceMonitorEnabled) } }
-    @Published public var localModelCacheEnabled: Bool { didSet { write(.localModelCacheEnabled, localModelCacheEnabled) } }
-    @Published public var localModelKVCacheEnabled: Bool { didSet { write(.localModelKVCacheEnabled, localModelKVCacheEnabled) } }
     @Published public var localLinuxEnabled: Bool { didSet { write(.localLinuxEnabled, localLinuxEnabled) } }
     @Published public var localLinuxEnvironmentPrivacyEnabled: Bool { didSet { write(.localLinuxEnvironmentPrivacyEnabled, localLinuxEnvironmentPrivacyEnabled) } }
     @Published public var localLinuxCommandSafetyEnabled: Bool { didSet { write(.localLinuxCommandSafetyEnabled, localLinuxCommandSafetyEnabled) } }
@@ -197,14 +166,7 @@ public final class AppConfigStore: ObservableObject {
     @Published public var aiTopP: Double { didSet { write(.aiTopP, aiTopP) } }
     @Published public var aiTemperatureEnabled: Bool { didSet { write(.aiTemperatureEnabled, aiTemperatureEnabled) } }
     @Published public var aiTopPEnabled: Bool { didSet { write(.aiTopPEnabled, aiTopPEnabled) } }
-    @Published public var systemPrompt: String { didSet { write(.systemPrompt, systemPrompt) } }
     @Published public var maxChatHistory: Int { didSet { write(.maxChatHistory, maxChatHistory) } }
-    @Published public var enableContextCompressionReminder: Bool {
-        didSet { write(.enableContextCompressionReminder, enableContextCompressionReminder) }
-    }
-    @Published public var contextCompressionReminderTokenThreshold: Int {
-        didSet { write(.contextCompressionReminderTokenThreshold, contextCompressionReminderTokenThreshold) }
-    }
     @Published public var enableStreaming: Bool { didSet { write(.enableStreaming, enableStreaming) } }
     @Published public var maximumRequestRetries: Int { didSet { write(.maximumRequestRetries, maximumRequestRetries) } }
     @Published public var requestRetrySmartDetectionEnabled: Bool { didSet { write(.requestRetrySmartDetectionEnabled, requestRetrySmartDetectionEnabled) } }
@@ -232,18 +194,6 @@ public final class AppConfigStore: ObservableObject {
         didSet { write(.videoAnalysisModelIdentifier, videoAnalysisModelIdentifier) }
     }
 
-    @Published public var enableMemory: Bool { didSet { write(.enableMemory, enableMemory) } }
-    @Published public var enableMemoryWrite: Bool { didSet { write(.enableMemoryWrite, enableMemoryWrite) } }
-    @Published public var enableMemoryActiveRetrieval: Bool { didSet { write(.enableMemoryActiveRetrieval, enableMemoryActiveRetrieval) } }
-    @Published public var memoryTopK: Int { didSet { write(.memoryTopK, memoryTopK) } }
-    @Published public var memorySendUpdateTime: Bool { didSet { write(.memorySendUpdateTime, memorySendUpdateTime) } }
-    @Published public var memoryReembeddingConcurrencyLimit: Int { didSet { write(.memoryReembeddingConcurrencyLimit, memoryReembeddingConcurrencyLimit) } }
-    @Published public var enableMemoryAutoConsolidation: Bool { didSet { write(.enableMemoryAutoConsolidation, enableMemoryAutoConsolidation) } }
-    @Published public var enableConversationMemoryAsync: Bool { didSet { write(.enableConversationMemoryAsync, enableConversationMemoryAsync) } }
-    @Published public var conversationMemoryRecentLimit: Int { didSet { write(.conversationMemoryRecentLimit, conversationMemoryRecentLimit) } }
-    @Published public var conversationMemoryRoundThreshold: Int { didSet { write(.conversationMemoryRoundThreshold, conversationMemoryRoundThreshold) } }
-    @Published public var conversationMemorySummaryMinIntervalMinutes: Int { didSet { write(.conversationMemorySummaryMinIntervalMinutes, conversationMemorySummaryMinIntervalMinutes) } }
-    @Published public var enableConversationProfileDailyUpdate: Bool { didSet { write(.enableConversationProfileDailyUpdate, enableConversationProfileDailyUpdate) } }
 
     @Published public var speechModelIdentifier: String { didSet { write(.speechModelIdentifier, speechModelIdentifier) } }
     @Published public var ttsModelIdentifier: String { didSet { write(.ttsModelIdentifier, ttsModelIdentifier) } }
@@ -257,10 +207,8 @@ public final class AppConfigStore: ObservableObject {
     @Published public var ttsFilterCodeAndHTML: Bool {
         didSet { write(.ttsFilterCodeAndHTML, ttsFilterCodeAndHTML) }
     }
-    @Published public var memoryEmbeddingModelIdentifier: String { didSet { write(.memoryEmbeddingModelIdentifier, memoryEmbeddingModelIdentifier) } }
     @Published public var titleGenerationModelIdentifier: String { didSet { write(.titleGenerationModelIdentifier, titleGenerationModelIdentifier) } }
     @Published public var dailyPulseModelIdentifier: String { didSet { write(.dailyPulseModelIdentifier, dailyPulseModelIdentifier) } }
-    @Published public var conversationSummaryModelIdentifier: String { didSet { write(.conversationSummaryModelIdentifier, conversationSummaryModelIdentifier) } }
     @Published public var reasoningSummaryModelIdentifier: String { didSet { write(.reasoningSummaryModelIdentifier, reasoningSummaryModelIdentifier) } }
     @Published public var ocrModelIdentifier: String { didSet { write(.ocrModelIdentifier, ocrModelIdentifier) } }
     @Published public var imageGenerationModelIdentifier: String { didSet { write(.imageGenerationModelIdentifier, imageGenerationModelIdentifier) } }
@@ -434,8 +382,6 @@ public final class AppConfigStore: ObservableObject {
     @Published public var guidePreferredModelIdentifier: String { didSet { write(.guidePreferredModelIdentifier, guidePreferredModelIdentifier) } }
     @Published public var iOSModelPickerGroupsByProvider: Bool { didSet { write(.iOSModelPickerGroupsByProvider, iOSModelPickerGroupsByProvider) } }
     @Published public var watchModelPickerGroupsByProvider: Bool { didSet { write(.watchModelPickerGroupsByProvider, watchModelPickerGroupsByProvider) } }
-    @Published public var modelPickerPromptShortcutEnabled: Bool { didSet { write(.modelPickerPromptShortcutEnabled, modelPickerPromptShortcutEnabled) } }
-    @Published public var modelPickerWorldbookShortcutEnabled: Bool { didSet { write(.modelPickerWorldbookShortcutEnabled, modelPickerWorldbookShortcutEnabled) } }
     // 展开记录按设备独立保存；未记录的新分组自然保持收起。
     @Published public var iOSModelPickerExpandedGroupIDs: Set<String> {
         didSet {
@@ -502,8 +448,6 @@ public final class AppConfigStore: ObservableObject {
         modelPickerFolderPathsByProvider = updated
     }
     @Published public var chatQuickActionIDs: String { didSet { write(.chatQuickActionIDs, chatQuickActionIDs) } }
-    @Published public var temporaryChatMemoryEnabled: Bool {
-        didSet { write(.temporaryChatMemoryEnabled, temporaryChatMemoryEnabled) }
     }
     @Published public var enableSlashCommands: Bool { didSet { write(.enableSlashCommands, enableSlashCommands) } }
     @Published public var chatComposerStyle: String { didSet { write(.chatComposerStyle, chatComposerStyle) } }
@@ -518,11 +462,6 @@ public final class AppConfigStore: ObservableObject {
             composerDraftState.update(text: chatComposerDraft)
             write(.chatComposerDraft, chatComposerDraft)
         }
-    }
-    @Published public var restoreLastSessionOnLaunch: Bool { didSet { write(.restoreLastSessionOnLaunch, restoreLastSessionOnLaunch) } }
-    @Published public var restoreLastSessionOnlyIfRecent: Bool { didSet { write(.restoreLastSessionOnlyIfRecent, restoreLastSessionOnlyIfRecent) } }
-    @Published public var restoreLastSessionWithinMinutes: Int {
-        didSet { write(.restoreLastSessionWithinMinutes, restoreLastSessionWithinMinutes) }
     }
     @Published public var providerDetailGroupByMainstream: Bool { didSet { write(.providerDetailGroupByMainstream, providerDetailGroupByMainstream) } }
     @Published public var backgroundCropTarget: String { didSet { write(.backgroundCropTarget, backgroundCropTarget) } }
@@ -567,28 +506,6 @@ public final class AppConfigStore: ObservableObject {
     @Published public var hideAnnouncementSection: Bool { didSet { write(.hideAnnouncementSection, hideAnnouncementSection) } }
     @Published public var hiddenAnnouncementKeys: String { didSet { write(.hiddenAnnouncementKeys, hiddenAnnouncementKeys) } }
 
-    public var launchSessionBehavior: LaunchSessionBehavior {
-        get {
-            LaunchSessionPolicy.behavior(
-                restoreLastSession: restoreLastSessionOnLaunch,
-                onlyIfRecent: restoreLastSessionOnlyIfRecent
-            )
-        }
-        set {
-            switch newValue {
-            case .newSession:
-                restoreLastSessionOnLaunch = false
-                restoreLastSessionOnlyIfRecent = false
-            case .alwaysRestore:
-                restoreLastSessionOnlyIfRecent = false
-                restoreLastSessionOnLaunch = true
-            case .restoreIfRecent:
-                restoreLastSessionOnlyIfRecent = true
-                restoreLastSessionOnLaunch = true
-            }
-        }
-    }
-
     public init(userDefaults: UserDefaults = .standard) {
         let userDefaultsInitialValues = Self.initialValues(userDefaults: userDefaults)
         let persistentInitialValues = Self.persistentBootstrapValues(userDefaults: userDefaults)
@@ -598,21 +515,17 @@ public final class AppConfigStore: ObservableObject {
         Self.snapshotCache.replace(with: Self.snapshot(from: initialValues, includeLocalOnly: true))
 
         syncProviders = Self.boolValue(.syncProviders, userDefaults: userDefaults)
-        syncSessions = Self.boolValue(.syncSessions, userDefaults: userDefaults)
         syncBackgrounds = Self.boolValue(.syncBackgrounds, userDefaults: userDefaults)
-        syncMemories = Self.boolValue(.syncMemories, userDefaults: userDefaults)
         syncMCPServers = Self.boolValue(.syncMCPServers, userDefaults: userDefaults)
         syncAudioFiles = Self.boolValue(.syncAudioFiles, userDefaults: userDefaults)
         syncImageFiles = Self.boolValue(.syncImageFiles, userDefaults: userDefaults)
         syncSkills = Self.boolValue(.syncSkills, userDefaults: userDefaults)
         syncShortcutTools = Self.boolValue(.syncShortcutTools, userDefaults: userDefaults)
-        syncWorldbooks = Self.boolValue(.syncWorldbooks, userDefaults: userDefaults)
         syncFeedbackTickets = Self.boolValue(.syncFeedbackTickets, userDefaults: userDefaults)
         syncDailyPulse = Self.boolValue(.syncDailyPulse, userDefaults: userDefaults)
         syncUsageStats = Self.boolValue(.syncUsageStats, userDefaults: userDefaults)
         syncFontFiles = Self.boolValue(.syncFontFiles, userDefaults: userDefaults)
         syncAppStorage = Self.boolValue(.syncAppStorage, initialValues: initialValues)
-        syncGlobalPrompt = Self.boolValue(.syncGlobalPrompt, userDefaults: userDefaults)
         syncAutoSyncEnabled = Self.boolValue(.syncAutoSyncEnabled, userDefaults: userDefaults)
         cloudSyncEnabled = Self.boolValue(.cloudSyncEnabled, userDefaults: userDefaults)
         cloudSyncAutoSyncEnabled = Self.boolValue(.cloudSyncAutoSyncEnabled, userDefaults: userDefaults)
@@ -630,10 +543,6 @@ public final class AppConfigStore: ObservableObject {
         appLockBiometricEnabled = Self.boolValue(.appLockBiometricEnabled, userDefaults: userDefaults)
         databaseEncryptionEnabled = DatabaseEncryptionManager.shared.isDatabaseEncryptionEnabled
             || Self.boolValue(.databaseEncryptionEnabled, userDefaults: userDefaults)
-        localModelsEnabled = Self.boolValue(.localModelsEnabled, userDefaults: userDefaults)
-        localModelPerformanceMonitorEnabled = Self.boolValue(.localModelPerformanceMonitorEnabled, userDefaults: userDefaults)
-        localModelCacheEnabled = Self.boolValue(.localModelCacheEnabled, userDefaults: userDefaults)
-        localModelKVCacheEnabled = Self.boolValue(.localModelKVCacheEnabled, userDefaults: userDefaults)
         localLinuxEnabled = Self.boolValue(.localLinuxEnabled, userDefaults: userDefaults)
         localLinuxEnvironmentPrivacyEnabled = Self.boolValue(.localLinuxEnvironmentPrivacyEnabled, userDefaults: userDefaults)
         localLinuxCommandSafetyEnabled = Self.boolValue(.localLinuxCommandSafetyEnabled, userDefaults: userDefaults)
@@ -661,12 +570,7 @@ public final class AppConfigStore: ObservableObject {
         aiTopP = Self.realValue(.aiTopP, userDefaults: userDefaults)
         aiTemperatureEnabled = Self.boolValue(.aiTemperatureEnabled, userDefaults: userDefaults)
         aiTopPEnabled = Self.boolValue(.aiTopPEnabled, userDefaults: userDefaults)
-        systemPrompt = Self.textValue(.systemPrompt, userDefaults: userDefaults)
         maxChatHistory = Self.integerValue(.maxChatHistory, userDefaults: userDefaults)
-        enableContextCompressionReminder = Self.boolValue(.enableContextCompressionReminder, userDefaults: userDefaults)
-        contextCompressionReminderTokenThreshold = ContextCompressionReminderPolicy.normalizedTokenThreshold(
-            Self.integerValue(.contextCompressionReminderTokenThreshold, userDefaults: userDefaults)
-        )
         enableStreaming = Self.boolValue(.enableStreaming, userDefaults: userDefaults)
         maximumRequestRetries = Self.integerValue(.maximumRequestRetries, userDefaults: userDefaults)
         requestRetrySmartDetectionEnabled = Self.boolValue(.requestRetrySmartDetectionEnabled, userDefaults: userDefaults)
@@ -692,18 +596,6 @@ public final class AppConfigStore: ObservableObject {
         enableVideoAnalysisForNonNativeModels = Self.boolValue(.enableVideoAnalysisForNonNativeModels, userDefaults: userDefaults)
         videoAnalysisModelIdentifier = Self.textValue(.videoAnalysisModelIdentifier, userDefaults: userDefaults)
 
-        enableMemory = Self.boolValue(.enableMemory, userDefaults: userDefaults)
-        enableMemoryWrite = Self.boolValue(.enableMemoryWrite, userDefaults: userDefaults)
-        enableMemoryActiveRetrieval = Self.boolValue(.enableMemoryActiveRetrieval, userDefaults: userDefaults)
-        memoryTopK = Self.integerValue(.memoryTopK, userDefaults: userDefaults)
-        memorySendUpdateTime = Self.boolValue(.memorySendUpdateTime, userDefaults: userDefaults)
-        memoryReembeddingConcurrencyLimit = Self.integerValue(.memoryReembeddingConcurrencyLimit, userDefaults: userDefaults)
-        enableMemoryAutoConsolidation = Self.boolValue(.enableMemoryAutoConsolidation, userDefaults: userDefaults)
-        enableConversationMemoryAsync = Self.boolValue(.enableConversationMemoryAsync, userDefaults: userDefaults)
-        conversationMemoryRecentLimit = Self.integerValue(.conversationMemoryRecentLimit, userDefaults: userDefaults)
-        conversationMemoryRoundThreshold = Self.integerValue(.conversationMemoryRoundThreshold, userDefaults: userDefaults)
-        conversationMemorySummaryMinIntervalMinutes = Self.integerValue(.conversationMemorySummaryMinIntervalMinutes, userDefaults: userDefaults)
-        enableConversationProfileDailyUpdate = Self.boolValue(.enableConversationProfileDailyUpdate, userDefaults: userDefaults)
 
         speechModelIdentifier = Self.textValue(.speechModelIdentifier, userDefaults: userDefaults)
         ttsModelIdentifier = Self.textValue(.ttsModelIdentifier, userDefaults: userDefaults)
@@ -711,10 +603,8 @@ public final class AppConfigStore: ObservableObject {
         ttsCacheNetworkAudioForReplay = Self.boolValue(.ttsCacheNetworkAudioForReplay, userDefaults: userDefaults)
         ttsTextSelectionMode = Self.textValue(.ttsTextSelectionMode, userDefaults: userDefaults)
         ttsFilterCodeAndHTML = Self.boolValue(.ttsFilterCodeAndHTML, userDefaults: userDefaults)
-        memoryEmbeddingModelIdentifier = Self.textValue(.memoryEmbeddingModelIdentifier, userDefaults: userDefaults)
         titleGenerationModelIdentifier = Self.textValue(.titleGenerationModelIdentifier, userDefaults: userDefaults)
         dailyPulseModelIdentifier = Self.textValue(.dailyPulseModelIdentifier, userDefaults: userDefaults)
-        conversationSummaryModelIdentifier = Self.textValue(.conversationSummaryModelIdentifier, userDefaults: userDefaults)
         reasoningSummaryModelIdentifier = Self.textValue(.reasoningSummaryModelIdentifier, userDefaults: userDefaults)
         ocrModelIdentifier = Self.textValue(.ocrModelIdentifier, userDefaults: userDefaults)
         imageGenerationModelIdentifier = Self.textValue(.imageGenerationModelIdentifier, userDefaults: userDefaults)
@@ -780,8 +670,6 @@ public final class AppConfigStore: ObservableObject {
         guidePreferredModelIdentifier = Self.textValue(.guidePreferredModelIdentifier, userDefaults: userDefaults)
         iOSModelPickerGroupsByProvider = Self.boolValue(.iOSModelPickerGroupsByProvider, userDefaults: userDefaults)
         watchModelPickerGroupsByProvider = Self.boolValue(.watchModelPickerGroupsByProvider, userDefaults: userDefaults)
-        modelPickerPromptShortcutEnabled = Self.boolValue(.modelPickerPromptShortcutEnabled, userDefaults: userDefaults)
-        modelPickerWorldbookShortcutEnabled = Self.boolValue(.modelPickerWorldbookShortcutEnabled, userDefaults: userDefaults)
         iOSModelPickerExpandedGroupIDs = Set(
             Self.decodeStringArray(
                 from: Self.textValue(.iOSModelPickerExpandedGroupIDs, userDefaults: userDefaults)
@@ -796,7 +684,6 @@ public final class AppConfigStore: ObservableObject {
             from: Self.textValue(.modelPickerFolderPathsByProvider, userDefaults: userDefaults)
         ) ?? [:]
         chatQuickActionIDs = Self.textValue(.chatQuickActionIDs, userDefaults: userDefaults)
-        temporaryChatMemoryEnabled = Self.boolValue(.temporaryChatMemoryEnabled, userDefaults: userDefaults)
         enableSlashCommands = Self.boolValue(.enableSlashCommands, userDefaults: userDefaults)
         chatComposerStyle = ChatComposerStyle.normalized(
             Self.textValue(.chatComposerStyle, userDefaults: userDefaults)
@@ -809,9 +696,6 @@ public final class AppConfigStore: ObservableObject {
         composerDraftState = ChatComposerDraftState(text: initialChatComposerDraft)
         chatComposerDraft = initialChatComposerDraft
         persistedChatComposerDraftValue = Self.normalizedAppConfigValue(.text(initialChatComposerDraft), for: .chatComposerDraft)
-        restoreLastSessionOnLaunch = Self.boolValue(.restoreLastSessionOnLaunch, userDefaults: userDefaults)
-        restoreLastSessionOnlyIfRecent = Self.boolValue(.restoreLastSessionOnlyIfRecent, userDefaults: userDefaults)
-        restoreLastSessionWithinMinutes = Self.integerValue(.restoreLastSessionWithinMinutes, userDefaults: userDefaults)
         providerDetailGroupByMainstream = Self.boolValue(.providerDetailGroupByMainstream, userDefaults: userDefaults)
         backgroundCropTarget = Self.textValue(.backgroundCropTarget, userDefaults: userDefaults)
         shortcutBridgeShortcutName = Self.textValue(.shortcutBridgeShortcutName, userDefaults: userDefaults)

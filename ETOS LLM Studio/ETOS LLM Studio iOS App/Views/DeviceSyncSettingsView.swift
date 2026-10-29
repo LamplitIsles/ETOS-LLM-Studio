@@ -11,16 +11,9 @@ import Foundation
 import ETOSCore
 
 struct DeviceSyncSettingsView: View {
-    @EnvironmentObject private var syncManager: WatchSyncManager
     @EnvironmentObject private var cloudSyncManager: CloudSyncManager
     @ObservedObject private var appConfig = AppConfigStore.shared
     @State private var isSyncIntroExpanded = false
-    @State private var isPreparingWatchDatabasePlan = false
-    @State private var watchDatabasePlan: WatchSyncDatabasePlan?
-    @State private var watchDatabaseSelections: [WatchSyncDatabaseKind: String] = [:]
-    @State private var isWatchSyncStrategyDialogPresented = false
-    @State private var isLegacyMergeWarningPresented = false
-    @State private var watchSyncErrorMessage: String?
     @State private var pendingCloudOverwriteResolution: CloudSyncInitialResolution?
     @State private var pendingCloudConflictID: UUID?
     @State private var cloudOverwriteConfirmationText = ""
@@ -55,36 +48,6 @@ struct DeviceSyncSettingsView: View {
                 Text(NSLocalizedString("启动保护备份", comment: ""))
             } footer: {
                 Text(NSLocalizedString("只保留一个本机启动还原点；新还原点确认可用后会删除上一份。", comment: ""))
-            }
-
-            if syncManager.isCompanionAvailable {
-                Section {
-                    Toggle(NSLocalizedString("启用 Apple Watch 同步", comment: ""), isOn: $appConfig.syncAutoSyncEnabled)
-
-                    Button {
-                        isWatchSyncStrategyDialogPresented = true
-                    } label: {
-                        HStack {
-                            Spacer()
-                            if isSyncing || isPreparingWatchDatabasePlan {
-                                ProgressView()
-                                    .padding(.trailing, 8)
-                            }
-                            Label(NSLocalizedString("选择同步方式", comment: ""), systemImage: "arrow.triangle.2.circlepath")
-                                .etFont(.headline)
-                            Spacer()
-                        }
-                    }
-                    .disabled(!appConfig.syncAutoSyncEnabled || isSyncing || isPreparingWatchDatabasePlan)
-                } header: {
-                    Text(NSLocalizedString("Apple Watch 同步", comment: ""))
-                } footer: {
-                    Text(NSLocalizedString("开启后可按库覆盖或手动选择旧合并。", comment: ""))
-                }
-
-                Section(NSLocalizedString("Apple Watch 状态", comment: "")) {
-                    syncStatusView
-                }
             }
 
             Section {
@@ -163,61 +126,11 @@ struct DeviceSyncSettingsView: View {
         } message: {
             Text(cloudOverwriteConfirmationMessage)
         }
-        .confirmationDialog(
-            NSLocalizedString("选择 Apple Watch 同步方式", comment: ""),
-            isPresented: $isWatchSyncStrategyDialogPresented,
-            titleVisibility: .visible
-        ) {
-            Button(NSLocalizedString("按库选择覆盖", comment: "")) {
-                prepareWatchDatabasePlan()
-            }
-            Button(NSLocalizedString("使用旧合并引擎", comment: ""), role: .destructive) {
-                isLegacyMergeWarningPresented = true
-            }
-            Button(NSLocalizedString("取消", comment: ""), role: .cancel) {}
-        } message: {
-            Text(NSLocalizedString("如果 iPhone 与 Apple Watch 已经分叉，直接合并并不可靠。可以选择每个库保留哪一端；旧合并可能恢复已删除内容。", comment: ""))
-        }
-        .alert(NSLocalizedString("旧合并存在风险", comment: ""), isPresented: $isLegacyMergeWarningPresented) {
-            Button(NSLocalizedString("取消", comment: ""), role: .cancel) {}
-            Button(NSLocalizedString("继续合并", comment: ""), role: .destructive) {
-                syncManager.performSync(options: .fullSync)
-            }
-        } message: {
-            Text(NSLocalizedString("旧合并引擎会尝试把两端数据拼在一起，但单端删除的提供商、设置或会话可能被另一端旧数据同步回来。", comment: ""))
-        }
-        .alert(NSLocalizedString("同步准备失败", comment: ""), isPresented: Binding(
-            get: { watchSyncErrorMessage != nil },
-            set: { if !$0 { watchSyncErrorMessage = nil } }
-        )) {
-            Button(NSLocalizedString("好", comment: ""), role: .cancel) {}
-        } message: {
-            Text(watchSyncErrorMessage ?? "")
-        }
-        .sheet(isPresented: Binding(
-            get: { watchDatabasePlan != nil },
-            set: { if !$0 { watchDatabasePlan = nil } }
-        )) {
-            if let plan = watchDatabasePlan {
-                WatchDatabaseOverwriteSelectionView(
-                    plan: plan,
-                    selections: $watchDatabaseSelections,
-                    onCancel: {
-                        watchDatabasePlan = nil
-                    },
-                    onConfirm: { resolutions in
-                        watchDatabasePlan = nil
-                        syncManager.performDatabaseOverwriteSync(resolutions: resolutions)
-                    }
-                )
-            }
-        }
     }
 
     private var guideSettings: [GuidePageSetting] {
         [
             .bool("backup_on_launch", label: NSLocalizedString("启动时创建数据库备份点", comment: "向导设置字段"), get: { appConfig.syncBackupCreateOnLaunch }, set: { appConfig.syncBackupCreateOnLaunch = $0 }),
-            .bool("watch_sync_enabled", label: NSLocalizedString("启用 Apple Watch 同步", comment: "向导设置字段"), get: { appConfig.syncAutoSyncEnabled }, set: { appConfig.syncAutoSyncEnabled = $0 }),
             .bool("icloud_sync_enabled", label: NSLocalizedString("启用 iCloud 漫游同步", comment: "向导设置字段"), get: { appConfig.cloudSyncEnabled }, set: { appConfig.cloudSyncEnabled = $0 })
         ]
     }
@@ -335,74 +248,11 @@ struct DeviceSyncSettingsView: View {
         }
     }
     
-    private var isSyncing: Bool {
-        if case .syncing = syncManager.state {
-            return true
-        }
-        return false
-    }
-
     private var isCloudSyncing: Bool {
         if case .syncing = cloudSyncManager.state {
             return true
         }
         return false
-    }
-
-    private func prepareWatchDatabasePlan() {
-        isPreparingWatchDatabasePlan = true
-        Task {
-            do {
-                let plan = try await syncManager.fetchDatabaseSyncPlan()
-                watchDatabaseSelections = Dictionary(
-                    uniqueKeysWithValues: WatchSyncDatabaseKind.allCases.map { kind in
-                        (kind, plan.recommendedSourcePlatform(for: kind))
-                    }
-                )
-                watchDatabasePlan = plan
-            } catch {
-                watchSyncErrorMessage = error.localizedDescription
-            }
-            isPreparingWatchDatabasePlan = false
-        }
-    }
-    
-    @ViewBuilder
-    private var syncStatusView: some View {
-        switch syncManager.state {
-        case .idle:
-            Text(NSLocalizedString("未进行同步", comment: "")).etFont(.footnote).foregroundColor(.secondary)
-        case .syncing(let message):
-            HStack {
-                ProgressView()
-                Text(message).etFont(.footnote)
-            }
-        case .success(let summary):
-            VStack(alignment: .leading, spacing: 2) {
-                Label(NSLocalizedString("同步成功", comment: ""), systemImage: "checkmark.circle")
-                    .foregroundStyle(.green)
-                Text(summaryDescription(summary))
-                    .etFont(.caption2)
-                    .foregroundStyle(.secondary)
-                if let lastUpdated = syncManager.lastUpdatedAt {
-                    Text(String(format: NSLocalizedString("上次同步：%@", comment: ""), lastUpdated.formatted(date: .abbreviated, time: .shortened)))
-                        .etFont(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        case .failed(let reason):
-            VStack(alignment: .leading, spacing: 2) {
-                Label(NSLocalizedString("同步失败", comment: ""), systemImage: "xmark.circle")
-                    .foregroundStyle(.red)
-                Text(reason)
-                    .etFont(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        @unknown default:
-            Text(NSLocalizedString("未知状态", comment: ""))
-                .etFont(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     @ViewBuilder
@@ -464,9 +314,6 @@ struct DeviceSyncSettingsView: View {
         if summary.importedBackgrounds > 0 {
             parts.append(String(format: NSLocalizedString("背景 +%d", comment: ""), summary.importedBackgrounds))
         }
-        if summary.importedMemories > 0 {
-            parts.append(String(format: NSLocalizedString("记忆 +%d", comment: ""), summary.importedMemories))
-        }
         if summary.importedMCPServers > 0 {
             parts.append(String(format: NSLocalizedString("MCP +%d", comment: ""), summary.importedMCPServers))
         }
@@ -481,9 +328,6 @@ struct DeviceSyncSettingsView: View {
         }
         if summary.importedShortcutTools > 0 {
             parts.append(String(format: NSLocalizedString("快捷指令工具 +%d", comment: ""), summary.importedShortcutTools))
-        }
-        if summary.importedWorldbooks > 0 {
-            parts.append(String(format: NSLocalizedString("世界书 +%d", comment: ""), summary.importedWorldbooks))
         }
         if summary.importedFeedbackTickets > 0 {
             parts.append(String(format: NSLocalizedString("工单 +%d", comment: ""), summary.importedFeedbackTickets))
@@ -507,150 +351,4 @@ struct DeviceSyncSettingsView: View {
         return parts.isEmpty ? NSLocalizedString("两端数据一致", comment: "") : parts.joined(separator: separator)
     }
 
-}
-
-private struct WatchDatabaseOverwriteSelectionView: View {
-    let plan: WatchSyncDatabasePlan
-    @Binding var selections: [WatchSyncDatabaseKind: String]
-    let onCancel: () -> Void
-    let onConfirm: ([WatchSyncDatabaseResolution]) -> Void
-    @State private var isConfirmingOverwrite = false
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text(NSLocalizedString("两端数据分叉时不能可靠直接合并。请为每个库选择要保留的平台，另一端对应库会被覆盖。", comment: ""))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                ForEach(WatchSyncDatabaseKind.allCases) { kind in
-                    Section {
-                        Picker(NSLocalizedString("保留平台", comment: ""), selection: selectionBinding(for: kind)) {
-                            Text(platformName(plan.local.sourcePlatform)).tag(plan.local.sourcePlatform)
-                            Text(platformName(plan.remote.sourcePlatform)).tag(plan.remote.sourcePlatform)
-                        }
-
-                        databaseMetadataRow(kind: kind, sourcePlatform: plan.local.sourcePlatform)
-                        databaseMetadataRow(kind: kind, sourcePlatform: plan.remote.sourcePlatform)
-                    } header: {
-                        Text(kind.localizedTitle)
-                    } footer: {
-                        Text(overwriteFooter(for: kind))
-                    }
-                }
-
-                Section {
-                    Button(role: .destructive) {
-                        isConfirmingOverwrite = true
-                    } label: {
-                        Label(NSLocalizedString("开始覆盖", comment: ""), systemImage: "externaldrive.badge.arrow.down")
-                    }
-                }
-            }
-            .navigationTitle(NSLocalizedString("按库选择覆盖", comment: ""))
-            .guideSettingsPageContext(
-                id: "settings-sync-database-overwrite",
-                title: NSLocalizedString("按库选择覆盖", comment: ""),
-                documents: [GuideDocumentReference(id: "settings-sync", title: "Sync and Backup")],
-                settings: [.readOnly("selection", label: NSLocalizedString("保留平台", comment: ""), value: { .string(confirmationMessage) })]
-            )
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(NSLocalizedString("取消", comment: ""), action: onCancel)
-                }
-            }
-            .alert(NSLocalizedString("确认覆盖数据库", comment: ""), isPresented: $isConfirmingOverwrite) {
-                Button(NSLocalizedString("取消", comment: ""), role: .cancel) {}
-                Button(NSLocalizedString("开始覆盖", comment: ""), role: .destructive) {
-                    onConfirm(resolutions)
-                }
-            } message: {
-                Text(confirmationMessage)
-            }
-        }
-    }
-
-    private var resolutions: [WatchSyncDatabaseResolution] {
-        WatchSyncDatabaseKind.allCases.map { kind in
-            WatchSyncDatabaseResolution(
-                kind: kind,
-                sourcePlatform: selections[kind] ?? plan.recommendedSourcePlatform(for: kind)
-            )
-        }
-    }
-
-    private var confirmationMessage: String {
-        let detail = resolutions.map { resolution in
-            String(
-                format: NSLocalizedString("%@：保留%@", comment: "Watch database overwrite confirmation item"),
-                resolution.kind.localizedTitle,
-                platformName(resolution.sourcePlatform)
-            )
-        }.joined(separator: "\n")
-        return String(
-            format: NSLocalizedString("即将按下面的选择覆盖数据库：\n%@\n覆盖前如果有重要对话，请先到会话列表把单个会话发送到另一端。", comment: "Watch database overwrite confirmation message"),
-            detail
-        )
-    }
-
-    private func selectionBinding(for kind: WatchSyncDatabaseKind) -> Binding<String> {
-        Binding(
-            get: { selections[kind] ?? plan.recommendedSourcePlatform(for: kind) },
-            set: { selections[kind] = $0 }
-        )
-    }
-
-    private func databaseMetadataRow(kind: WatchSyncDatabaseKind, sourcePlatform: String) -> some View {
-        let metadata = plan.metadata(kind: kind, sourcePlatform: sourcePlatform)
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(platformName(sourcePlatform))
-                .etFont(.subheadline.weight(.medium))
-            Text(metadataDescription(metadata))
-                .etFont(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func overwriteFooter(for kind: WatchSyncDatabaseKind) -> String {
-        let selected = selections[kind] ?? plan.recommendedSourcePlatform(for: kind)
-        return String(
-            format: NSLocalizedString("将保留%@的%@。", comment: "Watch database overwrite footer"),
-            platformName(selected),
-            kind.localizedTitle
-        )
-    }
-
-    private func metadataDescription(_ metadata: WatchSyncDatabaseMetadata?) -> String {
-        guard let metadata else {
-            return NSLocalizedString("没有可用信息", comment: "")
-        }
-        return String(
-            format: NSLocalizedString("更新时间：%@；大小：%@", comment: "Watch database metadata description"),
-            formattedDate(metadata.updatedAt),
-            formattedBytes(metadata.byteSize)
-        )
-    }
-
-    private func formattedDate(_ date: Date?) -> String {
-        date?.formatted(date: .abbreviated, time: .shortened)
-            ?? NSLocalizedString("未知", comment: "")
-    }
-
-    private func formattedBytes(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-
-    private func platformName(_ platform: String) -> String {
-        switch platform {
-        case "iOS":
-            return NSLocalizedString("iPhone", comment: "Watch sync iOS platform name")
-        case "watchOS":
-            return NSLocalizedString("Apple Watch", comment: "Watch sync watchOS platform name")
-        default:
-            return platform
-        }
-    }
 }

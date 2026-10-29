@@ -11,7 +11,7 @@ struct MacRoleplayContentDraftTests {
                                      substituteRegex: 17, metadata: ["vendor": .dictionary(["keep": .bool(true)])])
         let other = RoleplayRegexRule(scriptName: "下一条", findRegex: "next")
         let script = RoleplayHelperScript(name: "助手", content: "console.log('kept')")
-        let character = RoleplayCharacter(name: "角色", firstMessage: "开场", embeddedWorldbookID: UUID(), regexRules: [rule, other],
+        let character = RoleplayCharacter(name: "角色", firstMessage: "开场", regexRules: [rule, other],
                                           helperScripts: [script], extensions: ["vendor": .string("角色扩展")])
         var draft = MacRoleplayRegexDraft(rule: rule, in: character)
         #expect(draft.preparedCharacter() == character)
@@ -24,7 +24,7 @@ struct MacRoleplayContentDraftTests {
         #expect(saved.regexRules[0].substituteRegex == 17 && saved.regexRules[0].metadata == rule.metadata)
         #expect(saved.regexRules[0].trimStrings == rule.trimStrings && saved.regexRules[0].placements == rule.placements)
         #expect(saved.regexRules[1] == other && saved.helperScripts == [script])
-        #expect(saved.extensions == character.extensions && saved.embeddedWorldbookID == character.embeddedWorldbookID)
+        #expect(saved.extensions == character.extensions)
         #expect(draft.originalCharacter == character)
     }
 

@@ -9,9 +9,7 @@
 import Foundation
 import Network
 import os.log
-#if os(watchOS)
-import WatchKit
-#elseif os(iOS)
+#if os(iOS)
 import UIKit
 #endif
 
@@ -93,9 +91,6 @@ extension LocalDebugServer {
 
         #if !targetEnvironment(simulator)
         parameters.prohibitedInterfaceTypes = [.cellular]
-        #if os(watchOS)
-        parameters.requiredInterfaceType = .wifi
-        #endif
         #endif
 
         let wsOptions = NWProtocolWebSocket.Options()
@@ -174,8 +169,6 @@ extension LocalDebugServer {
         isRunning = false
         connectionStatus = NSLocalizedString("未连接", comment: "")
         wsAutoFallbackEnabled = false
-        pendingOpenAIRequests.removeAll()
-        updatePendingOpenAIState()
     }
 
     /// 生命周期调用方必须在命令队列之外等待，返回时已开始的命令与网络授权等待都已收尾。
@@ -263,8 +256,6 @@ extension LocalDebugServer {
         connectionStatus = NSLocalizedString("连接失败", comment: "")
         self.errorMessage = errorMessage
         wsAutoFallbackEnabled = false
-        pendingOpenAIRequests.removeAll()
-        updatePendingOpenAIState()
         scheduleReconnectIfNeeded()
     }
 
@@ -313,9 +304,7 @@ extension LocalDebugServer {
 
     /// 获取设备标识符
     func getDeviceIdentifier() -> String {
-        #if os(watchOS)
-        return WKInterfaceDevice.current().name
-        #elseif os(iOS)
+        #if os(iOS)
         return UIDevice.current.name
         #else
         return ProcessInfo.processInfo.hostName
@@ -328,7 +317,7 @@ extension LocalDebugServer {
         #elseif os(iOS)
         return "iOS"
         #else
-        return "watchOS"
+        return "unknown"
         #endif
     }
 

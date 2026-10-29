@@ -312,8 +312,6 @@ description: "demo"
         #expect(SkillManager.SkillToolAction.resolveToolArgument("list-resources") == .listResources)
         #expect(SkillManager.SkillToolAction.resolveToolArgument("read resource") == .readResource)
         #expect(SkillManager.SkillToolAction.resolveToolArgument("read-resource") == .readResource)
-        #expect(SkillManager.SkillToolAction.resolveToolArgument("execute_script") == .executeScript)
-        #expect(SkillManager.SkillToolAction.resolveToolArgument("execute script") == .executeScript)
         #expect(SkillManager.SkillToolAction.resolveToolArgument("run_script") == nil)
     }
 

@@ -216,7 +216,6 @@ extension ChatService {
                 updatedSessions[index] = currentSession
             }
             chatSessionsSubject.send(updatedSessions)
-            Persistence.saveChatSessions(updatedSessions)
             logger.info("生图请求已跳过自动标题生成: session=\(currentSession.id.uuidString)")
         } else if !currentSession.isTemporary {
             await promoteSessionToTopIfNeeded(sessionID: currentSession.id)

@@ -6,26 +6,6 @@
 
 import Foundation
 
-struct PromptMacroTemplates: Sendable, Equatable {
-    var global: String?
-    var conversation: String?
-    var topic: String?
-    var enhanced: String?
-
-    var texts: [String] {
-        [global, conversation, topic, enhanced].compactMap { $0 }
-    }
-
-    func rendered(values: [String: String], literalTransform: (String) -> String = { $0 }) -> Self {
-        Self(
-            global: global.map { PromptMacroResolver.render($0, values: values, literalTransform: literalTransform) },
-            conversation: conversation.map { PromptMacroResolver.render($0, values: values, literalTransform: literalTransform) },
-            topic: topic.map { PromptMacroResolver.render($0, values: values, literalTransform: literalTransform) },
-            enhanced: enhanced.map { PromptMacroResolver.render($0, values: values, literalTransform: literalTransform) }
-        )
-    }
-}
-
 enum PromptMacroResolver {
     static let timeNames: Set<String> = [
         "cur_date", "cur_time", "cur_datetime", "utc_datetime", "weekday", "timestamp",
@@ -45,7 +25,7 @@ enum PromptMacroResolver {
     ]
     static let supportedNames: Set<String> = timeNames.union(batteryNames)
         .union(audioNames).union(screenNames).union(storageNames).union(hardwareNames).union([
-            "model_id", "model_name", "model_prompt", "provider_id", "provider_name", "api_format",
+            "model_id", "model_name", "provider_id", "provider_name", "api_format",
             "nickname", "user", "char", "assistant_name", "chat_id", "chat_name", "message_count",
             "locale", "language", "system_locale", "app_name", "app_version", "app_build",
             "platform", "system_version", "device_info", "device_model", "device_name",

@@ -36,15 +36,11 @@ struct SystemEntryInfrastructureTests {
         ))
     }
 
-    @Test("普通通知和上下文提醒不受回复通知的会话静默规则影响")
+    @Test("普通通知不受回复通知的会话静默规则影响")
     func nonReplyForegroundPolicyIsPreserved() {
         let sessionID = UUID()
         #expect(AppLocalNotificationCenter.notificationShouldPresentWhileForeground(
             userInfo: [:], currentSessionID: sessionID
-        ))
-        #expect(AppLocalNotificationCenter.notificationShouldPresentWhileForeground(
-            userInfo: AppLocalNotificationCenter.contextCompressionUserInfo(sessionID: sessionID),
-            currentSessionID: sessionID
         ))
         #expect(!AppLocalNotificationCenter.notificationShouldPresentWhileForeground(
             userInfo: ["suppress_when_foreground": true], currentSessionID: sessionID
@@ -81,17 +77,13 @@ struct SystemEntryInfrastructureTests {
                 startedAt: Date(timeIntervalSince1970: TimeInterval(index))
             )
         }
-        let sessions = (0..<16).map { index in
-            ETOSSessionSummary(id: UUID(), name: "会话 \(index)")
-        }
-        let snapshot = ETOSWidgetSnapshot(recentRuns: runs, recentSessions: sessions)
+        let snapshot = ETOSWidgetSnapshot(recentRuns: runs)
         let destination = layout.runSnapshots.appendingPathComponent("widget.json")
 
         try ETOSSharedFileStore.write(snapshot, to: destination)
         let restored = try ETOSSharedFileStore.read(ETOSWidgetSnapshot.self, from: destination)
 
         #expect(restored.recentRuns.count == 5)
-        #expect(restored.recentSessions.count == 10)
         #expect(restored.recentRuns.allSatisfy { $0.title.count == 80 })
         #expect(throws: Error.self) {
             _ = try ETOSSharedFileStore.read(ETOSWidgetSnapshot.self, from: destination, maximumBytes: 1)
@@ -163,55 +155,6 @@ struct SystemEntryInfrastructureTests {
         let receipt = try #require(loadedReceipt)
         #expect(receipt.sessionID == firstSessionID)
         #expect(receipt.kind == .appIntent)
-    }
-
-    @Test("旧 Linux 共享目录迁移到 App Group 且可重复调用")
-    func legacyLinuxDirectoryMigration() throws {
-        let root = temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let documents = root.appendingPathComponent("Documents", isDirectory: true)
-        let sharedLayout = ETOSSharedStorageLayout(
-            container: root.appendingPathComponent("AppGroup", isDirectory: true)
-        )
-        let layout = LocalLinuxStorageLayout(
-            documentsDirectory: documents,
-            sharedDirectory: sharedLayout.shared,
-            exportsDirectory: sharedLayout.exports
-        )
-        try FileManager.default.createDirectory(
-            at: layout.legacyShared.appendingPathComponent("nested", isDirectory: true),
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.createDirectory(
-            at: layout.legacyShared.appendingPathComponent("资料.bundle", isDirectory: true),
-            withIntermediateDirectories: true
-        )
-        try FileManager.default.createDirectory(at: layout.legacyExports, withIntermediateDirectories: true)
-        try Data("shared".utf8).write(to: layout.legacyShared.appendingPathComponent("nested/data.txt"))
-        try Data("hidden".utf8).write(to: layout.legacyShared.appendingPathComponent(".metadata"))
-        try Data("package".utf8).write(to: layout.legacyShared.appendingPathComponent("资料.bundle/content.json"))
-        try Data("export".utf8).write(to: layout.legacyExports.appendingPathComponent("result.txt"))
-
-        try ETOSAppGroupStorageMigrator.migrateLegacyLinuxDirectories(
-            layout: layout,
-            sharedLayout: sharedLayout
-        )
-        try ETOSAppGroupStorageMigrator.migrateLegacyLinuxDirectories(
-            layout: layout,
-            sharedLayout: sharedLayout
-        )
-
-        #expect(!FileManager.default.fileExists(atPath: layout.legacyShared.path))
-        #expect(!FileManager.default.fileExists(atPath: layout.legacyExports.path))
-        #expect(FileManager.default.fileExists(atPath: sharedLayout.shared.appendingPathComponent("nested/data.txt").path))
-        #expect(FileManager.default.fileExists(atPath: sharedLayout.shared.appendingPathComponent(".metadata").path))
-        #expect(FileManager.default.fileExists(
-            atPath: sharedLayout.shared.appendingPathComponent("资料.bundle/content.json").path
-        ))
-        #expect(FileManager.default.fileExists(atPath: sharedLayout.exports.appendingPathComponent("result.txt").path))
-        #expect(FileManager.default.fileExists(
-            atPath: sharedLayout.receipts.appendingPathComponent("linux-shared-migration-v1.json").path
-        ))
     }
 
     private func temporaryDirectory() -> URL {

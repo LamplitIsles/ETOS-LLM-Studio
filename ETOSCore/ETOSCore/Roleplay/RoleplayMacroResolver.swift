@@ -99,24 +99,7 @@ public enum RoleplayMacroResolver {
         return output
     }
 
-    public static func resolveWorldbookOutlets(_ input: String, outlets: [String: String]) -> String {
-        guard input.range(of: "{{outlet::", options: .caseInsensitive) != nil,
-              let regex = try? NSRegularExpression(
-                pattern: #"\{\{\s*outlet::(.+?)\}\}"#,
-                options: [.caseInsensitive]
-              ) else {
-            return input
-        }
-        let source = input as NSString
-        let result = NSMutableString(string: input)
-        for match in regex.matches(in: input, range: NSRange(location: 0, length: source.length)).reversed() {
-            guard match.numberOfRanges > 1 else { continue }
-            let key = source.substring(with: match.range(at: 1))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            result.replaceCharacters(in: match.range, with: outlets[key] ?? "")
-        }
-        return result as String
-    }
+
 
     private static func simpleValues(_ context: RoleplayMacroContext) -> [String: String] {
         let dateFormatter = DateFormatter()
@@ -150,7 +133,6 @@ public enum RoleplayMacroResolver {
             "personality": context.character?.personality ?? "",
             "scenario": context.character?.scenario ?? "",
             "mesexamples": context.character?.messageExamples ?? "",
-            "systemprompt": context.character?.systemPrompt ?? "",
             "posthistoryinstructions": context.character?.postHistoryInstructions ?? "",
             "lastmessage": context.lastMessage,
             "lastusermessage": context.lastUserMessage,

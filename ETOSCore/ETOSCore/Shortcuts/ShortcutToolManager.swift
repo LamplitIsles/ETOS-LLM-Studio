@@ -9,8 +9,6 @@ import Combine
 import os.log
 #if os(iOS)
 import UIKit
-#elseif os(watchOS)
-import WatchKit
 #endif
 
 @MainActor

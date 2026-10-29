@@ -1,3 +1,4 @@
+#if os(macOS)
 // ============================================================================
 // ChatServiceResponsesLocalShell.swift
 // ETOS LLM Studio
@@ -208,3 +209,4 @@ extension ChatService {
         return String(text.prefix(maximumLength))
     }
 }
+#endif

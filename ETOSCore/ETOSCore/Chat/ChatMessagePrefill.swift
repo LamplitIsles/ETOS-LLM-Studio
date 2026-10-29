@@ -12,6 +12,6 @@ extension ChatMessage {
 
 extension RunnableModel {
     public var canRequestAssistantPrefill: Bool {
-        !LocalModelProviderBridge.isLocalRunnableModel(self) && !model.usesDedicatedImageGenerationEndpoint
+        !model.usesDedicatedImageGenerationEndpoint
     }
 }

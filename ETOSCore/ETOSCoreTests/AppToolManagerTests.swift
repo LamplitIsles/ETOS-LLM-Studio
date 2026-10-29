@@ -48,8 +48,6 @@ struct AppToolManagerTests {
         #expect(kinds.contains(.fillUserInput))
         #expect(kinds.contains(.executeJSCJavaScript))
         #expect(kinds.contains(.createCustomJSCJSTool))
-        #expect(kinds.contains(.executeWebKitJavaScript))
-        #expect(kinds.contains(.createCustomWebKitJSTool))
         #expect(kinds.contains(.listSandboxDirectory))
         #expect(kinds.contains(.readSandboxFile))
         #expect(kinds.contains(.writeSandboxFile))

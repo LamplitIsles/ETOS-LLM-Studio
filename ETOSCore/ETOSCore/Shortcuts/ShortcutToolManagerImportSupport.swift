@@ -13,8 +13,6 @@ import os.log
 import UIKit
 #elseif os(macOS)
 import AppKit
-#elseif os(watchOS)
-import WatchKit
 #endif
 
 extension ShortcutToolManager {
@@ -485,9 +483,6 @@ extension ShortcutToolManager {
                 continuation.resume(returning: success)
             }
         }
-        #elseif os(watchOS)
-        WKApplication.shared().openSystemURL(url)
-        return true
         #elseif os(macOS)
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return false }
         return await withCheckedContinuation { continuation in

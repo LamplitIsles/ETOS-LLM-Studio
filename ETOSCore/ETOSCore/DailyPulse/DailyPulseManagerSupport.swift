@@ -137,16 +137,6 @@ extension DailyPulseManager {
         return referenceDate >= attempt.retryAfter
     }
 
-    internal nonisolated static func shouldGenerateOnCurrentDevice(
-        trigger: DailyPulseTrigger,
-        isWatchOS: Bool,
-        syncEnabled: Bool,
-        companionReachable: Bool
-    ) -> Bool {
-        guard trigger != .manual else { return true }
-        return !(isWatchOS && syncEnabled && companionReachable)
-    }
-
     internal nonisolated static func partitionedSessionExcerpts(
         _ excerpts: [DailyPulseSessionExcerpt],
         cardCounts: [Int],

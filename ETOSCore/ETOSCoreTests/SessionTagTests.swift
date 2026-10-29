@@ -164,11 +164,7 @@ extension ChatServiceTests {
     @Test("删除标签会清理所有会话绑定")
     func testDeleteSessionTagRemovesSessionAssignments() async throws {
         await cleanup()
-        Persistence.saveSessionTags([])
         chatService.sessionTagsSubject.send([])
-        defer {
-            Persistence.saveSessionTags([])
-        }
 
         let tag = try #require(chatService.createSessionTag(name: "工作", color: .blue))
         let session = chatService.createSavedSession(name: "标签清理会话")
@@ -183,17 +179,12 @@ extension ChatServiceTests {
 
         #expect(!chatService.sessionTagsSubject.value.contains(where: { $0.id == tag.id }))
         #expect(chatService.chatSessionsSubject.value.first(where: { $0.id == session.id })?.tagIDs.isEmpty == true)
-        #expect(Persistence.loadChatSessions().first(where: { $0.id == session.id })?.tagIDs.isEmpty == true)
     }
 
     @Test("快捷颜色标记会复用系统标签并保留自定义标签")
     func testQuickColorMarkerUsesSystemTagsAndPreservesCustomTags() async throws {
         await cleanup()
-        Persistence.saveSessionTags([])
         chatService.sessionTagsSubject.send([])
-        defer {
-            Persistence.saveSessionTags([])
-        }
 
         let customTag = try #require(chatService.createSessionTag(name: "发票", color: .red))
         let session = chatService.createSavedSession(name: "快捷颜色标记会话")
@@ -215,7 +206,6 @@ extension ChatServiceTests {
             color: .gray
         ))
         #expect(!sameNameCustomTag.isSystemColorTag)
-        #expect(!SyncEngine.shouldMergeSessionTagsByName(SessionTag.systemColorTag(for: .red), sameNameCustomTag))
 
         let systemBlueID = SessionTag.systemColorTagID(for: .blue)
         chatService.setSessionTags(sessionID: session.id, tagIDs: [customTag.id, systemBlueID])

@@ -94,7 +94,7 @@ struct MacSessionLibrarySidebar: View {
                 .readOnly("tags", label: NSLocalizedString("标签", comment: ""), value: { model.snapshot.tagGuideValues }),
                 .readOnly("manual_confirmation", label: NSLocalizedString("确认删除", comment: ""), value: { .bool(deletion != nil) }),
                 .readOnly("working", label: NSLocalizedString("状态", comment: ""), value: { .bool(model.isWorking) }),
-                .readOnly("temporary_chat", label: NSLocalizedString("临时对话", comment: ""), value: { .bool(workspace.temporaryChatMemoryMode != nil) })
+                .readOnly("temporary_chat", label: NSLocalizedString("临时对话", comment: ""), value: { .bool(workspace.isTemporaryChat) })
             ]
         )
         .modifier(MacGuideInspector())

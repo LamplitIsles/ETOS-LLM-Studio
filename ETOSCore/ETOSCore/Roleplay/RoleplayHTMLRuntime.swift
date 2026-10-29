@@ -289,9 +289,6 @@ public enum RoleplayHTMLDocumentFactory {
         messageID: UUID? = nil,
         messageVersionIndex: Int = 0,
         documentID: Int = 0,
-        worldbooks: [Worldbook] = [],
-        primaryWorldbookName: String? = nil,
-        additionalWorldbookNames: [String] = [],
         scriptID: UUID? = nil,
         scriptName: String = "",
         scriptInfo: String = "",
@@ -318,9 +315,6 @@ public enum RoleplayHTMLDocumentFactory {
             messageID: messageID,
             messageVersionIndex: messageVersionIndex,
             documentID: documentID,
-            worldbooks: worldbooks,
-            primaryWorldbookName: primaryWorldbookName,
-            additionalWorldbookNames: additionalWorldbookNames,
             scriptID: scriptID,
             scriptName: scriptName,
             scriptInfo: scriptInfo,
@@ -358,9 +352,6 @@ public enum RoleplayHTMLDocumentFactory {
         messageID: UUID?,
         messageVersionIndex: Int,
         documentID: Int,
-        worldbooks: [Worldbook],
-        primaryWorldbookName: String?,
-        additionalWorldbookNames: [String],
         scriptID: UUID?,
         scriptName: String,
         scriptInfo: String,
@@ -397,9 +388,6 @@ public enum RoleplayHTMLDocumentFactory {
         }
         let characterAssetsJSON = encodableJSONLiteral(resolvedCharacterAssets, fallback: "[]")
         let regexRulesJSON = encodableJSONLiteral(regexRules, fallback: "[]")
-        let worldbooksJSON = encodableJSONLiteral(worldbooks, fallback: "[]")
-        let primaryWorldbookJSON = primaryWorldbookName.map(jsonString) ?? "null"
-        let additionalWorldbooksJSON = encodableJSONLiteral(additionalWorldbookNames, fallback: "[]")
         let scriptIDJSON = jsonString(scriptID?.uuidString ?? "")
         let scriptNameJSON = jsonString(scriptName)
         let scriptInfoJSON = jsonString(scriptInfo)
@@ -463,11 +451,6 @@ public enum RoleplayHTMLDocumentFactory {
   let scriptVariableScopes = \(scriptScopesJSON);
   let extensionVariableScopes = \(extensionScopesJSON);
   let chatMessages = \(chatMessagesJSON);
-  const worldbookList = \(worldbooksJSON);
-  let currentCharacterWorldbooks = {
-    primary: \(primaryWorldbookJSON),
-    additional: \(additionalWorldbooksJSON)
-  };
   const currentScriptID = \(scriptIDJSON);
   if (currentScriptID) {
     scriptVariableScopes[currentScriptID] = clone(scopedVariables.script || {});
@@ -480,69 +463,6 @@ public enum RoleplayHTMLDocumentFactory {
   let currentScriptInfo = \(scriptInfoJSON);
   let currentScriptButtons = \(scriptButtonsJSON);
   let roleplayRegexRules = \(regexRulesJSON);
-  const helperPosition = value => ({
-    before: 'before_character_definition', after: 'after_character_definition',
-    anTop: 'before_author_note', anBottom: 'after_author_note',
-    emTop: 'before_example_messages', emBottom: 'after_example_messages',
-    atDepth: 'at_depth', outlet: 'at_depth'
-  })[value] || 'after_character_definition';
-  const helperLogic = value => ({ AND_ANY: 'and_any', AND_ALL: 'and_all', NOT_ANY: 'not_any', NOT_ALL: 'not_all' })[value] || 'and_any';
-  const helperWorldbookEntry = (entry, index) => ({
-    uid: entry.uid ?? index,
-    name: entry.comment || entry.name || '',
-    enabled: entry.isEnabled ?? entry.enabled ?? !entry.disable,
-    strategy: {
-      type: entry.constant ? 'constant' : (entry.metadata?.extensions?.vectorized || entry.metadata?.vectorized) ? 'vectorized' : 'selective',
-      keys: clone(entry.keys || entry.key || []),
-      keys_secondary: {
-        logic: helperLogic(entry.selectiveLogic),
-        keys: clone(entry.secondaryKeys || entry.keysecondary || [])
-      },
-      scan_depth: entry.scanDepth ?? 'same_as_global'
-    },
-    position: {
-      type: helperPosition(entry.position),
-      role: String(entry.role || 'SYSTEM').toLowerCase(),
-      depth: entry.depth ?? 0,
-      order: entry.order ?? 100
-    },
-    content: String(entry.content || ''),
-    probability: entry.useProbability === false ? 100 : (entry.probability ?? 100),
-    recursion: {
-      prevent_incoming: !!entry.excludeRecursion,
-      prevent_outgoing: !!entry.preventRecursion,
-      delay_until: entry.metadata?.extensions?.delay_until_recursion ?? (entry.delayUntilRecursion ? 1 : null)
-    },
-    effect: { sticky: entry.sticky ?? null, cooldown: entry.cooldown ?? null, delay: entry.delay ?? null },
-    extra: clone(entry.metadata || {})
-  });
-  const completeHelperWorldbookEntry = (entry, uid) => ({
-    uid,
-    name: '',
-    enabled: true,
-    content: '',
-    probability: 100,
-    extra: {},
-    ...(clone(entry || {})),
-    strategy: {
-      type: 'selective', keys: [],
-      keys_secondary: { logic: 'and_any', keys: [] },
-      scan_depth: 'same_as_global',
-      ...(clone(entry?.strategy || {})),
-      keys_secondary: {
-        logic: 'and_any', keys: [],
-        ...(clone(entry?.strategy?.keys_secondary || {}))
-      }
-    },
-    position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100, ...(clone(entry?.position || {})) },
-    recursion: { prevent_incoming: false, prevent_outgoing: false, delay_until: null, ...(clone(entry?.recursion || {})) },
-    effect: { sticky: null, cooldown: null, delay: null, ...(clone(entry?.effect || {})) },
-    uid
-  });
-  const worldbooks = Object.fromEntries(worldbookList.map(book => [
-    book.name,
-    (book.entries || []).map(helperWorldbookEntry)
-  ]));
   const listeners = new Map();
   const macroLikeRules = [];
   const audioState = {
@@ -717,61 +637,6 @@ public enum RoleplayHTMLDocumentFactory {
     return raw < 0 ? chatMessages.length + raw : raw;
   };
   const reindexMessages = () => chatMessages.forEach((message, index) => { message.message_id = index; });
-  const nativePosition = value => ({
-    before_character_definition: 'before', after_character_definition: 'after',
-    before_author_note: 'anTop', after_author_note: 'anBottom',
-    before_example_messages: 'emTop', after_example_messages: 'emBottom',
-    at_depth: 'atDepth'
-  })[value] || value || 'after';
-  const nativeLogic = value => ({ and_any: 'AND_ANY', and_all: 'AND_ALL', not_any: 'NOT_ANY', not_all: 'NOT_ALL' })[value] || 'AND_ANY';
-  const nativeWorldbookEntries = entries => entries.map((entry, index) => {
-    const strategy = entry.strategy || {};
-    const secondary = strategy.keys_secondary || {};
-    const position = entry.position && typeof entry.position === 'object' ? entry.position : {};
-    const recursion = entry.recursion || {};
-    const effect = entry.effect || {};
-    const metadata = clone(entry.extra || entry.metadata || {});
-    metadata.extensions = { ...(metadata.extensions || {}) };
-    metadata.extensions.vectorized = strategy.type === 'vectorized';
-    if (recursion.delay_until != null) metadata.extensions.delay_until_recursion = recursion.delay_until;
-    const result = {
-      uid: entry.uid ?? index,
-      comment: entry.name || entry.comment || '',
-      content: String(entry.content || ''),
-      keys: clone(strategy.keys || entry.keys || entry.key || []),
-      secondaryKeys: clone(secondary.keys || entry.secondaryKeys || entry.keysecondary || []),
-      selectiveLogic: nativeLogic(secondary.logic || entry.selectiveLogic),
-      isEnabled: entry.enabled ?? entry.isEnabled ?? !entry.disable,
-      constant: strategy.type === 'constant' || !!entry.constant,
-      position: nativePosition(position.type || entry.position),
-      order: position.order ?? entry.order ?? 100,
-      depth: position.depth ?? entry.depth ?? null,
-      scanDepth: typeof strategy.scan_depth === 'number' ? strategy.scan_depth : (entry.scanDepth ?? null),
-      caseSensitive: !!(entry.caseSensitive ?? metadata.caseSensitive ?? metadata.case_sensitive),
-      matchWholeWords: !!(entry.matchWholeWords ?? metadata.matchWholeWords ?? metadata.match_whole_words),
-      useRegex: !!entry.useRegex,
-      useProbability: (entry.probability ?? 100) < 100,
-      probability: entry.probability ?? 100,
-      group: entry.group ?? metadata.group ?? null,
-      groupOverride: !!(entry.groupOverride ?? metadata.groupOverride ?? metadata.group_override),
-      groupWeight: entry.groupWeight ?? metadata.groupWeight ?? metadata.group_weight ?? 1,
-      useGroupScoring: !!(entry.useGroupScoring ?? metadata.useGroupScoring ?? metadata.use_group_scoring),
-      role: String(position.role || entry.role || 'system').toUpperCase(),
-      sticky: effect.sticky ?? entry.sticky ?? null,
-      cooldown: effect.cooldown ?? entry.cooldown ?? null,
-      delay: effect.delay ?? entry.delay ?? null,
-      excludeRecursion: !!(recursion.prevent_incoming ?? entry.excludeRecursion),
-      preventRecursion: !!(recursion.prevent_outgoing ?? entry.preventRecursion),
-      delayUntilRecursion: recursion.delay_until != null || !!entry.delayUntilRecursion,
-      metadata
-    };
-    if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(entry.id || ''))) result.id = entry.id;
-    return result;
-  });
-  const commitWorldbook = (name, entries) => {
-    worldbooks[name] = clone(entries || []);
-    post({ action: 'replace_worldbook', name, entries: nativeWorldbookEntries(worldbooks[name]) });
-  };
   const helperRegex = rule => ({
     id: rule.id || '',
     script_name: rule.script_name || rule.scriptName || '',
@@ -1135,89 +1000,6 @@ public enum RoleplayHTMLDocumentFactory {
       }
     },
     setChatMessage: async (value, message_id = -1) => api.setChatMessages([{ message_id, ...(typeof value === 'string' ? { message: value } : value) }]),
-    getWorldbookNames: () => Object.keys(worldbooks),
-    getLorebookNames: () => Object.keys(worldbooks),
-    getLorebooks: () => Object.keys(worldbooks),
-    getCharWorldbookNames: (_name = 'current') => clone(currentCharacterWorldbooks),
-    getCharLorebooks: () => clone(currentCharacterWorldbooks),
-    getCurrentCharPrimaryLorebook: () => currentCharacterWorldbooks.primary,
-    rebindCharWorldbooks: async (_name, binding) => {
-      currentCharacterWorldbooks = {
-        primary: binding?.primary || null,
-        additional: clone(binding?.additional || [])
-      };
-      post({ action: 'rebind_character_worldbooks', value: currentCharacterWorldbooks });
-    },
-    setCurrentCharLorebooks: async binding => api.rebindCharWorldbooks('current', binding),
-    createWorldbook: async name => {
-      const key = String(name || '').trim();
-      if (!key || key in worldbooks) return false;
-      worldbooks[key] = [];
-      post({ action: 'create_worldbook', name: key });
-      return true;
-    },
-    createLorebook: async name => api.createWorldbook(name),
-    deleteWorldbook: async name => {
-      if (!(name in worldbooks)) return false;
-      delete worldbooks[name];
-      post({ action: 'delete_worldbook', name });
-      return true;
-    },
-    deleteLorebook: async name => api.deleteWorldbook(name),
-    getWorldbook: async name => {
-      if (!(name in worldbooks)) throw new Error(`Worldbook '${name}' was not found`);
-      return clone(worldbooks[name]);
-    },
-    replaceWorldbook: async (name, entries, _options = {}) => {
-      if (!(name in worldbooks)) throw new Error(`Worldbook '${name}' was not found`);
-      commitWorldbook(name, (entries || []).map((entry, index) => completeHelperWorldbookEntry(entry, entry.uid ?? index)));
-    },
-    getLorebookEntries: async name => api.getWorldbook(name),
-    replaceLorebookEntries: async (name, entries, options = {}) => api.replaceWorldbook(name, entries, options),
-    updateLorebookEntriesWith: async (name, updater, options = {}) => api.updateWorldbookWith(name, updater, options),
-    createLorebookEntries: async (name, entries, options = {}) => {
-      const result = await api.createWorldbookEntries(name, entries, options);
-      return { entries: result.worldbook, new_uids: result.new_entries.map(entry => entry.uid) };
-    },
-    setLorebookEntries: async (name, updates, options = {}) => {
-      const byUID = new Map((updates || []).map(entry => [entry.uid, entry]));
-      const next = (await api.getWorldbook(name)).map(entry => byUID.has(entry.uid)
-        ? completeHelperWorldbookEntry({ ...entry, ...clone(byUID.get(entry.uid)) }, entry.uid)
-        : entry);
-      await api.replaceWorldbook(name, next, options);
-      return api.getWorldbook(name);
-    },
-    updateWorldbookWith: async (name, updater, options = {}) => {
-      const updated = await updater(await api.getWorldbook(name));
-      await api.replaceWorldbook(name, updated, options);
-      return api.getWorldbook(name);
-    },
-    createWorldbookEntries: async (name, entries, options = {}) => {
-      const existing = await api.getWorldbook(name);
-      const used = new Set(existing.map(entry => Number(entry.uid)).filter(Number.isInteger));
-      let nextUID = used.size ? Math.max(...used) + 1 : 0;
-      const created = clone(entries || []).map(entry => {
-        while (used.has(nextUID)) nextUID += 1;
-        const uid = Number.isInteger(Number(entry.uid)) && !used.has(Number(entry.uid)) ? Number(entry.uid) : nextUID++;
-        used.add(uid);
-        return completeHelperWorldbookEntry(entry, uid);
-      });
-      await api.replaceWorldbook(name, [...existing, ...created], options);
-      const worldbook = await api.getWorldbook(name);
-      return { worldbook, new_entries: worldbook.slice(existing.length) };
-    },
-    deleteWorldbookEntries: async (name, predicate, options = {}) => {
-      const existing = await api.getWorldbook(name);
-      const deleted_entries = existing.filter(predicate);
-      const retained = existing.filter(entry => !deleted_entries.includes(entry));
-      await api.replaceWorldbook(name, retained, options);
-      return { worldbook: await api.getWorldbook(name), deleted_entries };
-    },
-    deleteLorebookEntries: async (name, uids, options = {}) => {
-      const targets = new Set((uids || []).map(Number));
-      const result = await api.deleteWorldbookEntries(name, entry => targets.has(Number(entry.uid)), options);
-      return { entries: result.worldbook, delete_occurred: result.deleted_entries.length > 0 };
-    },
     isCharacterTavernRegexesEnabled: () => true,
     getTavernRegexes: ({ scope = 'all', enable_state = 'all' } = {}) => clone(tavernRegexes.filter(rule => {
       if (scope !== 'all' && rule.scope !== scope) return false;

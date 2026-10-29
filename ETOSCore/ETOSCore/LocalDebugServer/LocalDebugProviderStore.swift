@@ -18,7 +18,6 @@ enum LocalDebugProviderStore {
             ConfigLoader.removeLegacyProviderBlobs()
             ConfigLoader.cleanupLegacyProviderFiles()
             for id in result.removedIDs { _ = ProviderCredentialStore.shared.deleteAPIKeys(for: id) }
-            WatchDatabaseSyncService.markDatabaseChanged(.config)
             NotificationCenter.default.post(name: .providerConfigurationDidChange, object: nil)
         }
         return result.response

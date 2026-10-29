@@ -195,22 +195,6 @@ extension SessionFolderBrowserView {
             .sheet(item: $sessionInfo) { info in
                 SessionInfoSheet(payload: info)
             }
-            .sheet(item: $contextCompressionSourceSession) { session in
-                ContextCompressionOptionsView(
-                    session: session,
-                    models: viewModel.activatedChatModels,
-                    selectedModelID: viewModel.selectedModel?.id,
-                    onCompress: { options, progress in
-                        try await viewModel.createCompressedContinuation(
-                            from: session.id,
-                            options: options,
-                            progress: progress
-                        )
-                    }
-                )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-            }
             .sheet(isPresented: $isShowingTagManager) {
                 SessionTagManagementView(
                     tags: viewModel.sessionTags,
@@ -537,9 +521,6 @@ extension SessionFolderBrowserView {
                     let newSession = viewModel.branchSession(from: session, copyMessages: copyHistory)
                     viewModel.setCurrentSession(newSession)
                     focusOnLatest()
-                },
-                onCompress: {
-                    contextCompressionSourceSession = session
                 },
                 onMoveToFolder: { targetFolderID in
                     viewModel.moveSession(session, toFolderID: targetFolderID)

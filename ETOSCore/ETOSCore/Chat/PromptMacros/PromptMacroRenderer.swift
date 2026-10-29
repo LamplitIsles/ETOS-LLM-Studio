@@ -8,7 +8,6 @@ import Foundation
 
 enum PromptMacroRenderer {
     static func render(
-        _ templates: PromptMacroTemplates,
         model: RunnableModel,
         sessionID: UUID,
         session: ChatSession?,
@@ -18,9 +17,9 @@ enum PromptMacroRenderer {
     ) async -> PromptMacroRequest {
         await Task.detached(priority: .userInitiated) {
             let userTexts = messages.filter { $0.role == .user }.map(\.content)
-            let names = PromptMacroResolver.referencedNames(in: templates.texts + userTexts)
+            let names = PromptMacroResolver.referencedNames(in: userTexts)
             guard !names.isEmpty else {
-                return PromptMacroRequest(templates: templates, messages: messages, values: [:])
+                return PromptMacroRequest(messages: messages, values: [:])
             }
 
             // 设置和角色库可能触发磁盘读取，模板扫描与格式化也统一留在后台。
@@ -35,7 +34,6 @@ enum PromptMacroRenderer {
             values.merge([
                 "model_id": model.model.modelName,
                 "model_name": modelName,
-                "model_prompt": model.model.prompt,
                 "provider_id": model.provider.id.uuidString,
                 "provider_name": model.provider.name,
                 "api_format": model.effectiveAPIFormat,
@@ -65,7 +63,7 @@ enum PromptMacroRenderer {
                 ]) { _, new in new }
             }
             values.merge(await PromptMacroEnvironment.capture(referencedNames: names)) { _, new in new }
-            return PromptMacroRequest(templates: templates, messages: messages, values: values)
+            return PromptMacroRequest(messages: messages, values: values)
         }.value
     }
 }

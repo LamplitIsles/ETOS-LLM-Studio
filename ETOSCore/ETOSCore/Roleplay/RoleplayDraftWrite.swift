@@ -29,8 +29,6 @@ extension RoleplayStore {
             var saved = draft
             var seen = Set<UUID>()
             saved.characterIDs = saved.characterIDs.filter { seen.insert($0).inserted }
-            seen.removeAll()
-            saved.additionalWorldbookIDs = saved.additionalWorldbookIDs.filter { seen.insert($0).inserted }
             saved.updatedAt = Date()
             if let index = library.bindings.firstIndex(where: { $0.sessionID == saved.sessionID }) { library.bindings[index] = saved }
             else { library.bindings.append(saved) }

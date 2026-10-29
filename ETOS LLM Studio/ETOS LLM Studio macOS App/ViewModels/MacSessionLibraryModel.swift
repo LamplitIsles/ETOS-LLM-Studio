@@ -67,7 +67,7 @@ final class MacSessionLibraryModel: ObservableObject {
     private func perform<T: Sendable>(_ operation: @escaping @Sendable (ChatService) throws -> T) async throws -> T {
         guard let service, let workspace, !isWorking, !workspace.isRestoringData,
               !workspace.isMutatingHistory, !workspace.isExportingSnapshot,
-              AppLockManager.shared.state != .locked else { throw MacMemoryWriteError.busy }
+              AppLockManager.shared.state != .locked else { throw MacWorkspaceWriteError.busy }
         isWorking = true
         defer { isWorking = false; refresh() }
         return try await Task.detached(priority: .userInitiated) { try operation(service) }.value

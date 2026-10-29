@@ -39,21 +39,6 @@ public actor LocalLinuxProcessEnvironmentProvider {
         values["TERM_PROGRAM_VERSION"] = LocalLinuxTerminalIdentity.programVersion
         return values
     }
-    #else
-    static let baseEnvironment: [String: String] = [
-        "HOME": "/home/etos",
-        "USER": "etos",
-        "LOGNAME": "etos",
-        "SHELL": "/bin/sh",
-        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "LANG": "C.UTF-8",
-        "TERM": "xterm-256color",
-        "COLORTERM": "truecolor",
-        "TERM_PROGRAM": LocalLinuxTerminalIdentity.programName,
-        "TERM_PROGRAM_VERSION": LocalLinuxTerminalIdentity.programVersion,
-        "LC_TERMINAL": LocalLinuxTerminalIdentity.programName,
-        "LC_TERMINAL_VERSION": LocalLinuxTerminalIdentity.programVersion
-    ]
     #endif
 
     public func variables() -> [LocalLinuxEnvironmentVariable] {

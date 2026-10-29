@@ -26,7 +26,6 @@ struct MacTranscriptExportView: View {
     @State private var selected = Set<UUID>()
     @State private var messages: [ChatMessage] = []
     @State private var rows: [MacExportMessageRow] = []
-    @State private var context: ConversationContinuationContext?
     @State private var ready = false
     @State private var exporting = false
     @State private var error: String?
@@ -71,7 +70,6 @@ struct MacTranscriptExportView: View {
             }
             .task {
                 guard available, let service = workspace.service else { return }
-                let continuation = workspace.contextCompression.presentation?.context
                 let prepared = await Task.detached(priority: .utility) {
                     let all = service.messagesSnapshot(for: target.session.id)
                     let end = target.upToMessageID.flatMap { id in all.firstIndex { $0.id == id } }
@@ -79,7 +77,7 @@ struct MacTranscriptExportView: View {
                     return (all, scoped.map { MacExportMessageRow(id: $0.id, text: String($0.content.prefix(120))) })
                 }.value
                 guard !Task.isCancelled, available else { return }
-                messages = prepared.0; rows = prepared.1; context = continuation; ready = true
+                messages = prepared.0; rows = prepared.1; ready = true
             }
             .onChange(of: available) { _, active in if !active { operation?.cancel(); panel?.cancel(nil); dismiss() } }
             .onDisappear { operation?.cancel(); panel?.cancel(nil) }
@@ -111,7 +109,7 @@ struct MacTranscriptExportView: View {
             do {
                 let output = try await Task.detached(priority: .userInitiated) {
                     try ChatTranscriptExportService().export(session: target.session, messages: messages, format: format,
-                        includeReasoning: reasoning, includeSystemPrompt: system, continuationContext: context,
+                        includeReasoning: reasoning, includeSystemPrompt: system,
                         upToMessageID: target.upToMessageID, selectedMessageIDs: selection, imageStyle: imageStyle)
                 }.value
                 guard !Task.isCancelled, available else { return }

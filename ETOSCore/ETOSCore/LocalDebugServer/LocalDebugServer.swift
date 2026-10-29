@@ -18,13 +18,6 @@ public class LocalDebugServer: ObservableObject {
     // 注意：这里必须使用系统合成的 objectWillChange，
     // 否则本地调试页的连接状态、请求队列与日志不会稳定刷新。
 
-    public struct OpenAIRequestSummary: Identifiable, Hashable, Sendable {
-        public let id: UUID
-        public let model: String?
-        public let messageCount: Int
-        public let receivedAt: Date
-    }
-
     public struct DebugLogEntry: Identifiable, Sendable {
         public let id = UUID()
         public let timestamp: Date
@@ -46,15 +39,6 @@ public class LocalDebugServer: ObservableObject {
         }
     }
 
-    struct PendingOpenAIRequest: Sendable {
-        let id: UUID
-        let receivedAt: Date
-        let model: String?
-        let systemPrompt: String?
-        let messages: [ChatMessage]
-        let originalMessageCount: Int
-    }
-
     struct DebugConnectionTarget: Sendable {
         let host: String
         let port: String
@@ -65,8 +49,6 @@ public class LocalDebugServer: ObservableObject {
     @Published public var serverURL: String = ""
     @Published public var connectionStatus: String = NSLocalizedString("未连接", comment: "")
     @Published public var errorMessage: String?
-    @Published public var pendingOpenAIRequest: OpenAIRequestSummary?
-    @Published public var pendingOpenAIQueueCount: Int = 0
     @Published public var useHTTP: Bool = true // HTTP 轮询模式开关（默认启用）
     @Published public var debugLogs: [DebugLogEntry] = []
     @Published public var isTransferring: Bool = false
@@ -76,9 +58,6 @@ public class LocalDebugServer: ObservableObject {
     let logger = Logger(subsystem: "com.ETOS.LLM.Studio", category: "LocalDebugServer")
     var wsConnection: NWConnection?
     let queue = DispatchQueue(label: "com.etos.localdebug", qos: .userInitiated)
-    var pendingOpenAIRequests: [PendingOpenAIRequest] = []
-    var resolvingOpenAIRequestIDs: Set<UUID> = []
-    let insertSession: @Sendable (ChatSession, [ChatMessage]) throws -> Void
     var fileRoot: @Sendable () -> URL = { StorageUtility.documentsDirectory }
     var managedDatabaseFiles: @Sendable () -> [LocalDebugManagedDatabase] = { Persistence.debugManagedDatabaseFiles() }
     var exportDatabaseFile: @Sendable (LocalDebugManagedDatabase, URL) throws -> Void = { try Persistence.exportDebugDatabase($0, to: $1) }
@@ -111,11 +90,5 @@ public class LocalDebugServer: ObservableObject {
 
     let maxLogEntries = 100
 
-    public init() {
-        insertSession = { try Persistence.insertChatSession($0, messages: $1) }
-    }
-
-    init(insertSession: @escaping @Sendable (ChatSession, [ChatMessage]) throws -> Void) {
-        self.insertSession = insertSession
-    }
+    public init() {}
 }

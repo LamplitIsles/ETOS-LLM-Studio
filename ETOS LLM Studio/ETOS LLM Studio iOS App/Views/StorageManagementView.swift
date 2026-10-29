@@ -6,7 +6,7 @@
 // 功能特性:
 // - 显示 Documents 目录的存储使用概览
 // - 按类别浏览文件
-// - 提供缓存清理和孤立文件清理功能
+// - 提供缓存清理功能
 // ============================================================================
 
 import SwiftUI
@@ -16,8 +16,6 @@ struct StorageManagementView: View {
     @State private var storageBreakdown = StorageBreakdown()
     @State private var isLoading = true
     @State private var showClearCacheAlert = false
-    @State private var showCleanAllOrphansAlert = false
-    @State private var orphanedDataCount = StorageUtility.OrphanedDataCount(ghostSessions: 0, orphanedAudioFiles: 0, orphanedImageFiles: 0, orphanedAudioReferences: 0)
     @State private var cleanupResult: CleanupResult?
     
     struct CleanupResult: Identifiable {
@@ -50,7 +48,6 @@ struct StorageManagementView: View {
                 .readOnly("total_bytes", label: NSLocalizedString("总使用空间", comment: "向导设置字段"), value: { .int(Int(clamping: storageBreakdown.totalSize)) }),
                 .readOnly("cache_bytes", label: NSLocalizedString("缓存", comment: "向导设置字段"), value: { .int(Int(clamping: storageBreakdown.cacheSize)) }),
                 .readOnly("other_bytes", label: NSLocalizedString("其他文件", comment: "向导设置字段"), value: { .int(Int(clamping: storageBreakdown.otherSize)) }),
-                .readOnly("orphaned_item_count", label: NSLocalizedString("孤立数据", comment: "向导设置字段"), value: { .int(orphanedDataCount.total) }),
                 .readOnly("categories", label: NSLocalizedString("存储分类", comment: "向导设置字段"), value: {
                     .array(StorageCategory.allCases.map { category in
                         .dictionary([
@@ -181,21 +178,6 @@ struct StorageManagementView: View {
     
     private var cleanupToolsSection: some View {
         Section {
-            // 统一清理孤立数据
-            Button {
-                checkAllOrphanedData()
-            } label: {
-                HStack {
-                    Label(NSLocalizedString("清理孤立数据", comment: ""), systemImage: "trash.slash")
-                    Spacer()
-                    if orphanedDataCount.total > 0 {
-                        Text(String(format: NSLocalizedString("%d 项", comment: ""), orphanedDataCount.total))
-                            .etFont(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            
             // 清理缓存
             Button(role: .destructive) {
                 showClearCacheAlert = true
@@ -210,21 +192,6 @@ struct StorageManagementView: View {
             }
         } header: {
             Text(NSLocalizedString("清理工具", comment: ""))
-        } footer: {
-            Text(NSLocalizedString("孤立数据包括：幽灵会话（消息文件丢失）、孤立音频/图片文件（无会话引用）、无效音频引用（文件已删除）。", comment: ""))
-                .etFont(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .confirmationDialog(NSLocalizedString("确认清理孤立数据", comment: ""),
-            isPresented: $showCleanAllOrphansAlert,
-            titleVisibility: .visible
-        ) {
-            Button(NSLocalizedString("清理", comment: ""), role: .destructive) {
-                performAllOrphanCleanup()
-            }
-            Button(NSLocalizedString("取消", comment: ""), role: .cancel) {}
-        } message: {
-            Text(String(format: NSLocalizedString("将清理：%@。\n\n此操作不可撤销。", comment: ""), orphanedDataCount.description))
         }
     }
     
@@ -238,42 +205,9 @@ struct StorageManagementView: View {
             StorageUtility.getStorageBreakdown()
         }.value
         
-        let orphanedCount = await Task.detached(priority: .userInitiated) {
-            StorageUtility.countAllOrphanedData()
-        }.value
-        
         await MainActor.run {
             storageBreakdown = breakdown
-            orphanedDataCount = orphanedCount
             isLoading = false
-        }
-    }
-    
-    private func checkAllOrphanedData() {
-        if orphanedDataCount.total > 0 {
-            showCleanAllOrphansAlert = true
-        } else {
-            cleanupResult = CleanupResult(
-                title: NSLocalizedString("无孤立数据", comment: ""),
-                message: NSLocalizedString("当前没有需要清理的孤立数据。", comment: "")
-            )
-        }
-    }
-    
-    private func performAllOrphanCleanup() {
-        Task {
-            let summary = await Task.detached(priority: .userInitiated) {
-                StorageUtility.cleanupAllOrphans()
-            }.value
-            
-            await MainActor.run {
-                cleanupResult = CleanupResult(
-                    title: NSLocalizedString("清理完成", comment: ""),
-                    message: String(format: NSLocalizedString("已清理：%@", comment: ""), summary.description)
-                )
-            }
-            
-            await refreshData()
         }
     }
     

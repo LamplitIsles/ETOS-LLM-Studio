@@ -98,27 +98,8 @@ extension ChatViewModel {
         chatService.isTemporaryChatEnabled(for: sessionID)
     }
 
-    func temporaryChatMemoryMode(for sessionID: UUID?) -> TemporaryChatMemoryMode? {
-        chatService.temporaryChatMemoryMode(for: sessionID)
-    }
-
-    func performTemporaryChatTap(
-        preferredMemoryMode: TemporaryChatMemoryMode,
-        canEnable: Bool
-    ) -> TemporaryChatTapOutcome {
-        chatService.performTemporaryChatTap(
-            preferredMemoryMode: preferredMemoryMode,
-            canEnable: canEnable
-        )
-    }
-
-    @discardableResult
-    func saveCurrentTemporarySession() -> Bool {
-        chatService.saveCurrentTemporaryChat()
-    }
-
-    func reloadPersistedDataAfterLegacyJSONMigration() {
-        chatService.reloadSessionStateFromPersistenceAfterMigration()
+    func enableTemporaryChat() {
+        chatService.enableTemporaryChat()
     }
 
     func prepareDailyPulseIfNeeded() async {
@@ -258,13 +239,8 @@ extension ChatViewModel {
                 message,
                 aiTemperature: aiTemperature,
                 aiTopP: aiTopP,
-                systemPrompt: systemPrompt,
                 maxChatHistory: maxChatHistory,
                 enableStreaming: enableStreaming,
-                enhancedPrompt: currentSession?.enhancedPrompt,
-                enableMemory: enableMemory,
-                enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                 includeSystemTime: includeSystemTimeInPrompt,
                 systemTimeInjectionPosition: systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,

@@ -58,18 +58,12 @@ extension SyncDeltaEngine {
         }
 
         let providers = package.providers.filter { shouldKeep(.provider, $0.id.uuidString) }
-        let sessionTags = package.sessionTags.filter { shouldKeep(.sessionTag, $0.id.uuidString) }
-        let sessions = package.sessions.filter { shouldKeep(.session, $0.session.id.uuidString) }
         let backgrounds = package.backgrounds.filter { shouldKeep(.background, $0.filename) }
-        let memories = package.memories.filter { shouldKeep(.memory, $0.id.uuidString) }
-        let shouldFilterConversationProfile = !shouldKeep(.memory, SyncEngine.conversationUserProfileRecordID)
-        let conversationUserProfile = shouldFilterConversationProfile ? nil : package.conversationUserProfile
         let mcpServers = package.mcpServers.filter { shouldKeep(.mcpServer, $0.id.uuidString) }
         let audioFiles = package.audioFiles.filter { shouldKeep(.audioFile, $0.filename) }
         let imageFiles = package.imageFiles.filter { shouldKeep(.imageFile, $0.filename) }
         let skills = package.skills.filter { shouldKeep(.skill, $0.name) }
         let shortcutTools = package.shortcutTools.filter { shouldKeep(.shortcutTool, $0.id.uuidString) }
-        let worldbooks = package.worldbooks.filter { shouldKeep(.worldbook, $0.id.uuidString) }
         let feedbackTickets = package.feedbackTickets.filter { shouldKeep(.feedbackTicket, $0.id) }
         let shouldFilterDailyPulse = !shouldKeep(.dailyPulseRun, dailyPulseBundleRecordID)
         let dailyPulseRuns = shouldFilterDailyPulse ? [] : package.dailyPulseRuns
@@ -91,31 +85,15 @@ extension SyncDeltaEngine {
         let appStorageSnapshot = filteredAppStorageValues.isEmpty
             ? nil
             : SyncEngine.encodeAppStorageSnapshot(filteredAppStorageValues)
-        let globalSystemPrompt = filteredAppStorageValues[AppConfigKey.systemPrompt.rawValue] == nil
-            ? nil
-            : package.globalSystemPrompt
 
         var options = package.options
         if package.options.contains(.providers), !package.providers.isEmpty, providers.isEmpty { options.remove(.providers) }
-        if package.options.contains(.sessions),
-           (!package.sessionTags.isEmpty || !package.sessions.isEmpty),
-           sessionTags.isEmpty,
-           sessions.isEmpty {
-            options.remove(.sessions)
-        }
         if package.options.contains(.backgrounds), !package.backgrounds.isEmpty, backgrounds.isEmpty { options.remove(.backgrounds) }
-        if package.options.contains(.memories),
-           (!package.memories.isEmpty || package.conversationUserProfile != nil),
-           memories.isEmpty,
-           conversationUserProfile == nil {
-            options.remove(.memories)
-        }
         if package.options.contains(.mcpServers), !package.mcpServers.isEmpty, mcpServers.isEmpty { options.remove(.mcpServers) }
         if package.options.contains(.audioFiles), !package.audioFiles.isEmpty, audioFiles.isEmpty { options.remove(.audioFiles) }
         if package.options.contains(.imageFiles), !package.imageFiles.isEmpty, imageFiles.isEmpty { options.remove(.imageFiles) }
         if package.options.contains(.skills), !package.skills.isEmpty, skills.isEmpty { options.remove(.skills) }
         if package.options.contains(.shortcutTools), !package.shortcutTools.isEmpty, shortcutTools.isEmpty { options.remove(.shortcutTools) }
-        if package.options.contains(.worldbooks), !package.worldbooks.isEmpty, worldbooks.isEmpty { options.remove(.worldbooks) }
         if package.options.contains(.feedbackTickets), !package.feedbackTickets.isEmpty, feedbackTickets.isEmpty { options.remove(.feedbackTickets) }
         if package.options.contains(.dailyPulse), shouldFilterDailyPulse { options.remove(.dailyPulse) }
         if package.options.contains(.usageStats), !package.usageStatsDayBundles.isEmpty, usageStatsDayBundles.isEmpty { options.remove(.usageStats) }
@@ -135,17 +113,12 @@ extension SyncDeltaEngine {
             options: options,
             sourcePlatform: package.sourcePlatform,
             providers: providers,
-            sessionTags: sessionTags,
-            sessions: sessions,
             backgrounds: backgrounds,
-            memories: memories,
-            conversationUserProfile: conversationUserProfile,
             mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
             shortcutTools: shortcutTools,
-            worldbooks: worldbooks,
             feedbackTickets: feedbackTickets,
             dailyPulseRuns: dailyPulseRuns,
             dailyPulseFeedbackHistory: dailyPulseFeedbackHistory,
@@ -155,8 +128,7 @@ extension SyncDeltaEngine {
             usageStatsDayBundles: usageStatsDayBundles,
             fontFiles: fontFiles,
             fontRouteConfigurationData: fontRouteConfigurationData,
-            appStorageSnapshot: appStorageSnapshot,
-            globalSystemPrompt: globalSystemPrompt
+            appStorageSnapshot: appStorageSnapshot
         )
     }
 
@@ -187,26 +159,6 @@ extension SyncDeltaEngine {
             })
         }
 
-        if package.options.contains(.sessions) {
-            records.append(contentsOf: package.sessionTags.map {
-                SyncRecordDescriptor(
-                    type: .sessionTag,
-                    recordID: $0.id.uuidString,
-                    checksum: stableChecksum($0),
-                    updatedAt: $0.updatedAt
-                )
-            })
-            records.append(contentsOf: package.sessions.map {
-                let latest = $0.messages.compactMap(\.requestedAt).max() ?? .distantPast
-                return SyncRecordDescriptor(
-                    type: .session,
-                    recordID: $0.session.id.uuidString,
-                    checksum: stableChecksum($0),
-                    updatedAt: latest
-                )
-            })
-        }
-
         if package.options.contains(.backgrounds) {
             records.append(contentsOf: package.backgrounds.map {
                 SyncRecordDescriptor(
@@ -216,27 +168,6 @@ extension SyncDeltaEngine {
                     updatedAt: .distantPast
                 )
             })
-        }
-
-        if package.options.contains(.memories) {
-            records.append(contentsOf: package.memories.map {
-                SyncRecordDescriptor(
-                    type: .memory,
-                    recordID: $0.id.uuidString,
-                    checksum: stableChecksum($0),
-                    updatedAt: $0.updatedAt ?? $0.createdAt
-                )
-            })
-            if let profile = package.conversationUserProfile {
-                records.append(
-                    SyncRecordDescriptor(
-                        type: .memory,
-                        recordID: SyncEngine.conversationUserProfileRecordID,
-                        checksum: stableChecksum(profile),
-                        updatedAt: profile.updatedAt
-                    )
-                )
-            }
         }
 
         if package.options.contains(.mcpServers) {
@@ -287,17 +218,6 @@ extension SyncDeltaEngine {
             records.append(contentsOf: package.shortcutTools.map {
                 SyncRecordDescriptor(
                     type: .shortcutTool,
-                    recordID: $0.id.uuidString,
-                    checksum: stableChecksum($0),
-                    updatedAt: $0.updatedAt
-                )
-            })
-        }
-
-        if package.options.contains(.worldbooks) {
-            records.append(contentsOf: package.worldbooks.map {
-                SyncRecordDescriptor(
-                    type: .worldbook,
                     recordID: $0.id.uuidString,
                     checksum: stableChecksum($0),
                     updatedAt: $0.updatedAt
@@ -405,17 +325,12 @@ extension SyncDeltaEngine {
         guard !keys.isEmpty else { return SyncPackage(options: []) }
 
         var providers: [Provider] = []
-        var sessionTags: [SessionTag] = []
-        var sessions: [SyncedSession] = []
         var backgrounds: [SyncedBackground] = []
-        var memories: [MemoryItem] = []
-        var conversationUserProfile: ConversationUserProfile?
         var mcpServers: [MCPServerConfiguration] = []
         var audioFiles: [SyncedAudio] = []
         var imageFiles: [SyncedImage] = []
         var skills: [SyncedSkillBundle] = []
         var shortcutTools: [ShortcutToolDefinition] = []
-        var worldbooks: [Worldbook] = []
         var feedbackTickets: [FeedbackTicket] = []
         var dailyPulseRuns: [DailyPulseRun] = []
         var dailyPulseFeedbackHistory: [DailyPulseFeedbackEvent] = []
@@ -426,22 +341,14 @@ extension SyncDeltaEngine {
         var fontFiles: [SyncedFontFile] = []
         var fontRouteConfigurationData: Data?
         var appStorageSnapshot: Data?
-        var globalSystemPrompt: String?
 
         providers = full.providers.filter { keys.contains(SyncRecordDescriptor.key(type: .provider, recordID: $0.id.uuidString)) }
-        sessionTags = full.sessionTags.filter { keys.contains(SyncRecordDescriptor.key(type: .sessionTag, recordID: $0.id.uuidString)) }
-        sessions = full.sessions.filter { keys.contains(SyncRecordDescriptor.key(type: .session, recordID: $0.session.id.uuidString)) }
         backgrounds = full.backgrounds.filter { keys.contains(SyncRecordDescriptor.key(type: .background, recordID: $0.filename)) }
-        memories = full.memories.filter { keys.contains(SyncRecordDescriptor.key(type: .memory, recordID: $0.id.uuidString)) }
-        if keys.contains(SyncRecordDescriptor.key(type: .memory, recordID: SyncEngine.conversationUserProfileRecordID)) {
-            conversationUserProfile = full.conversationUserProfile
-        }
         mcpServers = full.mcpServers.filter { keys.contains(SyncRecordDescriptor.key(type: .mcpServer, recordID: $0.id.uuidString)) }
         audioFiles = full.audioFiles.filter { keys.contains(SyncRecordDescriptor.key(type: .audioFile, recordID: $0.filename)) }
         imageFiles = full.imageFiles.filter { keys.contains(SyncRecordDescriptor.key(type: .imageFile, recordID: $0.filename)) }
         skills = full.skills.filter { keys.contains(SyncRecordDescriptor.key(type: .skill, recordID: $0.name)) }
         shortcutTools = full.shortcutTools.filter { keys.contains(SyncRecordDescriptor.key(type: .shortcutTool, recordID: $0.id.uuidString)) }
-        worldbooks = full.worldbooks.filter { keys.contains(SyncRecordDescriptor.key(type: .worldbook, recordID: $0.id.uuidString)) }
         feedbackTickets = full.feedbackTickets.filter { keys.contains(SyncRecordDescriptor.key(type: .feedbackTicket, recordID: $0.id)) }
         fontFiles = full.fontFiles.filter { keys.contains(SyncRecordDescriptor.key(type: .fontFile, recordID: $0.assetID.uuidString)) }
 
@@ -473,23 +380,17 @@ extension SyncDeltaEngine {
             let scopedValues = values.filter { appStorageKeys.contains($0.key) }
             if !scopedValues.isEmpty {
                 appStorageSnapshot = SyncEngine.encodeAppStorageSnapshot(scopedValues)
-                if appStorageKeys.contains(AppConfigKey.systemPrompt.rawValue) {
-                    globalSystemPrompt = full.globalSystemPrompt
-                }
             }
         }
 
         var options: SyncOptions = []
         if !providers.isEmpty { options.insert(.providers) }
-        if !sessionTags.isEmpty || !sessions.isEmpty { options.insert(.sessions) }
         if !backgrounds.isEmpty { options.insert(.backgrounds) }
-        if !memories.isEmpty || conversationUserProfile != nil { options.insert(.memories) }
         if !mcpServers.isEmpty { options.insert(.mcpServers) }
         if !audioFiles.isEmpty { options.insert(.audioFiles) }
         if !imageFiles.isEmpty { options.insert(.imageFiles) }
         if !skills.isEmpty { options.insert(.skills) }
         if !shortcutTools.isEmpty { options.insert(.shortcutTools) }
-        if !worldbooks.isEmpty { options.insert(.worldbooks) }
         if !feedbackTickets.isEmpty { options.insert(.feedbackTickets) }
         if !dailyPulseRuns.isEmpty || !dailyPulseFeedbackHistory.isEmpty || dailyPulsePendingCuration != nil || !dailyPulseExternalSignals.isEmpty || !dailyPulseTasks.isEmpty {
             options.insert(.dailyPulse)
@@ -508,17 +409,12 @@ extension SyncDeltaEngine {
             options: options,
             sourcePlatform: full.sourcePlatform,
             providers: providers,
-            sessionTags: sessionTags,
-            sessions: sessions,
             backgrounds: backgrounds,
-            memories: memories,
-            conversationUserProfile: conversationUserProfile,
             mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
             shortcutTools: shortcutTools,
-            worldbooks: worldbooks,
             feedbackTickets: feedbackTickets,
             dailyPulseRuns: dailyPulseRuns,
             dailyPulseFeedbackHistory: dailyPulseFeedbackHistory,
@@ -528,8 +424,7 @@ extension SyncDeltaEngine {
             usageStatsDayBundles: usageStatsDayBundles,
             fontFiles: fontFiles,
             fontRouteConfigurationData: fontRouteConfigurationData,
-            appStorageSnapshot: appStorageSnapshot,
-            globalSystemPrompt: globalSystemPrompt
+            appStorageSnapshot: appStorageSnapshot
         )
     }
 
@@ -549,36 +444,6 @@ extension SyncDeltaEngine {
         return (type, parts[1])
     }
 
-    static func applySessionDeletion(sessionID: UUID, chatService: ChatService) -> Bool {
-        var sessions = chatService.chatSessionsSubject.value
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return false }
-        let removed = sessions.remove(at: index)
-        guard !removed.isTemporary else { return false }
-
-        Persistence.deleteSessionArtifacts(sessionID: sessionID)
-        Persistence.saveChatSessions(sessions)
-        chatService.chatSessionsSubject.send(sessions)
-
-        if let current = chatService.currentSessionSubject.value, current.id == sessionID {
-            if let replacement = sessions.first {
-                chatService.currentSessionSubject.send(replacement)
-                chatService.messagesForSessionSubject.send(Persistence.loadMessages(for: replacement.id))
-            } else {
-                let temp = ChatSession(
-                    id: UUID(),
-                    name: NSLocalizedString("新的对话", comment: "Default new chat session name"),
-                    isTemporary: true
-                )
-                sessions.insert(temp, at: 0)
-                chatService.chatSessionsSubject.send(sessions)
-                chatService.currentSessionSubject.send(temp)
-                chatService.messagesForSessionSubject.send([])
-            }
-        }
-
-        return true
-    }
-
     static func activeRecordTypes(from options: SyncOptions) -> Set<SyncRecordType> {
         var activeTypes = Set<SyncRecordType>()
         for type in SyncRecordType.allCases {
@@ -593,12 +458,8 @@ extension SyncDeltaEngine {
         switch type {
         case .provider:
             return .providers
-        case .sessionTag, .session:
-            return .sessions
         case .background:
             return .backgrounds
-        case .memory:
-            return .memories
         case .mcpServer:
             return .mcpServers
         case .audioFile:
@@ -609,8 +470,6 @@ extension SyncDeltaEngine {
             return .skills
         case .shortcutTool:
             return .shortcutTools
-        case .worldbook:
-            return .worldbooks
         case .feedbackTicket:
             return .feedbackTickets
         case .dailyPulseRun:

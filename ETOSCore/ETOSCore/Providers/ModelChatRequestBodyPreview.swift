@@ -3,8 +3,7 @@ import Foundation
 /// 配置页的聊天请求体示例，使用实际适配器，但不持有真实提供商凭据、历史或网络会话。
 public enum ModelChatRequestBodyPreview {
     public static func supports(model: Model, providerAPIFormat: String) -> Bool {
-        model.kind == .chat && providerAPIFormat != LocalModelProviderBridge.apiFormat
-            && model.effectiveAPIFormat(providerAPIFormat: providerAPIFormat) != LocalModelProviderBridge.apiFormat
+        model.kind == .chat
     }
 
     /// JSON 构造及脱敏应由调用方在后台执行；返回内容只适用于示例，不用于发送请求。

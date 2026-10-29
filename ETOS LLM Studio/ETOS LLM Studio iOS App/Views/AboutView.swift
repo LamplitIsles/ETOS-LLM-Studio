@@ -179,7 +179,7 @@ struct AboutView: View {
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent(NSLocalizedString("开发者", comment: ""), value: NSLocalizedString("Eric-Terminal", comment: "Developer name"))
-                LabeledContent(NSLocalizedString("平台支持", comment: ""), value: NSLocalizedString("iOS / watchOS", comment: "Supported platforms"))
+                LabeledContent(NSLocalizedString("平台支持", comment: ""), value: NSLocalizedString("iOS / macOS", comment: "Supported platforms"))
                 NavigationLink {
                     UpdateTimelineView()
                 } label: {

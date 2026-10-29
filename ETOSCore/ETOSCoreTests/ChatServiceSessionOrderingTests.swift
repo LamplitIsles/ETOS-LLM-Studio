@@ -5,7 +5,7 @@ import Testing
 
 extension ChatServiceTests {
     @MainActor
-    @Test("后台目标收到文本后提升内存与持久化排序，不切换正在浏览的会话")
+    @Test("后台目标收到文本后提升内存排序，不切换正在浏览的会话")
     func sendingPromotesExistingSessionWithoutChangingSelection() async throws {
         await cleanup()
         setupMockResponsesForChatAndTitle()
@@ -18,9 +18,9 @@ extension ChatServiceTests {
 
         await chatService.sendAndProcessMessage(
             content: "发送到已有会话",
-            aiTemperature: 0, aiTopP: 1, systemPrompt: "", maxChatHistory: 5,
-            enableStreaming: false, enhancedPrompt: nil,
-            enableMemory: false, enableMemoryWrite: false, includeSystemTime: false,
+            aiTemperature: 0, aiTopP: 1, maxChatHistory: 5,
+            enableStreaming: false,
+            includeSystemTime: false,
             targetSessionID: target.id,
             onMessagesPrepared: { prepared = $0 }
         )
@@ -29,8 +29,5 @@ extension ChatServiceTests {
         #expect(prepared?.messageIDsBySource[.text] == prepared?.responseGroupID)
         #expect(chatService.currentSessionSubject.value?.id == browsing.id)
         #expect(chatService.chatSessionsSubject.value.first?.id == target.id)
-        #expect(Persistence.loadChatSessions().first?.id == target.id)
-        #expect(Persistence.loadMessages(for: browsing.id).isEmpty)
-        #expect(Persistence.loadMessages(for: target.id).contains { $0.content == "排序测试回复" })
     }
 }

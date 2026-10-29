@@ -166,15 +166,13 @@ public enum MCPServerConfigurationTransferService {
         if let command = nonEmptyString(raw["command"]) {
             let arguments = raw["args"] as? [String] ?? raw["arguments"] as? [String] ?? []
             let environment = stringDictionary(raw["env"] ?? raw["environment"])
-            let cwd = nonEmptyString(raw["cwd"] ?? raw["workingDirectory"]) ?? "/home/etos"
+            let cwd = nonEmptyString(raw["cwd"] ?? raw["workingDirectory"]) ?? ""
             let launchPolicy = MCPLocalStdioLaunchPolicy(
                 rawValue: nonEmptyString(raw["launchPolicy"]) ?? "on_demand"
             ) ?? .onDemand
             let idlePolicy = MCPLocalStdioIdlePolicy(
                 rawValue: nonEmptyString(raw["idlePolicy"]) ?? "five_minutes"
             ) ?? .fiveMinutes
-            let workspaceID = nonEmptyString(raw["workspaceID"]).flatMap(UUID.init(uuidString:))
-            let mountIDs = (raw["mountIDs"] as? [String] ?? []).compactMap(UUID.init(uuidString:))
             let startupTimeout = (raw["startupTimeout"] as? NSNumber)?.doubleValue ?? 30
             return MCPServerConfiguration(
                 displayName: name,
@@ -185,8 +183,6 @@ public enum MCPServerConfigurationTransferService {
                         environment: environment,
                         inheritLocalLinuxEnvironment: raw["inheritLocalLinuxEnvironment"] as? Bool ?? true,
                         workingDirectory: cwd,
-                        workspaceID: workspaceID,
-                        mountIDs: mountIDs,
                         startupTimeoutSeconds: max(0, startupTimeout),
                         launchPolicy: launchPolicy,
                         idlePolicy: idlePolicy
@@ -238,12 +234,6 @@ public enum MCPServerConfigurationTransferService {
                 "startupTimeout": configuration.startupTimeoutSeconds,
                 "inheritLocalLinuxEnvironment": configuration.inheritLocalLinuxEnvironment
             ]
-            if let workspaceID = configuration.workspaceID {
-                result["workspaceID"] = workspaceID.uuidString
-            }
-            if !configuration.mountIDs.isEmpty {
-                result["mountIDs"] = configuration.mountIDs.map(\.uuidString)
-            }
             var referencedEnvironment = configuration.environment
             let referencedIDs = Set(configuration.environmentVariableIDs)
             for variable in Persistence.loadLocalLinuxEnvironmentVariables()

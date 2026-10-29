@@ -83,49 +83,6 @@ extension ChatView {
         .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 3)
     }
 
-    func memoryRetryStoppedNoticeBanner(text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .etFont(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.orange)
-                .padding(.top, 1)
-
-            Text(text)
-                .etFont(.footnote)
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.leading)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Button {
-                viewModel.memoryRetryStoppedNoticeMessage = nil
-            } label: {
-                Image(systemName: "xmark")
-                    .etFont(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .padding(6)
-                    .background(
-                        Circle()
-                            .fill(Color.primary.opacity(0.08))
-                    )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(NSLocalizedString("关闭提示", comment: ""))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 3)
-    }
-
-    /// Telegram 风格的背景层
     var telegramBackgroundLayer: some View {
         GeometryReader { geometry in
             Group {

@@ -102,7 +102,7 @@ extension ChatServiceTests {
         config.protocolClasses = [AutomaticRetryURLProtocol.self]
         let service = ChatService(
             adapters: ["openai-compatible": OpenAIAdapter()],
-            memoryManager: memoryManager, urlSession: URLSession(configuration: config)
+            urlSession: URLSession(configuration: config)
         )
         service.setSelectedModel(provider.map { RunnableModel(provider: $0, model: dummyModel.model) } ?? dummyModel)
         let session = service.createSavedSession(name: "自动重试测试")
@@ -113,8 +113,7 @@ extension ChatServiceTests {
     private func sendAutomaticallyRetriedMessage(using service: ChatService, streaming: Bool) async {
         await service.sendAndProcessMessage(
             content: "测试恢复", aiTemperature: 0, aiTopP: 1,
-            systemPrompt: "", maxChatHistory: 0, enableStreaming: streaming,
-            enhancedPrompt: nil, enableMemory: false, enableMemoryWrite: false,
+            maxChatHistory: 0, enableStreaming: streaming,
             includeSystemTime: false
         )
     }
@@ -383,8 +382,6 @@ extension ChatServiceTests {
         #expect(visible.last?.content == "前半段后半段")
         #expect(stored.contains { $0.content == "前半段" })
         #expect(!stored.contains { $0.requestRetryStatus != nil })
-        let session = try #require(service.currentSessionSubject.value)
-        #expect(Persistence.loadMessages(for: session.id).contains { $0.content == "前半段后半段" })
         await cleanup()
     }
 

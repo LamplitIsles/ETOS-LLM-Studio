@@ -63,7 +63,6 @@ actor ConversationRunCoordinator {
         repeat {
             needsAnotherDrain = false
             await reconcileTerminalRuns()
-            await publishRuntimeStates()
             await drainPendingEvents()
         } while needsAnotherDrain
         isDraining = false
@@ -153,13 +152,8 @@ actor ConversationRunCoordinator {
                 content: "",
                 aiTemperature: configuration.temperature,
                 aiTopP: configuration.topP,
-                systemPrompt: configuration.systemPrompt,
                 maxChatHistory: configuration.maxChatHistory,
                 enableStreaming: configuration.enableStreaming,
-                enhancedPrompt: configuration.enhancedPrompt,
-                enableMemory: configuration.enableMemory,
-                enableMemoryWrite: configuration.enableMemoryWrite,
-                enableMemoryActiveRetrieval: configuration.enableMemoryActiveRetrieval,
                 includeSystemTime: configuration.includeSystemTime,
                 systemTimeInjectionPosition: configuration.systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: configuration.enablePeriodicTimeLandmark,
@@ -211,7 +205,6 @@ actor ConversationRunCoordinator {
                 executorDeviceID: UsageAnalyticsRuntimeContext.currentDeviceIdentifier()
             )
             await reconcileTerminalRuns()
-            await publishRuntimeStates()
             await signal()
         case .deferred:
             _ = Persistence.updateConversationEventState(id: event.id, state: .pending)
@@ -443,13 +436,4 @@ actor ConversationRunCoordinator {
         return sessionIDs
     }
 
-    private func publishRuntimeStates() async {
-        guard let chatService else { return }
-        let states = Dictionary(
-            uniqueKeysWithValues: Persistence.loadConversationRuntimeSessionStates().map { ($0.sessionID, $0) }
-        )
-        await MainActor.run {
-            chatService.conversationRuntimeStatesSubject.send(states)
-        }
-    }
 }

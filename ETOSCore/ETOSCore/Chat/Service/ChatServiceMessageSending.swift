@@ -15,13 +15,8 @@ extension ChatService {
         content: String,
         aiTemperature: Double,
         aiTopP: Double,
-        systemPrompt: String,
         maxChatHistory: Int,
         enableStreaming: Bool,
-        enhancedPrompt: String?,
-        enableMemory: Bool,
-        enableMemoryWrite: Bool,
-        enableMemoryActiveRetrieval: Bool = false,
         includeSystemTime: Bool,
         systemTimeInjectionPosition: SystemTimeInjectionPosition = .front,
         enablePeriodicTimeLandmark: Bool = false,
@@ -41,7 +36,6 @@ extension ChatService {
         requestedLocalAgentMode: LocalAgentMode? = nil,
         onMessagesPrepared: ChatSendPresentationHandler? = nil
     ) async {
-        await waitForInitialPersistenceStateIfNeeded()
 
         let resolvedTargetSessionID = targetSessionID ?? currentSessionSubject.value?.id
         let currentSessionSnapshot = currentSessionSubject.value
@@ -243,13 +237,8 @@ extension ChatService {
                 modelIdentifier: selectedModel?.id,
                 temperature: aiTemperature,
                 topP: aiTopP,
-                systemPrompt: systemPrompt,
                 maxChatHistory: maxChatHistory,
                 enableStreaming: enableStreaming,
-                enhancedPrompt: currentSession.enhancedPrompt ?? enhancedPrompt,
-                enableMemory: enableMemory,
-                enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                 includeSystemTime: includeSystemTime,
                 systemTimeInjectionPosition: systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -310,12 +299,9 @@ extension ChatService {
 
         do {
             if existingInputMessageID == nil {
-                let submissionMessages = userMessages + [loadingMessage]
-                let submissionSessionID = currentSession.id
-                // 先整组提交，再由下方的数据库快照一次发布；不让附件逐条推动显示窗口。
-                _ = try await Task.detached(priority: .userInitiated) {
-                    try Persistence.appendConversationMessages(submissionMessages, to: submissionSessionID)
-                }.value
+                for message in userMessages + [loadingMessage] {
+                    _ = try await appendConversationMessage(message, to: currentSession.id)
+                }
             } else {
                 _ = try await appendConversationMessage(loadingMessage, to: currentSession.id)
             }
@@ -327,12 +313,7 @@ extension ChatService {
             requestStatusSubject.send(.error)
             return
         }
-        // 请求以原子追加完成后的数据库顺序为准；读取放到后台，避免陈旧内存缓存
-        // 裁掉此前由邮箱、同步或其他持久化入口写入的消息。
-        let requestSessionID = currentSession.id
-        let messages = await Task.detached(priority: .userInitiated) {
-            Persistence.loadMessages(for: requestSessionID)
-        }.value
+        let messages = messagesSnapshot(for: currentSession.id)
         storeRuntimeMessagesSnapshot(messages, for: currentSession.id)
         publishMessagesIfCurrentSession(messages, for: currentSession.id)
         await consumePendingUserSteeringEvents(
@@ -369,7 +350,6 @@ extension ChatService {
             var updatedSessions = chatSessionsSubject.value
             if let index = updatedSessions.firstIndex(where: { $0.id == currentSession.id }) { updatedSessions[index] = currentSession }
             chatSessionsSubject.send(updatedSessions)
-            Persistence.saveChatSessions(updatedSessions)
             logger.info("临时会话已转为永久会话: \(currentSession.name)")
 
             // 用户发送第一条消息时，立即异步生成标题（无需等待AI响应）
@@ -419,13 +399,8 @@ extension ChatService {
             modelIdentifier: selectedModel?.id,
             temperature: aiTemperature,
             topP: aiTopP,
-            systemPrompt: systemPrompt,
             maxChatHistory: maxChatHistory,
             enableStreaming: enableStreaming,
-            enhancedPrompt: currentSession.enhancedPrompt ?? enhancedPrompt,
-            enableMemory: enableMemory,
-            enableMemoryWrite: enableMemoryWrite,
-            enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
             includeSystemTime: includeSystemTime,
             systemTimeInjectionPosition: systemTimeInjectionPosition,
             enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
@@ -515,9 +490,6 @@ extension ChatService {
             }
             let requestTooling = await self.resolveRequestTooling(
                 for: currentSession,
-                enableMemory: enableMemory,
-                enableMemoryWrite: enableMemoryWrite,
-                enableMemoryActiveRetrieval: enableMemoryActiveRetrieval,
                 localAgentContext: localAgentContext,
                 agentCapabilities: agentCapabilities,
                 selectedAgentMCPServerIDs: Set(selectedMCPServerIDs)
@@ -530,15 +502,9 @@ extension ChatService {
                 wasTemporarySession: wasTemporarySession,
                 aiTemperature: aiTemperature,
                 aiTopP: aiTopP,
-                systemPrompt: systemPrompt,
                 maxChatHistory: maxChatHistory,
                 enableStreaming: enableStreaming,
-                enhancedPrompt: enhancedPrompt,
                 tools: requestTooling.tools,
-                localAgentPrompt: localAgentContext?.promptContent,
-                enableMemory: requestTooling.policy.enableMemory,
-                enableMemoryWrite: requestTooling.policy.enableMemoryWrite,
-                enableMemoryActiveRetrieval: requestTooling.policy.enableMemoryActiveRetrieval,
                 includeSystemTime: includeSystemTime,
                 systemTimeInjectionPosition: systemTimeInjectionPosition,
                 enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,

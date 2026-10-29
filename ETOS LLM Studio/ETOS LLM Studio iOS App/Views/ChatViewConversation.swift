@@ -147,45 +147,6 @@ extension ChatView {
                             // 历史加载提示
                             historyBanner
 
-                            if let continuationContext,
-                               !continuationContext.isSourceSessionLinkHidden {
-                                ConversationContinuationLinkBubble(
-                                    kind: .sourceSession,
-                                    linkedSessionName: continuationSourceSessionName(
-                                        for: continuationContext
-                                    ),
-                                    linkedSessionAvailable: continuationSessionNamesByID[
-                                        continuationContext.sourceSessionID
-                                    ] != nil,
-                                    onOpen: {
-                                        _ = viewModel.setCurrentSessionIfExists(
-                                            sessionID: continuationContext.sourceSessionID
-                                        )
-                                    },
-                                    onDelete: {
-                                        hideConversationContinuationLink(
-                                            in: continuationContext,
-                                            kind: .sourceSession
-                                        )
-                                    }
-                                )
-                                .id(continuationContext.id)
-                            }
-
-                            if let continuationContext {
-                                ConversationContinuationBubble(
-                                    context: continuationContext,
-                                    expansionState: $continuationExpansionState,
-                                    enableAdvancedRenderer: viewModel.enableAdvancedRenderer,
-                                    enableBackground: viewModel.enableBackground,
-                                    enableLiquidGlass: isLiquidGlassEnabled,
-                                    enableNoBubbleUI: viewModel.enableNoBubbleUI,
-                                    onExpansionStateChange: handleContinuationExpansionStateChange
-                                )
-                                .padding(.horizontal, 12)
-                                .padding(.bottom, 8)
-                            }
-
                             // 消息列表
                             ForEach(Array(displayedMessages.enumerated()), id: \.element.id) { index, state in
                                 let message = state.message
@@ -422,15 +383,6 @@ extension ChatView {
                                         )
                                 }
 
-                                if let contexts = outgoingContinuationContextsByMessageID[message.id] {
-                                    ForEach(contexts) { context in
-                                        outgoingContinuationLinkBubble(context)
-                                    }
-                                }
-                            }
-
-                            ForEach(unanchoredOutgoingContinuationContexts) { context in
-                                outgoingContinuationLinkBubble(context)
                             }
 
                             Color.clear
@@ -633,37 +585,11 @@ extension ChatView {
                 // Telegram 风格：底部输入栏
                 .safeAreaInset(edge: .bottom) {
                     VStack(spacing: 0) {
-                        if LocalLinuxChatPreviewPlacement.normalized(appConfig.localLinuxChatPreviewPlacement) == .aboveInput {
-                            LocalLinuxChatDockedPreview(
-                                mode: LocalLinuxChatPreviewMode
-                                    .normalized(appConfig.localLinuxChatPreviewMode)
-                                    .resolved(for: currentLocalAgentMode),
-                                isLocalLinuxEnabled: appConfig.localLinuxEnabled,
-                                agentToolPreview: viewModel.latestAgentToolExecutionPreview,
-                                isLiquidGlassEnabled: isLiquidGlassEnabled,
-                                onOpenTerminal: { jobID in
-                                    localTerminalInitialJobID = jobID
-                                    navigationDestination = .localTerminal
-                                },
-                                onOpenBrowser: {
-                                    navigationDestination = .browser
-                                }
-                            )
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 6)
-                        }
-
                         telegramInputBar(
                             availableHeight: max(0, chatViewportSize.height - navBarHeight - 8)
                         )
                         RoleplayScriptButtonBar(sessionID: viewModel.currentSession?.id)
                     }
-                        .animation(
-                            accessibilityReduceMotion
-                                ? nil
-                                : .spring(response: 0.32, dampingFraction: 1),
-                            value: appConfig.localLinuxChatPreviewPlacement
-                        )
                         .frame(width: chatViewportWidth)
                         .background(ChatSendFlightLayoutAnchor(controller: sendFlightController, region: .composer))
                         .background(
@@ -707,57 +633,9 @@ extension ChatView {
                         .zIndex(40)
                 }
 
-                if shouldShowLocalResourceUsageFloatingPanel {
-                    LocalResourceUsageFloatingPanel(
-                        containerSize: chatViewportSize,
-                        topPadding: navBarHeight + 12,
-                        leadingPadding: 16,
-                        offset: $localResourceUsagePanelOffset,
-                        isLiquidGlassEnabled: isLiquidGlassEnabled
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(24)
-                }
-
-                if LocalLinuxChatPreviewPlacement.normalized(appConfig.localLinuxChatPreviewPlacement) == .floating {
-                    LocalLinuxChatFloatingPreview(
-                        mode: LocalLinuxChatPreviewMode
-                            .normalized(appConfig.localLinuxChatPreviewMode)
-                            .resolved(for: currentLocalAgentMode),
-                        isLocalLinuxEnabled: appConfig.localLinuxEnabled,
-                        agentToolPreview: viewModel.latestAgentToolExecutionPreview,
-                        sessionID: viewModel.currentSession?.id,
-                        containerSize: chatViewportSize,
-                        topPadding: navBarHeight + 12,
-                        bottomPadding: max(16, chatInputBarHeight + 16),
-                        offset: $localTerminalPreviewOffset,
-                        isLiquidGlassEnabled: isLiquidGlassEnabled,
-                        onOpenTerminal: { jobID in
-                            localTerminalInitialJobID = jobID
-                            navigationDestination = .localTerminal
-                        },
-                        onOpenBrowser: {
-                            navigationDestination = .browser
-                        }
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(25)
-                }
-
                 VStack {
                     Spacer()
                     TTSFloatingController()
-                }
-
-                if let notice = viewModel.memoryRetryStoppedNoticeMessage {
-                    VStack {
-                        memoryRetryStoppedNoticeBanner(text: notice)
-                            .padding(.top, 12)
-                            .padding(.horizontal, 12)
-                        Spacer()
-                    }
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(30)
                 }
 
                 if let notice = chatTransientNotice {
@@ -853,6 +731,5 @@ extension ChatView {
             }
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
-            .animation(.easeInOut(duration: 0.2), value: viewModel.memoryRetryStoppedNoticeMessage)
         }
     }

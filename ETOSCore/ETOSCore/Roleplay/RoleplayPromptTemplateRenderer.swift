@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 执行 Prompt Template EJS，并在世界书扫描前处理 @@preprocessing。
+// 执行角色 Prompt Template EJS。
 // ============================================================================
 
 import Foundation
@@ -19,95 +19,29 @@ import Darwin
 
 enum RoleplayPromptTemplateRenderer {
     private struct RenderedEnvelope: Decodable {
-        struct Activation: Decodable {
-            var worldbook: String
-            var title: String
-            var force: Bool
-        }
-
         var outputs: [String]
-        var primaryKeys: [[String]]
-        var secondaryKeys: [[String]]
-        var activations: [Activation]
         var scopes: [String: [String: JSONValue]]
         var initial: [String: JSONValue]
         var messageScopes: [String: [String: JSONValue]]
         var errors: [String]
     }
 
-    private static let knownDecorators: Set<String> = [
-        "@@activate", "@@dont_activate", "@@message_formatting", "@@generate_before",
-        "@@generate_after", "@@render_before", "@@render_after", "@@dont_preload",
-        "@@initial_variables", "@@always_enabled", "@@only_preload", "@@iframe",
-        "@@preprocessing"
-    ]
-    private static let activationMetadataKey = "__etos_prompt_template_activated"
     private static let logger = Logger(
         subsystem: "com.ETOS.LLM.Studio",
         category: "RoleplayPromptTemplate"
     )
 
-    static func preprocessWorldbooks(
-        _ worldbooks: [Worldbook],
-        messages: [ChatMessage],
-        regexRules: [RoleplayRegexRule] = [],
-        macroContext: inout RoleplayMacroContext
-    ) async -> [Worldbook] {
-        var updated = worldbooks
-        var locations: [(bookIndex: Int, entryIndex: Int)] = []
-        for bookIndex in updated.indices {
-            for entryIndex in updated[bookIndex].entries.indices {
-                guard isPreprocessingEntry(updated[bookIndex].entries[entryIndex]) else { continue }
-                locations.append((bookIndex, entryIndex))
-            }
-        }
-        guard !locations.isEmpty else { return updated }
-
-        let entries = locations.map { updated[$0.bookIndex].entries[$0.entryIndex] }
-        guard let envelope = await render(
-            entries.map { parsedDecorators(in: $0.content).content },
-            worldbooks: updated,
-            messages: messages,
-            regexRules: regexRules,
-            macroContext: macroContext,
-            currentEntries: entries,
-            currentWorldbookNames: locations.map { updated[$0.bookIndex].name }
-        ) else {
-            return updated
-        }
-
-        for (offset, location) in locations.enumerated() where envelope.outputs.indices.contains(offset) {
-            updated[location.bookIndex].entries[location.entryIndex].content = envelope.outputs[offset]
-            if envelope.primaryKeys.indices.contains(offset) {
-                updated[location.bookIndex].entries[location.entryIndex].keys = envelope.primaryKeys[offset]
-            }
-            if envelope.secondaryKeys.indices.contains(offset) {
-                updated[location.bookIndex].entries[location.entryIndex].secondaryKeys = envelope.secondaryKeys[offset]
-            }
-        }
-        apply(envelope, to: &macroContext)
-        apply(envelope.activations, to: &updated)
-        log(envelope.errors)
-        return updated
-    }
-
     static func renderMessages(
         _ messagesToRender: [ChatMessage],
-        worldbooks: [Worldbook],
         chatHistory: [ChatMessage],
-        regexRules: [RoleplayRegexRule] = [],
         macroContext: inout RoleplayMacroContext
     ) async -> [ChatMessage] {
         let indexes = messagesToRender.indices.filter { messagesToRender[$0].content.contains("<%") }
         guard !indexes.isEmpty else { return messagesToRender }
         guard let envelope = await render(
             indexes.map { messagesToRender[$0].content },
-            worldbooks: worldbooks,
             messages: chatHistory,
-            regexRules: regexRules,
-            macroContext: macroContext,
-            currentEntries: Array(repeating: nil, count: indexes.count),
-            currentWorldbookNames: Array(repeating: nil, count: indexes.count)
+            macroContext: macroContext
         ) else {
             return messagesToRender
         }
@@ -119,108 +53,6 @@ enum RoleplayPromptTemplateRenderer {
         apply(envelope, to: &macroContext)
         log(envelope.errors)
         return rendered
-    }
-
-    static func renderWorldbookEvaluation(
-        _ evaluation: WorldbookEvaluationResult,
-        worldbooks: [Worldbook],
-        chatHistory: [ChatMessage],
-        regexRules: [RoleplayRegexRule] = [],
-        macroContext: inout RoleplayMacroContext
-    ) async -> WorldbookEvaluationResult {
-        var rendered = evaluation
-        rendered.before = await renderInjections(
-            rendered.before,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        rendered.after = await renderInjections(
-            rendered.after,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        rendered.anTop = await renderInjections(
-            rendered.anTop,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        rendered.anBottom = await renderInjections(
-            rendered.anBottom,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        rendered.emTop = await renderInjections(
-            rendered.emTop,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        rendered.emBottom = await renderInjections(
-            rendered.emBottom,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        for index in rendered.atDepth.indices {
-            rendered.atDepth[index].items = await renderInjections(
-                rendered.atDepth[index].items,
-                worldbooks: worldbooks,
-                chatHistory: chatHistory,
-                regexRules: regexRules,
-                macroContext: &macroContext
-            )
-        }
-        rendered.outlet = await renderInjections(
-            rendered.outlet,
-            worldbooks: worldbooks,
-            chatHistory: chatHistory,
-            regexRules: regexRules,
-            macroContext: &macroContext
-        )
-        return rendered
-    }
-
-    private static func renderInjections(
-        _ injections: [WorldbookInjection],
-        worldbooks: [Worldbook],
-        chatHistory: [ChatMessage],
-        regexRules: [RoleplayRegexRule],
-        macroContext: inout RoleplayMacroContext
-    ) async -> [WorldbookInjection] {
-        let indexes = injections.indices.filter { injections[$0].content.contains("<%") }
-        guard !indexes.isEmpty else { return injections }
-        let entries = indexes.map { index in
-            let injection = injections[index]
-            return worldbooks.first(where: { $0.id == injection.worldbookID })?
-                .entries.first(where: { $0.id == injection.entryID })
-        }
-        guard let envelope = await render(
-            indexes.map { injections[$0].content },
-            worldbooks: worldbooks,
-            messages: chatHistory,
-            regexRules: regexRules,
-            macroContext: macroContext,
-            currentEntries: entries,
-            currentWorldbookNames: indexes.map { injections[$0].worldbookName }
-        ) else { return injections }
-
-        var updated = injections
-        for (offset, index) in indexes.enumerated() where envelope.outputs.indices.contains(offset) {
-            updated[index].content = envelope.outputs[offset]
-        }
-        apply(envelope, to: &macroContext)
-        log(envelope.errors)
-        return updated
     }
 
     private static func apply(
@@ -245,95 +77,16 @@ enum RoleplayPromptTemplateRenderer {
         macroContext.variables = snapshot
     }
 
-    private static func isPreprocessingEntry(_ entry: WorldbookEntry) -> Bool {
-        guard entry.isEnabled else { return false }
-        if entry.comment.contains("[Preprocessing]") { return true }
-        return parsedDecorators(in: entry.content).decorators.contains { decorator in
-            decorator.split(separator: " ", maxSplits: 1).first.map(String.init) == "@@preprocessing"
-        }
-    }
-
-    private static func parsedDecorators(in content: String) -> (decorators: [String], content: String) {
-        guard content.hasPrefix("@@") else { return ([], content) }
-        let lines = content.components(separatedBy: .newlines)
-        var decorators: [String] = []
-        var contentStart = 0
-        var fallbacked = false
-        for (index, line) in lines.enumerated() {
-            guard line.hasPrefix("@@") else {
-                contentStart = index
-                break
-            }
-            if line.hasPrefix("@@@"), !fallbacked {
-                contentStart = index
-                break
-            }
-            let normalized = line.hasPrefix("@@@") ? String(line.dropFirst()) : line
-            let base = normalized.split(separator: " ", maxSplits: 1).first.map(String.init) ?? normalized
-            if knownDecorators.contains(base) {
-                decorators.append(normalized)
-                fallbacked = false
-                contentStart = index + 1
-            } else {
-                fallbacked = true
-            }
-        }
-        return (decorators, lines.dropFirst(contentStart).joined(separator: "\n"))
-    }
-
-    private static func apply(
-        _ activations: [RenderedEnvelope.Activation],
-        to worldbooks: inout [Worldbook]
-    ) {
-        for activation in activations {
-            guard let bookIndex = worldbooks.firstIndex(where: { $0.name == activation.worldbook }),
-                  let entryIndex = worldbooks[bookIndex].entries.firstIndex(where: { entry in
-                      entry.comment == activation.title || entry.uid.map(String.init) == activation.title
-                  }) else { continue }
-
-            var entry = worldbooks[bookIndex].entries[entryIndex]
-            entry.isEnabled = true
-            entry.metadata[activationMetadataKey] = .bool(true)
-            if activation.force {
-                entry.constant = true
-                entry.cooldown = 0
-                entry.delay = 0
-                entry.delayUntilRecursion = false
-                entry.group = ""
-                entry.metadata["vectorized"] = .bool(false)
-                entry.metadata["ignoreBudget"] = .bool(true)
-                entry.metadata["delayUntilRecursion"] = .bool(false)
-                entry.metadata["delay_until_recursion"] = .bool(false)
-                if case .dictionary(var extensions) = entry.metadata["extensions"] {
-                    extensions["vectorized"] = .bool(false)
-                    extensions["delay_until_recursion"] = .bool(false)
-                    entry.metadata["extensions"] = .dictionary(extensions)
-                }
-                entry.metadata["triggers"] = .array([])
-                entry.content = entry.content.replacingOccurrences(of: "@@dont_activate", with: "")
-            }
-            worldbooks[bookIndex].entries[entryIndex] = entry
-        }
-    }
-
     private static func render(
         _ templates: [String],
-        worldbooks: [Worldbook],
         messages: [ChatMessage],
-        regexRules: [RoleplayRegexRule],
-        macroContext: RoleplayMacroContext,
-        currentEntries: [WorldbookEntry?],
-        currentWorldbookNames: [String?]
+        macroContext: RoleplayMacroContext
     ) async -> RenderedEnvelope? {
         let script: String? = await Task.detached(priority: .userInitiated) {
             let payload = makePayload(
                 templates: templates,
-                worldbooks: worldbooks,
                 messages: messages,
-                regexRules: regexRules,
-                macroContext: macroContext,
-                currentEntries: currentEntries,
-                currentWorldbookNames: currentWorldbookNames
+                macroContext: macroContext
             )
             guard let data = try? JSONEncoder().encode(payload),
                   let payloadJSON = String(data: data, encoding: .utf8) else { return nil }
@@ -354,23 +107,9 @@ enum RoleplayPromptTemplateRenderer {
 
     private static func makePayload(
         templates: [String],
-        worldbooks: [Worldbook],
         messages: [ChatMessage],
-        regexRules: [RoleplayRegexRule],
-        macroContext: RoleplayMacroContext,
-        currentEntries: [WorldbookEntry?],
-        currentWorldbookNames: [String?]
+        macroContext: RoleplayMacroContext
     ) -> JSONValue {
-        let entries = worldbooks.flatMap { book in
-            sortedPromptTemplateEntries(book.entries).map {
-                payloadEntry(
-                    $0,
-                    worldbook: book.name,
-                    regexRules: regexRules,
-                    macroContext: macroContext
-                )
-            }
-        }
         let chat = messages.enumerated().map { index, message -> JSONValue in
             let versions = message.getAllVersions().indices.map { version -> JSONValue in
                 let key = RoleplayVariableSnapshot.messageVersionKey(messageID: message.id, versionIndex: version)
@@ -394,34 +133,11 @@ enum RoleplayPromptTemplateRenderer {
                 "variables": .array(versions)
             ])
         }
-        let current = templates.indices.map { index -> JSONValue in
-            guard currentEntries.indices.contains(index), let entry = currentEntries[index] else { return .null }
-            return payloadEntry(
-                entry,
-                worldbook: currentWorldbookNames.indices.contains(index) ? currentWorldbookNames[index] ?? "" : "",
-                regexRules: regexRules,
-                macroContext: macroContext
-            )
-        }
         let currentMessageIndex = max(0, messages.count - 1)
-        let processedTemplates = templates.enumerated().map { index, template -> JSONValue in
-            let resolved = RoleplayMacroResolver.resolve(template, context: macroContext)
-            guard currentEntries.indices.contains(index), currentEntries[index] != nil else {
-                return .string(resolved)
-            }
-            return .string(RoleplayRegexTransformer.apply(
-                resolved,
-                rules: regexRules,
-                context: .init(placement: .worldInfo, macroContext: macroContext)
-            ))
-        }
         return .dictionary([
-            "templates": .array(processedTemplates),
-            "current": .array(current),
-            "entries": .array(entries),
+            "templates": .array(templates.map { .string(RoleplayMacroResolver.resolve($0, context: macroContext)) }),
             "chat": .array(chat),
             "currentMessageIndex": .int(currentMessageIndex),
-            "defaultWorldbook": .string(worldbooks.first?.name ?? ""),
             "initial": .dictionary(macroContext.variables.promptTemplateInitialVariables),
             "scopes": .dictionary([
                 "global": .dictionary(macroContext.variables.global),
@@ -442,59 +158,6 @@ enum RoleplayPromptTemplateRenderer {
         ])
     }
 
-    private static func sortedPromptTemplateEntries(_ entries: [WorldbookEntry]) -> [WorldbookEntry] {
-        let topDepth = entries.filter { $0.position == .atDepth }.compactMap(\.depth).max() ?? 4
-        func depth(_ entry: WorldbookEntry) -> Int {
-            switch entry.position {
-            case .before: return topDepth + 4
-            case .after: return topDepth + 3
-            case .emTop: return topDepth + 2
-            case .emBottom, .anTop: return topDepth + 1
-            case .anBottom: return topDepth - 1
-            case .atDepth, .outlet: return entry.depth ?? 4
-            }
-        }
-        return entries.sorted { lhs, rhs in
-            if depth(lhs) != depth(rhs) { return depth(lhs) > depth(rhs) }
-            if lhs.order != rhs.order { return lhs.order < rhs.order }
-            return (lhs.uid ?? 0) > (rhs.uid ?? 0)
-        }
-    }
-
-    private static func payloadEntry(
-        _ entry: WorldbookEntry,
-        worldbook: String,
-        regexRules: [RoleplayRegexRule],
-        macroContext: RoleplayMacroContext
-    ) -> JSONValue {
-        var fields: [String: JSONValue]
-        if let data = try? JSONEncoder().encode(entry),
-           let decoded = try? JSONDecoder().decode(JSONValue.self, from: data),
-           case .dictionary(let value) = decoded {
-            fields = value
-        } else {
-            fields = [:]
-        }
-        let parsed = parsedDecorators(in: entry.content)
-        fields["worldbook"] = .string(worldbook)
-        fields["world"] = .string(worldbook)
-        fields["uid"] = entry.uid.map(JSONValue.int) ?? .null
-        fields["comment"] = .string(entry.comment)
-        fields["disable"] = .bool(!entry.isEnabled)
-        fields["decorators"] = .array(parsed.decorators.map(JSONValue.string))
-        func worldInfoText(_ source: String) -> String {
-            RoleplayRegexTransformer.apply(
-                RoleplayMacroResolver.resolve(source, context: macroContext),
-                rules: regexRules,
-                context: .init(placement: .worldInfo, macroContext: macroContext)
-            )
-        }
-        fields["content"] = .string(worldInfoText(parsed.content))
-        fields["key"] = .array(entry.keys.map { .string(worldInfoText($0)) })
-        fields["keysecondary"] = .array(entry.secondaryKeys.map { .string(worldInfoText($0)) })
-        return .dictionary(fields)
-    }
-
     private static func log(_ errors: [String]) {
         for error in errors where !error.isEmpty {
             logger.error("提示词模板条目执行失败: \(error, privacy: .public)")
@@ -509,7 +172,6 @@ enum RoleplayPromptTemplateRenderer {
           const scopes = clone(payload.scopes || {});
           const initial = clone(payload.initial || {});
           const chat = clone(payload.chat || []);
-          const activations = new Map();
           const errors = [];
           let traceID = 0;
           let nesting = 0;
@@ -811,85 +473,6 @@ enum RoleplayPromptTemplateRenderer {
             );
           };
 
-          const entryMatches = (entry, worldbook, title) => {
-            const worldMatches = !worldbook || (worldbook instanceof RegExp ? worldbook.test(entry.worldbook) : entry.worldbook === String(worldbook));
-            if (!worldMatches) return false;
-            if (title instanceof RegExp) return title.test(entry.comment);
-            return entry.comment === String(title) || String(entry.uid) === String(title);
-          };
-          const findEntry = (worldbook, title, currentEntry) => {
-            const preferred = worldbook || currentEntry?.worldbook || payload.defaultWorldbook;
-            return payload.entries.find(entry => entryMatches(entry, preferred, title)) || null;
-          };
-          const entriesFor = name => clone(payload.entries.filter(entry => !name || entry.worldbook === String(name)));
-          const parseRegex = source => {
-            const text = String(source || '');
-            if (!text.startsWith('/')) return null;
-            const closing = text.lastIndexOf('/');
-            if (closing <= 0) return null;
-            try { return new RegExp(text.slice(1, closing), text.slice(closing + 1)); }
-            catch (_) { return null; }
-          };
-          const keywordMatches = (entry, haystack, keyword) => {
-            const regex = parseRegex(keyword);
-            if (regex) return regex.test(haystack);
-            const caseSensitive = Boolean(entry.caseSensitive ?? entry.case_sensitive ?? false);
-            const wholeWords = Boolean(entry.matchWholeWords ?? entry.match_whole_words ?? false);
-            const source = caseSensitive ? String(haystack) : String(haystack).toLowerCase();
-            const needle = caseSensitive ? String(keyword) : String(keyword).toLowerCase();
-            if (!wholeWords || /\s/.test(needle)) return source.includes(needle);
-            const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            return new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`).test(source);
-          };
-          const entryScore = (entry, trigger) => [...(entry.key || []), ...(entry.keysecondary || [])]
-            .filter(keyword => keywordMatches(entry, trigger, keyword)).length;
-          const selectActivatedEntries = (rawEntries, keywords, condition = {}) => {
-            const trigger = (Array.isArray(keywords) ? keywords : [keywords]).join('\n\n');
-            const activated = [];
-            for (const entry of rawEntries || []) {
-              const vectorized = Boolean(entry.vectorized ?? entry.metadata?.vectorized ?? entry.metadata?.extensions?.vectorized);
-              if (condition.constant != null && Boolean(entry.constant) !== Boolean(condition.constant)) continue;
-              if (condition.disabled != null && Boolean(entry.disable) !== Boolean(condition.disabled)) continue;
-              if (condition.vectorized != null && vectorized !== Boolean(condition.vectorized)) continue;
-              if (entry.useProbability && Number(entry.probability ?? 100) < Math.floor(Math.random() * 100) + 1) continue;
-              if (entry.constant || (entry.decorators || []).some(value => value.startsWith('@@activate'))) { activated.push(entry); continue; }
-              if ((entry.decorators || []).some(value => value.startsWith('@@dont_activate') || value.startsWith('@@only_preload'))) continue;
-              const primary = (entry.key || []).some(keyword => keywordMatches(entry, trigger, keyword));
-              if (!primary) continue;
-              const secondary = entry.keysecondary || [];
-              if (!secondary.length) { activated.push(entry); continue; }
-              const matches = secondary.map(keyword => keywordMatches(entry, trigger, keyword));
-              const logic = String(entry.selectiveLogic || entry.selective_logic || 'AND_ANY').toUpperCase();
-              if ((logic === 'AND_ANY' && matches.some(Boolean)) ||
-                  (logic === 'AND_ALL' && matches.every(Boolean)) ||
-                  (logic === 'NOT_ANY' && !matches.some(Boolean)) ||
-                  (logic === 'NOT_ALL' && !matches.every(Boolean))) activated.push(entry);
-            }
-            const ungrouped = activated.filter(entry => !String(entry.group || '').trim());
-            const grouped = Object.groupBy
-              ? Object.groupBy(activated.filter(entry => String(entry.group || '').trim()), entry => String(entry.group).trim())
-              : activated.filter(entry => String(entry.group || '').trim()).reduce((result, entry) => {
-                  const name = String(entry.group).trim();
-                  (result[name] ||= []).push(entry);
-                  return result;
-                }, {});
-            for (const entries of Object.values(grouped || {})) {
-              if (entries.length === 1) { ungrouped.push(entries[0]); continue; }
-              const prioritized = entries.filter(entry => entry.groupOverride);
-              if (prioritized.length) {
-                ungrouped.push(prioritized.sort((lhs, rhs) => Number(lhs.order || 0) - Number(rhs.order || 0))[0]);
-                continue;
-              }
-              if (entries.some(entry => entry.useGroupScoring)) {
-                ungrouped.push(entries.sort((lhs, rhs) => entryScore(rhs, trigger) - entryScore(lhs, trigger))[0]);
-                continue;
-              }
-              const total = entries.reduce((sum, entry) => sum + Number(entry.groupWeight || 1), 0);
-              let roll = Math.random() * total;
-              ungrouped.push(entries.find(entry => (roll -= Number(entry.groupWeight || 1)) <= 0) || entries[0]);
-            }
-            return clone(ungrouped);
-          };
           const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
           const normalizeTemplate = template => String(template ?? '')
             .replace(/[ \t]*<%_/g, '<%')
@@ -912,7 +495,7 @@ enum RoleplayPromptTemplateRenderer {
             literal(template.slice(cursor));
             return new AsyncFunction('__ctx', `let __out = ''; const __string = value => value == null ? '' : String(value); const print = (...args) => { __out += args.join(' '); }; with (__ctx) { ${body} } return __out;`);
           };
-          const renderOne = async (template, currentEntry = null, overrides = {}) => {
+          const renderOne = async (template, overrides = {}) => {
             if (!String(template ?? '').includes('<%')) return String(template ?? '');
             if (nesting >= 20) throw new Error('Prompt Template nesting limit exceeded');
             nesting += 1;
@@ -920,7 +503,6 @@ enum RoleplayPromptTemplateRenderer {
               ...payload.names,
               ...overrides,
               chat,
-              world_info: currentEntry,
               get variables() { return cacheVariables; },
               getvar,
               setvar,
@@ -956,13 +538,6 @@ enum RoleplayPromptTemplateRenderer {
               getChatMessage,
               getChatMessages,
               matchChatMessages,
-              getWorldInfoData: entriesFor,
-              getWorldInfoComments: name => entriesFor(name).map(entry => entry.comment),
-              getEnabledLoreBooks: () => [...new Set(payload.entries.map(entry => entry.worldbook))],
-              getEnabledWorldInfoEntries: () => clone(payload.entries),
-              selectActivatedEntries,
-              getWorldInfoActivatedData: (name, keywords, condition = {}) => selectActivatedEntries(entriesFor(name), keywords, condition),
-              loadWorldInfoJSON: name => ({ entries: Object.fromEntries(entriesFor(name).map(entry => [String(entry.uid), entry])) }),
               toastr: {
                 error: message => { errors.push(String(message)); },
                 warning: message => { errors.push(String(message)); },
@@ -981,53 +556,16 @@ enum RoleplayPromptTemplateRenderer {
                 random: (min, max) => Math.floor(Math.random() * (Number(max) - Number(min) + 1)) + Number(min)
               }
             };
-            context.getwi = context.getWorldInfo = async (first, second = {}, data = {}) => {
-              const secondIsData = second == null || (typeof second === 'object' && !(second instanceof RegExp));
-              const worldbook = secondIsData ? (currentEntry?.worldbook || payload.defaultWorldbook) : first;
-              const title = secondIsData ? first : second;
-              const childData = secondIsData ? (second || {}) : (data || {});
-              const entry = findEntry(worldbook, title, currentEntry);
-              return entry ? renderOne(entry.content, entry, childData) : '';
-            };
-            context.activewi = context.activateWorldInfo = async (first, second = undefined, third = false) => {
-              const shorthand = typeof second === 'boolean' || second === undefined;
-              const worldbook = shorthand ? (currentEntry?.worldbook || payload.defaultWorldbook) : first;
-              const title = shorthand ? first : second;
-              const force = Boolean(shorthand ? second : third);
-              const entry = findEntry(worldbook, title, currentEntry);
-              if (!entry) return null;
-              activations.set(`${entry.worldbook}.${entry.uid}`, {
-                worldbook: entry.worldbook,
-                title: entry.uid == null ? entry.comment : String(entry.uid),
-                force
-              });
-              return clone(entry);
-            };
-            context.activateWorldInfoByKeywords = async (keywords, condition = {}) => {
-              const entries = selectActivatedEntries(payload.entries, keywords, condition);
-              for (const entry of entries) {
-                await context.activewi(entry.worldbook, entry.uid, Boolean(condition.force));
-              }
-              return entries;
-            };
-            context.evalTemplate = async (content, data = {}) => renderOne(content, currentEntry, data);
+            context.evalTemplate = async (content, data = {}) => renderOne(content, data);
             try { return await compile(template)(context); }
             finally { nesting -= 1; }
           };
 
           const outputs = [];
-          const primaryKeys = [];
-          const secondaryKeys = [];
-          for (let index = 0; index < payload.templates.length; index += 1) {
-            const currentEntry = payload.current[index] || null;
-            try {
-              outputs.push(await renderOne(payload.templates[index], currentEntry));
-              primaryKeys.push(currentEntry ? await Promise.all((currentEntry.key || []).map(key => renderOne(key, currentEntry))) : []);
-              secondaryKeys.push(currentEntry ? await Promise.all((currentEntry.keysecondary || []).map(key => renderOne(key, currentEntry))) : []);
-            } catch (error) {
-              outputs.push(payload.templates[index]);
-              primaryKeys.push(currentEntry?.key || []);
-              secondaryKeys.push(currentEntry?.keysecondary || []);
+          for (const template of payload.templates) {
+            try { outputs.push(await renderOne(template)); }
+            catch (error) {
+              outputs.push(template);
               errors.push(error?.stack || error?.message || String(error));
             }
           }
@@ -1039,9 +577,6 @@ enum RoleplayPromptTemplateRenderer {
           }
           return JSON.stringify({
             outputs,
-            primaryKeys,
-            secondaryKeys,
-            activations: [...activations.values()],
             scopes,
             initial,
             messageScopes,

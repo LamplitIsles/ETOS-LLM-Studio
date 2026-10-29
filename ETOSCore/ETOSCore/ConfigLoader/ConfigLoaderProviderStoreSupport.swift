@@ -220,8 +220,7 @@ extension ConfigLoader {
     static func markToolCapabilityMigrated() {
         _ = AppConfigStore.persistSynchronously(
             .bool(true),
-            for: .configLoaderToolCapabilityMigrated,
-            quickSync: false
+            for: .configLoaderToolCapabilityMigrated
         )
     }
 
@@ -320,7 +319,6 @@ extension ConfigLoader {
         }
         cleanupLegacyProviderFiles()
         logger.info("已保存提供商 \(persistedProvider.name) 到 SQLite。")
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .providerConfigurationDidChange, object: nil)
     }
 
@@ -376,7 +374,6 @@ extension ConfigLoader {
         }
 
         cleanupLegacyProviderFiles()
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         NotificationCenter.default.post(name: .providerConfigurationDidChange, object: nil)
         return true
     }
@@ -391,7 +388,6 @@ extension ConfigLoader {
         }
         cleanupLegacyProviderFiles()
         logger.info("已从 SQLite 删除提供商 \(provider.name)。")
-        WatchDatabaseSyncService.markDatabaseChanged(.config)
         _ = ProviderCredentialStore.shared.deleteAPIKeys(for: provider.id)
         logger.info("  - 删除成功。")
         NotificationCenter.default.post(name: .providerConfigurationDidChange, object: nil)

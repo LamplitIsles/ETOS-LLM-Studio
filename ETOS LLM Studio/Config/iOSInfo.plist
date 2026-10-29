@@ -10,18 +10,6 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>GGUF Model</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.ericterminal.els.gguf</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
 			<string>ETOS Snapshot Backup</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
@@ -30,18 +18,6 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.ericterminal.els.snapshot-backup</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>ETOS Memory Archive</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.ericterminal.els.memory-archive</string>
 			</array>
 		</dict>
 		<dict>
@@ -140,47 +116,6 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>elsbackup</string>
-				</array>
-				<key>public.mime-type</key>
-				<string>application/octet-stream</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>ETOS Memory Archive</string>
-			<key>UTTypeIdentifier</key>
-			<string>com.ericterminal.els.memory-archive</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>etosmemory</string>
-				</array>
-				<key>public.mime-type</key>
-				<string>application/vnd.etos.memory+zip</string>
-			</dict>
-		</dict>
-	</array>
-	<key>UTImportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>GGUF Model</string>
-			<key>UTTypeIdentifier</key>
-			<string>com.ericterminal.els.gguf</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>gguf</string>
 				</array>
 				<key>public.mime-type</key>
 				<string>application/octet-stream</string>

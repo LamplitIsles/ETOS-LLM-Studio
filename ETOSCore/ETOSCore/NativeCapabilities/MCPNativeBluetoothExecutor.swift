@@ -12,8 +12,6 @@ import Foundation
 #endif
 #if os(iOS) && canImport(UIKit)
 import UIKit
-#elseif canImport(WatchKit)
-import WatchKit
 #endif
 
 #if canImport(CoreBluetooth)
@@ -41,14 +39,6 @@ final class MCPNativeBluetoothExecutor: NSObject, @preconcurrency CBCentralManag
         #if os(iOS) && canImport(UIKit)
         lifecycleObservers.append(center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.cleanupAll() }
-        })
-        #elseif canImport(WatchKit)
-        lifecycleObservers.append(center.addObserver(
-            forName: WKApplication.didEnterBackgroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in

@@ -13,7 +13,6 @@ public enum ThirdPartyImportSource: String, CaseIterable, Codable, Sendable {
     case cherryStudio
     case rikkahub
     case kelivo
-    case chatgpt
     case chatbox
     case openMinis
 
@@ -23,7 +22,6 @@ public enum ThirdPartyImportSource: String, CaseIterable, Codable, Sendable {
         case .cherryStudio: return "Cherry Studio"
         case .rikkahub: return "RikkaHub"
         case .kelivo: return "Kelivo"
-        case .chatgpt: return "ChatGPT"
         case .chatbox: return "ChatBox"
         case .openMinis: return "OpenMinis"
         }
@@ -39,8 +37,6 @@ public enum ThirdPartyImportSource: String, CaseIterable, Codable, Sendable {
             return ["json", "zip"]
         case .kelivo:
             return ["json", "zip"]
-        case .chatgpt:
-            return ["json"]
         case .chatbox:
             return ["json"]
         case .openMinis:
@@ -55,32 +51,22 @@ public struct ThirdPartyImportPreparedResult {
     public var warnings: [String]
     public var recognizedSkillNames: [String]
     public var containsSensitiveCredentials: Bool
-    public var parsedMessagesCount: Int
-    public var attachmentPlaceholderCount: Int
-    public var degradedItemCount: Int
 
     public init(
         source: ThirdPartyImportSource,
         package: SyncPackage,
         warnings: [String] = [],
         recognizedSkillNames: [String] = [],
-        containsSensitiveCredentials: Bool = false,
-        parsedMessagesCount: Int = 0,
-        attachmentPlaceholderCount: Int = 0,
-        degradedItemCount: Int = 0
+        containsSensitiveCredentials: Bool = false
     ) {
         self.source = source
         self.package = package
         self.warnings = warnings
         self.recognizedSkillNames = recognizedSkillNames
         self.containsSensitiveCredentials = containsSensitiveCredentials
-        self.parsedMessagesCount = parsedMessagesCount
-        self.attachmentPlaceholderCount = attachmentPlaceholderCount
-        self.degradedItemCount = degradedItemCount
     }
 
     public var parsedProvidersCount: Int { package.providers.count }
-    public var parsedSessionsCount: Int { package.sessions.count }
     public var parsedMCPServersCount: Int { package.mcpServers.count }
     public var parsedSkillsCount: Int { package.skills.count }
 }
@@ -88,20 +74,17 @@ public struct ThirdPartyImportPreparedResult {
 public struct ThirdPartyImportReport {
     public var source: ThirdPartyImportSource
     public var parsedProvidersCount: Int
-    public var parsedSessionsCount: Int
     public var summary: SyncMergeSummary
     public var warnings: [String]
 
     public init(
         source: ThirdPartyImportSource,
         parsedProvidersCount: Int,
-        parsedSessionsCount: Int,
         summary: SyncMergeSummary,
         warnings: [String] = []
     ) {
         self.source = source
         self.parsedProvidersCount = parsedProvidersCount
-        self.parsedSessionsCount = parsedSessionsCount
         self.summary = summary
         self.warnings = warnings
     }
@@ -122,7 +105,7 @@ public enum ThirdPartyImportError: LocalizedError {
         case .unsupportedBackupFormat(let reason):
             return reason
         case .noImportableContent:
-            return NSLocalizedString("未解析到可导入的提供商或会话。", comment: "")
+            return NSLocalizedString("未解析到可导入的内容。", comment: "")
         }
     }
 }
@@ -138,18 +121,15 @@ public enum ThirdPartyImportService {
 
         let prepared = try fileURLs.map { try prepareImport(source: source, fileURL: $0) }
         var providerIDs = Set<UUID>()
-        var sessionIDs = Set<UUID>()
         var mcpKeys = Set<String>()
         var skillNames = Set<String>()
         let providers = prepared.flatMap(\.package.providers).filter { providerIDs.insert($0.id).inserted }
-        let sessions = prepared.flatMap(\.package.sessions).filter { sessionIDs.insert($0.session.id).inserted }
         let mcpServers = prepared.flatMap(\.package.mcpServers).filter { server in
             mcpKeys.insert("\(server.displayName.lowercased())|\(server.humanReadableEndpoint.lowercased())").inserted
         }
         let skills = prepared.flatMap(\.package.skills).filter { skillNames.insert($0.name).inserted }
         var options: SyncOptions = []
         if !providers.isEmpty { options.insert(.providers) }
-        if !sessions.isEmpty { options.insert(.sessions) }
         if !mcpServers.isEmpty { options.insert(.mcpServers) }
         if !skills.isEmpty { options.insert(.skills) }
         return ThirdPartyImportPreparedResult(
@@ -158,16 +138,12 @@ public enum ThirdPartyImportService {
                 options: options,
                 sourcePlatform: "OpenMinis",
                 providers: providers,
-                sessions: sessions,
                 mcpServers: mcpServers,
                 skills: skills
             ),
             warnings: Array(Set(prepared.flatMap(\.warnings))).sorted(),
             recognizedSkillNames: Array(Set(prepared.flatMap(\.recognizedSkillNames))).sorted(),
-            containsSensitiveCredentials: prepared.contains(where: \.containsSensitiveCredentials),
-            parsedMessagesCount: prepared.reduce(0) { $0 + $1.parsedMessagesCount },
-            attachmentPlaceholderCount: prepared.reduce(0) { $0 + $1.attachmentPlaceholderCount },
-            degradedItemCount: prepared.reduce(0) { $0 + $1.degradedItemCount }
+            containsSensitiveCredentials: prepared.contains(where: \.containsSensitiveCredentials)
         )
     }
 
@@ -189,14 +165,12 @@ public enum ThirdPartyImportService {
                 let parsed = try parseOpenMinis(fileURL: fileURL)
                 var options: SyncOptions = []
                 if !parsed.payload.providers.isEmpty { options.insert(.providers) }
-                if !parsed.payload.sessions.isEmpty { options.insert(.sessions) }
                 if !parsed.mcpServers.isEmpty { options.insert(.mcpServers) }
                 if !parsed.skills.isEmpty { options.insert(.skills) }
                 let package = SyncPackage(
                     options: options,
                     sourcePlatform: "OpenMinis",
                     providers: parsed.payload.providers,
-                    sessions: parsed.payload.sessions,
                     mcpServers: parsed.mcpServers,
                     skills: parsed.skills
                 )
@@ -205,10 +179,7 @@ public enum ThirdPartyImportService {
                     package: package,
                     warnings: parsed.payload.warnings,
                     recognizedSkillNames: parsed.recognizedSkillNames,
-                    containsSensitiveCredentials: parsed.containsSensitiveCredentials,
-                    parsedMessagesCount: parsed.messageCount,
-                    attachmentPlaceholderCount: parsed.attachmentPlaceholderCount,
-                    degradedItemCount: parsed.degradedItemCount
+                    containsSensitiveCredentials: parsed.containsSensitiveCredentials
                 )
             }
 
@@ -220,8 +191,6 @@ public enum ThirdPartyImportService {
                 parsed = try parseRikkaHub(fileURL: fileURL)
             case .kelivo:
                 parsed = try parseKelivo(fileURL: fileURL)
-            case .chatgpt:
-                parsed = try parseChatGPT(fileURL: fileURL)
             case .chatbox:
                 parsed = try parseChatBox(fileURL: fileURL)
             case .openMinis:
@@ -263,7 +232,6 @@ public enum ThirdPartyImportService {
         source: ThirdPartyImportSource,
         fileURL: URL,
         chatService: ChatService = .shared,
-        memoryManager: MemoryManager? = nil,
         userDefaults: UserDefaults = .standard
     ) async throws -> ThirdPartyImportReport {
         let prepared = try await prepareImportInBackground(source: source, fileURL: fileURL)
@@ -271,14 +239,12 @@ public enum ThirdPartyImportService {
             await SyncEngine.apply(
                 package: prepared.package,
                 chatService: chatService,
-                memoryManager: memoryManager,
                 userDefaults: userDefaults
             )
         }.value
         return ThirdPartyImportReport(
             source: source,
             parsedProvidersCount: prepared.parsedProvidersCount,
-            parsedSessionsCount: prepared.parsedSessionsCount,
             summary: summary,
             warnings: prepared.warnings
         )
@@ -288,7 +254,6 @@ public enum ThirdPartyImportService {
 extension ThirdPartyImportService {
     struct ParsedPayload {
         var providers: [Provider]
-        var sessions: [SyncedSession]
         var warnings: [String]
     }
 
@@ -297,16 +262,12 @@ extension ThirdPartyImportService {
         if !parsed.providers.isEmpty {
             options.insert(.providers)
         }
-        if !parsed.sessions.isEmpty {
-            options.insert(.sessions)
-        }
         guard !options.isEmpty else {
             throw ThirdPartyImportError.noImportableContent
         }
         return SyncPackage(
             options: options,
-            providers: parsed.providers,
-            sessions: parsed.sessions
+            providers: parsed.providers
         )
     }
 }
