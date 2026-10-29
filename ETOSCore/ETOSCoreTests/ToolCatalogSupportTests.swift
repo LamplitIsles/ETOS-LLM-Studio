@@ -17,13 +17,11 @@ struct ToolCatalogSupportTests {
     func testBuiltInToolStatesReflectIsolation() {
         let states = ToolCatalogSupport.builtInToolStates(
             enableWidgetTool: true,
-            enableAskUserInputTool: true,
             enableGetSystemTimeTool: true,
             isToolIsolated: true
         )
 
         #expect(states.first(where: { $0.kind == .widgetCard })?.isAvailableInCurrentSession == false)
-        #expect(states.first(where: { $0.kind == .askUserInput })?.isAvailableInCurrentSession == false)
         #expect(states.first(where: { $0.kind == .getSystemTime })?.isAvailableInCurrentSession == false)
     }
 
@@ -31,7 +29,6 @@ struct ToolCatalogSupportTests {
     func testBuiltInToolStatesReflectWidgetDisabled() {
         let states = ToolCatalogSupport.builtInToolStates(
             enableWidgetTool: false,
-            enableAskUserInputTool: true,
             enableGetSystemTimeTool: true,
             isToolIsolated: false
         )
@@ -42,26 +39,10 @@ struct ToolCatalogSupportTests {
         #expect(widgetTool?.statusReason == .widgetDisabled)
     }
 
-    @Test("询问用户选项工具关闭时应标记为未启用")
-    func testBuiltInToolStatesReflectAskUserInputDisabled() {
-        let states = ToolCatalogSupport.builtInToolStates(
-            enableWidgetTool: true,
-            enableAskUserInputTool: false,
-            enableGetSystemTimeTool: true,
-            isToolIsolated: false
-        )
-
-        let askTool = states.first(where: { $0.kind == .askUserInput })
-        #expect(askTool?.isConfiguredEnabled == false)
-        #expect(askTool?.isAvailableInCurrentSession == false)
-        #expect(askTool?.statusReason == .askUserInputDisabled)
-    }
-
     @Test("获取系统时间工具关闭时应标记为未启用")
     func testBuiltInToolStatesReflectGetSystemTimeDisabled() {
         let states = ToolCatalogSupport.builtInToolStates(
             enableWidgetTool: true,
-            enableAskUserInputTool: true,
             enableGetSystemTimeTool: false,
             isToolIsolated: false
         )
@@ -95,91 +76,5 @@ struct ToolCatalogSupportTests {
         let summary = ToolCatalogSupport.schemaSummary(for: schema, fieldLimit: 4)
 
         #expect(summary == "type=object · fields=count, query · required=query")
-    }
-
-    @Test("MCP 工具目录会保留已选服务器的完整工具清单")
-    func testMCPCatalogToolsIncludesDisabledAndDeniedTools() {
-        let selectedServerID = UUID()
-        let unselectedServerID = UUID()
-
-        let selectedServer = MCPServerConfiguration(
-            id: selectedServerID,
-            displayName: "已选服务器",
-            transport: .http(endpoint: URL(string: "https://example.com/selected")!, apiKey: nil, additionalHeaders: [:]),
-            isSelectedForChat: true,
-            disabledToolIds: ["beta"],
-            toolApprovalPolicies: ["gamma": .alwaysDeny]
-        )
-        let unselectedServer = MCPServerConfiguration(
-            id: unselectedServerID,
-            displayName: "未选服务器",
-            transport: .http(endpoint: URL(string: "https://example.com/unselected")!, apiKey: nil, additionalHeaders: [:]),
-            isSelectedForChat: false
-        )
-
-        let selectedStatus = MCPServerStatus(
-            connectionState: .ready,
-            tools: [
-                MCPToolDescription(toolId: "alpha", description: nil, inputSchema: nil, examples: nil),
-                MCPToolDescription(toolId: "beta", description: nil, inputSchema: nil, examples: nil),
-                MCPToolDescription(toolId: "gamma", description: nil, inputSchema: nil, examples: nil)
-            ],
-            isSelectedForChat: true
-        )
-        let unselectedStatus = MCPServerStatus(
-            connectionState: .ready,
-            tools: [
-                MCPToolDescription(toolId: "hidden", description: nil, inputSchema: nil, examples: nil)
-            ],
-            isSelectedForChat: false
-        )
-
-        let catalog = ToolCatalogSupport.mcpCatalogTools(
-            servers: [selectedServer, unselectedServer],
-            statuses: [
-                selectedServerID: selectedStatus,
-                unselectedServerID: unselectedStatus
-            ]
-        )
-
-        #expect(catalog.count == 3)
-        #expect(catalog.map(\.tool.toolId) == ["alpha", "beta", "gamma"])
-    }
-
-    @Test("MCP 工具目录排序会先按服务器再按工具名")
-    func testSortedMCPCatalogToolsSortsByServerThenTool() {
-        let alphaServer = MCPServerConfiguration(
-            displayName: "Alpha Server",
-            transport: .http(endpoint: URL(string: "https://example.com/alpha")!, apiKey: nil, additionalHeaders: [:]),
-            isSelectedForChat: true
-        )
-        let betaServer = MCPServerConfiguration(
-            displayName: "Beta Server",
-            transport: .http(endpoint: URL(string: "https://example.com/beta")!, apiKey: nil, additionalHeaders: [:]),
-            isSelectedForChat: true
-        )
-
-        let tools = [
-            MCPAvailableTool(
-                server: betaServer,
-                tool: MCPToolDescription(toolId: "zeta", description: nil, inputSchema: nil, examples: nil),
-                internalName: "mcp://beta/zeta"
-            ),
-            MCPAvailableTool(
-                server: alphaServer,
-                tool: MCPToolDescription(toolId: "gamma", description: nil, inputSchema: nil, examples: nil),
-                internalName: "mcp://alpha/gamma"
-            ),
-            MCPAvailableTool(
-                server: alphaServer,
-                tool: MCPToolDescription(toolId: "beta", description: nil, inputSchema: nil, examples: nil),
-                internalName: "mcp://alpha/beta"
-            )
-        ]
-
-        let sortedTools = ToolCatalogSupport.sortedMCPCatalogTools(tools)
-
-        #expect(sortedTools.map(\.server.displayName) == ["Alpha Server", "Alpha Server", "Beta Server"])
-        #expect(sortedTools.map(\.tool.toolId) == ["beta", "gamma", "zeta"])
     }
 }

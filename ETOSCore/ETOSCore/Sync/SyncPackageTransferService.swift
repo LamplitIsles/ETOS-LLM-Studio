@@ -266,17 +266,6 @@ public enum SyncPackageTransferService {
             })
         }
 
-        if package.options.contains(.mcpServers) {
-            descriptors.append(contentsOf: package.mcpServers.map {
-                SyncRecordDescriptor(
-                    type: .mcpServer,
-                    recordID: $0.id.uuidString,
-                    checksum: checksum(for: $0),
-                    updatedAt: generatedAt
-                )
-            })
-        }
-
         if package.options.contains(.audioFiles) {
             descriptors.append(contentsOf: package.audioFiles.map {
                 SyncRecordDescriptor(
@@ -466,7 +455,6 @@ public enum SyncPackageTransferService {
         }
         try writeArrayField("providers", package.providers, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("backgrounds", package.backgrounds, to: writer, encoder: encoder, firstField: &firstField)
-        try writeArrayField("mcpServers", package.mcpServers, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("audioFiles", package.audioFiles, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("imageFiles", package.imageFiles, to: writer, encoder: encoder, firstField: &firstField)
         try writeArrayField("skills", package.skills, to: writer, encoder: encoder, firstField: &firstField)

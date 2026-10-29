@@ -123,7 +123,7 @@ final class MacSpeechInputModel: ObservableObject {
                 // RunnableModel 相等只比较 ID，必须比较内部配置才能发现凭据和端点变化。
                 guard let current = service.activatedSpeechModels.first(where: { $0.id == model.id }),
                       current.provider == model.provider, current.model == model.model else {
-                    throw MCPConfigurationWriteError.changedExternally
+                    throw MacWorkspaceWriteError.changedExternally
                 }
                 let text = try await service.transcribeAudio(using: model, audioData: attachment.data,
                     fileName: attachment.fileName, mimeType: attachment.mimeType)

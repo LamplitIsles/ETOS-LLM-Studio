@@ -11,7 +11,7 @@ struct MacBuiltInToolsView: View {
         List {
             Section {
                 MacSettingsIntroCard(id: "built-in-tools", title: NSLocalizedString("使用说明", comment: ""),
-                                     details: NSLocalizedString("Mac 内置工具使用说明", comment: ""), documentID: "settings-tools", isActive: active)
+                                     details: NSLocalizedString("mac.builtin.tools.current.help", value: "Configure the webpage card and system time tools. Enabling a tool does not run it. Session isolation can make an enabled tool unavailable.", comment: "Built-in tools help"), documentID: "settings-tools", isActive: active)
                 Toggle(NSLocalizedString("仅显示已启用", comment: ""), isOn: $model.enabledOnly)
                 if !model.isLoaded || model.isWorking { ProgressView(NSLocalizedString("处理中", comment: "")) }
             }
@@ -105,7 +105,7 @@ private struct MacBuiltInToolDetail: View {
         Form {
             Section {
                 MacSettingsIntroCard(id: "built-in-\(kind.rawValue)", title: NSLocalizedString("使用说明", comment: ""),
-                                     details: NSLocalizedString("Mac 内置工具使用说明", comment: ""), documentID: "settings-tools", isActive: isActive && !model.isSuspended)
+                                     details: NSLocalizedString("mac.builtin.tools.current.help", value: "Configure the webpage card and system time tools. Enabling a tool does not run it. Session isolation can make an enabled tool unavailable.", comment: "Built-in tools help"), documentID: "settings-tools", isActive: isActive && !model.isSuspended)
                 if let row {
                     Text(row.description).font(.footnote).foregroundStyle(.secondary)
                     Text(row.status).font(.footnote).foregroundStyle(.secondary)

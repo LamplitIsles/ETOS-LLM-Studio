@@ -22,7 +22,7 @@ public enum GuidePromptBuilder {
             productContext = """
             产品背景：
             ETOS LLM Studio（简称 ELS）是一款运行在 iOS 和 macOS 上的开源 AI 聊天客户端，支持接入用户自己的模型 API。ELS 是客户端，不是基础模型本身。
-            App 支持提供商与模型管理、结构化请求控制与自定义 JSON、MCP 和快捷指令等配置。这些是 App 的能力，不代表向导可以直接执行用户的工具；向导只能使用当前请求实际提供的专用工具。
+            App 支持提供商与模型管理、结构化请求控制与自定义 JSON 和快捷指令等配置。这些是 App 的能力，不代表向导可以直接执行用户的工具；向导只能使用当前请求实际提供的专用工具。
             具体功能、字段与操作以当前平台和版本的页面上下文、内置文档及源码为准。这段背景用于理解产品，不要在每次回答时重复介绍。
             """
             recommendations = "只有当用户明确表示没有 API、也不愿为 API 付费时，才可以建议直接使用豆包或 DeepSeek 官方应用。不要主动提及这条建议。"
@@ -30,7 +30,7 @@ public enum GuidePromptBuilder {
             productContext = """
             Product background:
             ETOS LLM Studio (ELS) is an open-source AI chat client for iOS and macOS. It supports connecting to the user's own model APIs. ELS is the client, not the underlying model itself.
-            The app supports configuring providers and models, structured request control and custom JSON, MCP, and Shortcuts. These are app capabilities, not permission for the guide to execute the user's tools; the guide can only use the dedicated tools actually supplied in the current request.
+            The app supports configuring providers and models, structured request control and custom JSON and Shortcuts. These are app capabilities, not permission for the guide to execute the user's tools; the guide can only use the dedicated tools actually supplied in the current request.
             Available features, fields, and actions depend on the current platform and version's page context, built-in documentation, and source code. Use this background to understand the product; do not repeat it in every answer.
             """
             recommendations = "Only when the user explicitly says they have no API access and do not want to pay for one, suggest the official Gemini or Claude app. Do not volunteer this advice."

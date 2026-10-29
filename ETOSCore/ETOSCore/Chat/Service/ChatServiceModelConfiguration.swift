@@ -30,6 +30,28 @@ extension ChatService {
         activatedConversationModels.filter { $0.model.isChatModel }
     }
 
+    func resolvedChatCapableModel(storedIdentifier: String? = nil) -> RunnableModel? {
+        let candidates = activatedChatModels
+        guard !candidates.isEmpty else { return nil }
+        if let storedIdentifier, !storedIdentifier.isEmpty,
+           let matched = candidates.first(where: { $0.id == storedIdentifier }) {
+            return matched
+        }
+        if let selected = selectedModelSubject.value, selected.model.isChatModel {
+            return selected
+        }
+        return candidates.first
+    }
+
+    func isReasoningSummaryEnabled() -> Bool {
+        AppConfigStore.boolValue(for: .enableReasoningSummary)
+    }
+
+    func resolvedReasoningSummaryModel() -> RunnableModel? {
+        let identifier = Persistence.readAppConfigText(key: AppConfigKey.reasoningSummaryModelIdentifier.rawValue) ?? ""
+        return resolvedChatCapableModel(storedIdentifier: identifier)
+    }
+
     public var activatedSpeechModels: [RunnableModel] {
         // 专用模型设置决定转写用途，不要求模型携带额外能力标记。
 #if canImport(Speech) && canImport(AVFoundation)

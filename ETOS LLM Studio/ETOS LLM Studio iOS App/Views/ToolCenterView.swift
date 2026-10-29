@@ -13,7 +13,6 @@ struct ToolCenterView: View {
     @EnvironmentObject var viewModel: ChatViewModel
 
     @StateObject var appToolManager = AppToolManager.shared
-    @StateObject var mcpManager = MCPManager.shared
     @StateObject var shortcutManager = ShortcutToolManager.shared
     @StateObject var skillManager = SkillManager.shared
 
@@ -31,7 +30,6 @@ struct ToolCenterView: View {
     var builtInStates: [ToolCatalogBuiltInToolState] {
         ToolCatalogSupport.builtInToolStates(
             enableWidgetTool: appToolManager.isToolEnabled(.showWidget),
-            enableAskUserInputTool: appToolManager.isToolEnabled(.askUserInput),
             enableGetSystemTimeTool: appToolManager.isToolEnabled(.getSystemTime),
             isToolIsolated: currentSessionIsolationActive
         )
@@ -73,46 +71,6 @@ struct ToolCenterView: View {
             for: [
                 NSLocalizedString("内置工具", comment: "Built-in tools section title"),
                 NSLocalizedString("内置工具控制网页卡片、问答与系统时间能力。", comment: "Built-in tools footer")
-            ]
-        )
-    }
-
-    var mcpCatalogTools: [MCPAvailableTool] {
-        ToolCatalogSupport.mcpCatalogTools(
-            servers: mcpManager.servers,
-            statuses: mcpManager.serverStatuses
-        )
-    }
-
-    var filteredMCPTools: [MCPAvailableTool] {
-        ToolCatalogSupport.sortedMCPCatalogTools(mcpCatalogTools)
-            .filter { available in
-                let keywords = [
-                    available.tool.toolId,
-                    available.server.displayName,
-                    available.tool.description ?? "",
-                    available.internalName
-                ]
-                guard matchesSearch(for: keywords) else { return false }
-                if showEnabledOnly {
-                    return mcpManager.isToolEnabled(serverID: available.server.id, toolId: available.tool.toolId)
-                }
-                return true
-        }
-    }
-
-    var isMCPSectionVisible: Bool {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            return true
-        }
-        if !filteredMCPTools.isEmpty {
-            return true
-        }
-        return matchesSearch(
-            for: [
-                NSLocalizedString("MCP 工具", comment: "MCP tools section title"),
-                NSLocalizedString("向模型暴露 MCP 工具", comment: "Expose MCP tools to model")
             ]
         )
     }
@@ -188,20 +146,6 @@ struct ToolCenterView: View {
         )
     }
 
-    var configuredMCPCount: Int {
-        mcpCatalogTools.filter {
-            mcpManager.isToolEnabled(serverID: $0.server.id, toolId: $0.tool.toolId)
-        }.count
-    }
-
-    var availableMCPCount: Int {
-        guard mcpManager.chatToolsEnabled, !currentSessionIsolationActive else { return 0 }
-        return mcpCatalogTools.filter {
-            mcpManager.isToolEnabled(serverID: $0.server.id, toolId: $0.tool.toolId)
-            && mcpManager.approvalPolicy(serverID: $0.server.id, toolId: $0.tool.toolId) != .alwaysDeny
-        }.count
-    }
-
     var configuredShortcutCount: Int {
         shortcutManager.tools.filter(\.isEnabled).count
     }
@@ -222,7 +166,6 @@ struct ToolCenterView: View {
 
     var hasVisibleTools: Bool {
         isBuiltInSectionVisible
-        || isMCPSectionVisible
         || isSkillsSectionVisible
         || isShortcutSectionVisible
     }
@@ -241,9 +184,6 @@ struct ToolCenterView: View {
             filterSection
             if isBuiltInSectionVisible {
                 builtInSection
-            }
-            if isMCPSectionVisible {
-                mcpSection
             }
             if isSkillsSectionVisible {
                 skillsSection
@@ -279,12 +219,10 @@ struct ToolCenterView: View {
     private var guideSettings: [GuidePageSetting] {
         [
             .bool("built_in_tools_enabled", label: NSLocalizedString("向模型暴露内置工具", comment: "向导设置字段"), get: { appToolManager.chatToolsEnabled }, set: { appToolManager.setChatToolsEnabled($0) }),
-            .bool("mcp_tools_enabled", label: NSLocalizedString("向模型暴露 MCP 工具", comment: "向导设置字段"), get: { mcpManager.chatToolsEnabled }, set: { mcpManager.setChatToolsEnabled($0) }),
             .bool("shortcut_tools_enabled", label: NSLocalizedString("向模型暴露快捷指令工具", comment: "向导设置字段"), get: { shortcutManager.chatToolsEnabled }, set: { shortcutManager.setChatToolsEnabled($0) }),
             .bool("agent_skills_enabled", label: NSLocalizedString("向模型暴露 Agent Skills", comment: "向导设置字段"), get: { skillManager.chatToolsEnabled }, set: { skillManager.setChatToolsEnabled($0) }),
             .readOnly("session_tool_isolation", label: NSLocalizedString("当前会话工具隔离", comment: "向导设置字段"), value: { .bool(currentSessionIsolationActive) }),
             .readOnly("configured_builtin_count", label: NSLocalizedString("已启用内置工具数", comment: "向导设置字段"), value: { .int(configuredBuiltInCount) }),
-            .readOnly("configured_mcp_count", label: NSLocalizedString("已启用 MCP 工具数", comment: "向导设置字段"), value: { .int(configuredMCPCount) }),
             .readOnly("configured_shortcut_count", label: NSLocalizedString("已启用快捷指令工具数", comment: "向导设置字段"), value: { .int(configuredShortcutCount) }),
             .readOnly("configured_skill_count", label: NSLocalizedString("已启用 Agent Skill 数", comment: "向导设置字段"), value: { .int(configuredSkillCount) })
         ]

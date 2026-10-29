@@ -327,7 +327,6 @@ extension AppConfigStore {
         switch key {
         case .syncProviders: return .bool(syncProviders)
         case .syncBackgrounds: return .bool(syncBackgrounds)
-        case .syncMCPServers: return .bool(syncMCPServers)
         case .syncAudioFiles: return .bool(syncAudioFiles)
         case .syncImageFiles: return .bool(syncImageFiles)
         case .syncSkills: return .bool(syncSkills)
@@ -356,9 +355,6 @@ extension AppConfigStore {
              .appToolsEnabledToolIDs,
              .appToolsKnownDefaultToolIDs,
              .appToolsToolApprovalPolicies,
-             .mcpChatToolsEnabled,
-             .mcpToolCallTitleEnabled,
-             .mcpDeletedBuiltInServerIDs,
              .skillsChatToolsEnabled,
              .skillsEnabledNames,
              .shortcutChatToolsEnabled,
@@ -382,7 +378,6 @@ extension AppConfigStore {
         case .localLinuxDefaultSessionMode: return .text(localLinuxDefaultSessionMode)
         case .localLinuxDefaultTimeoutSeconds: return .integer(localLinuxDefaultTimeoutSeconds)
         case .localLinuxOutputPreviewBytes: return .integer(localLinuxOutputPreviewBytes)
-        case .localLinuxLocalMCPOnDemand: return .bool(localLinuxLocalMCPOnDemand)
         case .localLinuxActivePromptProfileID: return .text(localLinuxActivePromptProfileID)
         case .localLinuxWorkspaceCleanupPolicy: return .text(localLinuxWorkspaceCleanupPolicy)
         case .localLinuxTerminalShortcutIDs: return .text(localLinuxTerminalShortcutIDs)
@@ -466,7 +461,6 @@ extension AppConfigStore {
         case .fontLineSpacingEmIOS: return .real(fontLineSpacingEmIOS)
         case .fontLineSpacingEmWatchOS: return .real(fontLineSpacingEmWatchOS)
         case .appLanguage: return .text(appLanguage)
-        case .watchInputQuickActionConfiguration: return .text(watchInputQuickActionConfiguration)
         case .watchAttachmentLastSource: return .text(watchAttachmentLastSource)
         case .watchAttachmentSourceHistory: return .text(watchAttachmentSourceHistory)
         case .watchBackgroundLastSource: return .text(watchBackgroundLastSource)

@@ -307,7 +307,6 @@ extension ChatBubble {
         } label: {
             TimelineToolCallStepContent(
                 label: label,
-                displayTitle: messageState.toolCallDisplayTitle(for: call.id, isEnabled: mcpManager.toolCallTitleEnabled),
                 statusTitle: status.title,
                 statusIconName: status.iconName,
                 statusColor: status.accentColor,
@@ -341,13 +340,7 @@ extension ChatBubble {
         if let payload = showWidgetPayload(for: call) {
             ToolWidgetRendererCard(payload: payload)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                toolCallSummaryRow(for: call)
-                ConversationToolRuntimeCard(
-                    toolCall: call,
-                    onOpenConversation: onOpenConversation
-                )
-            }
+            toolCallSummaryRow(for: call)
         }
     }
 
@@ -435,9 +428,6 @@ extension ChatBubble {
         if toolName == "save_memory" {
             return NSLocalizedString("添加记忆", comment: "Tool label for saving memory.")
         }
-        if let label = MCPManager.shared.displayLabel(for: toolName) {
-            return label
-        }
         if let label = ShortcutToolManager.shared.displayLabel(for: toolName) {
             return label
         }
@@ -473,8 +463,7 @@ extension ChatBubble {
 
     @ViewBuilder
     func toolCallSummaryRow(for call: InternalToolCall) -> some View {
-        let label = messageState.toolCallDisplayTitle(for: call.id, isEnabled: mcpManager.toolCallTitleEnabled)
-            ?? toolDisplayLabel(for: call.toolName)
+        let label = toolDisplayLabel(for: call.toolName)
         let status = toolCallStatus(for: call)
         Button {
             showRawToolResultInDetailSheet = false

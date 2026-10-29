@@ -72,7 +72,6 @@ struct ChatBubble: View {
     @State var selectedToolCallDetailSheetItem: ToolCallDetailSheetItem?
     @State var showRawToolResultInDetailSheet: Bool = false
     @ObservedObject var toolPermissionCenter = ToolPermissionCenter.shared
-    @ObservedObject var mcpManager = MCPManager.shared
     @ObservedObject var appearanceProfileManager = ChatAppearanceProfileManager.shared
     @ObservedObject var appConfig = AppConfigStore.shared
     @Environment(\.colorScheme) var colorScheme

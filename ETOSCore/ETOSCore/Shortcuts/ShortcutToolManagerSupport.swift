@@ -15,8 +15,9 @@ extension ShortcutToolManager {
     func executeWithFallback(
         tool: ShortcutToolDefinition,
         argumentsJSON: String,
-        allowRelayOnWatch: Bool
-    ) async -> ShortcutToolExecutionResult {
+        allowRelayOnWatch: Bool,
+        admission: (@Sendable () -> Bool)? = nil
+    ) async -> ShortcutTransportAttempt<ShortcutToolExecutionResult> {
         let order: [ShortcutExecutionTransport] = {
             switch tool.runModeHint {
             case .bridge:
@@ -26,34 +27,18 @@ extension ShortcutToolManager {
             }
         }()
 
-        var lastFailure: ShortcutToolExecutionResult?
-
-        for transport in order {
-            if Task.isCancelled {
-                return cancelledExecutionResult(
+        let result = await ShortcutTransportFallback.run(transports: order) { transport in
+            if Task.isCancelled || admission?() == false {
+                return .stopped(cancelledExecutionResult(
                     requestID: UUID().uuidString,
                     toolName: tool.name,
                     transport: transport,
                     startedAt: Date()
-                )
+                ))
             }
-            let localResult = await executeLocally(tool: tool, argumentsJSON: argumentsJSON, transport: transport)
-            if Task.isCancelled {
-                return cancelledExecutionResult(
-                    requestID: localResult.requestID,
-                    toolName: tool.name,
-                    transport: transport,
-                    startedAt: localResult.startedAt
-                )
-            }
-            if localResult.success {
-                return localResult
-            }
-            lastFailure = localResult
-
+            return await executeLocally(tool: tool, argumentsJSON: argumentsJSON, transport: transport, admission: admission)
         }
-
-        return lastFailure ?? ShortcutToolExecutionResult(
+        return result ?? .notStarted(ShortcutToolExecutionResult(
             requestID: UUID().uuidString,
             toolName: tool.name,
             success: false,
@@ -62,14 +47,15 @@ extension ShortcutToolManager {
             transport: .direct,
             startedAt: Date(),
             finishedAt: Date()
-        )
+        ))
     }
 
     func executeLocally(
         tool: ShortcutToolDefinition,
         argumentsJSON: String,
-        transport: ShortcutExecutionTransport
-    ) async -> ShortcutToolExecutionResult {
+        transport: ShortcutExecutionTransport,
+        admission: (@Sendable () -> Bool)?
+    ) async -> ShortcutTransportAttempt<ShortcutToolExecutionResult> {
         let requestID = UUID().uuidString
         let targetShortcutName: String
         let payloadText: String
@@ -91,7 +77,8 @@ extension ShortcutToolManager {
             targetShortcutName: targetShortcutName,
             payloadText: payloadText,
             originalToolName: tool.name,
-            transport: transport
+            transport: transport,
+            admission: admission
         )
     }
 
@@ -100,8 +87,9 @@ extension ShortcutToolManager {
         targetShortcutName: String,
         payloadText: String,
         originalToolName: String,
-        transport: ShortcutExecutionTransport
-    ) async -> ShortcutToolExecutionResult {
+        transport: ShortcutExecutionTransport,
+        admission: (@Sendable () -> Bool)?
+    ) async -> ShortcutTransportAttempt<ShortcutToolExecutionResult> {
         let startAt = Date()
 
         guard let launchURL = buildRunShortcutURL(
@@ -110,7 +98,7 @@ extension ShortcutToolManager {
             requestID: requestID,
             transport: transport
         ) else {
-            return ShortcutToolExecutionResult(
+            return .notStarted(ShortcutToolExecutionResult(
                 requestID: requestID,
                 toolName: originalToolName,
                 success: false,
@@ -119,26 +107,26 @@ extension ShortcutToolManager {
                 transport: transport,
                 startedAt: startAt,
                 finishedAt: Date()
-            )
+            ))
         }
 
         return await withTaskCancellationHandler {
             guard !Task.isCancelled else {
-                return cancelledExecutionResult(
+                return .stopped(cancelledExecutionResult(
                     requestID: requestID,
                     toolName: originalToolName,
                     transport: transport,
                     startedAt: startAt
-                )
+                ))
             }
-            return await withCheckedContinuation { (continuation: CheckedContinuation<ShortcutToolExecutionResult, Never>) in
+            return await withCheckedContinuation { (continuation: CheckedContinuation<ShortcutTransportAttempt<ShortcutToolExecutionResult>, Never>) in
                 guard !Task.isCancelled else {
-                    continuation.resume(returning: cancelledExecutionResult(
+                    continuation.resume(returning: .stopped(cancelledExecutionResult(
                         requestID: requestID,
                         toolName: originalToolName,
                         transport: transport,
                         startedAt: startAt
-                    ))
+                    )))
                     return
                 }
 
@@ -165,6 +153,11 @@ extension ShortcutToolManager {
 
                 Task { [weak self] in
                     guard let self else { return }
+                    guard self.pendingExecutions[requestID] != nil else { return }
+                    guard admission?() != false else {
+                        self.resolvePendingAsCancelled(requestID: requestID)
+                        return
+                    }
                     let opened = await self.openSystemURL(launchURL)
                     if !opened {
                         let failure = ShortcutToolExecutionResult(
@@ -172,12 +165,12 @@ extension ShortcutToolManager {
                             toolName: originalToolName,
                             success: false,
                             result: nil,
-                            errorMessage: ShortcutToolError.cannotOpenShortcutApp.localizedDescription,
+                            errorMessage: NSLocalizedString("快捷指令可能已启动，但无法确认执行结果。", comment: "Shortcut execution outcome unknown"),
                             transport: transport,
                             startedAt: startAt,
                             finishedAt: Date()
                         )
-                        self.resolvePending(requestID: requestID, result: failure)
+                        self.resolvePending(requestID: requestID, result: failure, outcomeUnknown: true)
                     }
                 }
             }
@@ -195,12 +188,12 @@ extension ShortcutToolManager {
             toolName: pending.toolName,
             success: false,
             result: nil,
-            errorMessage: ShortcutToolError.callbackTimeout.localizedDescription,
+            errorMessage: NSLocalizedString("快捷指令可能已启动，但未收到回调，执行结果未知。", comment: "Shortcut callback timeout outcome unknown"),
             transport: pending.transport,
             startedAt: pending.startedAt,
             finishedAt: Date()
         )
-        resolvePending(requestID: requestID, result: result)
+        resolvePending(requestID: requestID, result: result, outcomeUnknown: true)
     }
 
     func resolvePendingAsCancelled(requestID: String) {
@@ -211,8 +204,10 @@ extension ShortcutToolManager {
                 requestID: requestID,
                 toolName: pending.toolName,
                 transport: pending.transport,
-                startedAt: pending.startedAt
-            )
+                startedAt: pending.startedAt,
+                outcomeUnknown: true
+            ),
+            outcomeUnknown: true
         )
     }
 
@@ -220,25 +215,28 @@ extension ShortcutToolManager {
         requestID: String,
         toolName: String,
         transport: ShortcutExecutionTransport,
-        startedAt: Date
+        startedAt: Date,
+        outcomeUnknown: Bool = false
     ) -> ShortcutToolExecutionResult {
         ShortcutToolExecutionResult(
             requestID: requestID,
             toolName: toolName,
             success: false,
             result: nil,
-            errorMessage: NSLocalizedString("工具调用已取消。", comment: "Shortcut execution cancelled"),
+            errorMessage: outcomeUnknown
+                ? NSLocalizedString("快捷指令可能已启动，取消后执行结果未知。", comment: "Shortcut cancelled with unknown outcome")
+                : NSLocalizedString("工具调用已取消。", comment: "Shortcut execution cancelled"),
             transport: transport,
             startedAt: startedAt,
             finishedAt: Date()
         )
     }
 
-    func resolvePending(requestID: String, result: ShortcutToolExecutionResult) {
+    func resolvePending(requestID: String, result: ShortcutToolExecutionResult, outcomeUnknown: Bool = false) {
         guard var pending = pendingExecutions.removeValue(forKey: requestID) else { return }
         pending.timeoutTask?.cancel()
         pending.timeoutTask = nil
-        pending.continuation.resume(returning: result)
+        pending.continuation.resume(returning: outcomeUnknown ? .outcomeUnknown(result) : .completed(result))
     }
 
     func buildRunShortcutURL(

@@ -72,25 +72,11 @@ struct MacChatView: View {
                                             catch { workspace.errorMessage = error.localizedDescription }
                                         }
                                     }.disabled(!workspace.canModifyCurrentHistory)
-                                    if row.message.role != .system {
-                                        Button(NSLocalizedString("重新生成", comment: "")) { workspace.retryMessage(row.message) }
-                                            .disabled(!workspace.canModifyCurrentHistory || workspace.effectiveModelName == nil)
-                                    }
-                                    if row.message.canPrefill && workspace.selectedModelSupportsPrefill {
-                                        Button(NSLocalizedString("预填充续写", comment: "")) { workspace.retryMessage(row.message, prefill: true) }
-                                            .disabled(!workspace.canModifyCurrentHistory)
-                                    }
                                     Menu(NSLocalizedString("从此处创建分支", comment: "")) {
                                         Button(NSLocalizedString("仅复制消息历史", comment: "")) { workspace.branchSession(at: row.message, copyPrompts: false) }
                                         Button(NSLocalizedString("复制消息历史和提示词", comment: "")) { workspace.branchSession(at: row.message) }
                                     }
                                     .disabled(!workspace.canModifyCurrentHistory)
-                                    if row.canRewrite {
-                                        Button(NSLocalizedString("重写回复", comment: "")) {
-                                            if let sessionID = workspace.currentSession?.id { rewritingMessage = MacMessageEditTarget(message: row.message, sessionID: sessionID) }
-                                        }
-                                        .disabled(!workspace.canModifyCurrentHistory || !workspace.selectedModelSupportsRewrite)
-                                    }
                                     if !row.versionOptions.isEmpty {
                                         MacMessageVersionMenu(row: row)
                                         Button(NSLocalizedString("删除当前版本", comment: ""), role: .destructive) { prepareDeletion(row.message, kind: .currentVersion) }
@@ -119,15 +105,11 @@ struct MacChatView: View {
             }
             MacTTSPlaybackView(model: workspace.tts, isActive: workspace.canManageLocalModels).padding(.horizontal)
             MacRoleplayScriptHost(runtime: workspace.roleplayRuntime).padding(.horizontal)
-            if let model = workspace.activeQuestionnaireModel {
-                MacQuestionnaireView(model: model)
-            } else {
-                composer.modifier(MacComposerAppearance())
-                    .frame(maxWidth: 820)
-                    .padding([.horizontal, .bottom])
-                    .frame(maxWidth: .infinity)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(MacMessageEntryMotion.coordinateSpace)) } action: { composerBounds = $0 }
-            }
+            composer.modifier(MacComposerAppearance())
+                .frame(maxWidth: 820)
+                .padding([.horizontal, .bottom])
+                .frame(maxWidth: .infinity)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(MacMessageEntryMotion.coordinateSpace)) } action: { composerBounds = $0 }
         }
     }
 
@@ -318,6 +300,11 @@ struct MacChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading) {
+            if workspace.isGenerating || workspace.isPreparingSend {
+                Text(NSLocalizedString("当前会话正在处理，请稍后再发送。", comment: "Session busy"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if configuration.enableSlashCommands {
                 MacSlashCommandSuggestionsView(model: slashComposer) { suggestion, text, sessionID in
                     guard workspace.draft == text, workspace.currentSession?.id == sessionID,

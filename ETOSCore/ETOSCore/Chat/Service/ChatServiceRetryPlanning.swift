@@ -12,6 +12,7 @@ extension ChatService {
     struct ResumedToolCallRequest {
         let messages: [ChatMessage]
         let shouldContinueRequest: Bool
+        var unknownToolCallID: String? = nil
     }
 
     struct PreparedMessageRetry {
@@ -368,121 +369,93 @@ extension ChatService {
     func resumePendingToolCalls(
         sourceMessageID: UUID,
         loadingMessageID: UUID,
-        sessionID: UUID,
-        agentRunID: UUID
+        sessionID: UUID
     ) async -> ResumedToolCallRequest {
-        var storedMessages = messagesSnapshot(for: sessionID)
-        guard let sourceIndex = storedMessages.firstIndex(where: { $0.id == sourceMessageID }),
-              let initialLoadingIndex = storedMessages.firstIndex(where: { $0.id == loadingMessageID }),
-              sourceIndex < initialLoadingIndex,
-              var sourceToolCalls = storedMessages[sourceIndex].toolCalls,
-              !sourceToolCalls.isEmpty else {
-            return ResumedToolCallRequest(
-                messages: retryRequestPrefix(through: loadingMessageID, in: storedMessages) ?? storedMessages,
-                shouldContinueRequest: true
-            )
-        }
-
-        let attemptID = storedMessages[sourceIndex].responseAttemptID
-        let attemptMetadata = responseAttemptMetadata(from: storedMessages[sourceIndex])
-        let existingToolMessageIndices = storedMessages.indices.filter { index in
-            guard index > sourceIndex,
-                  index < initialLoadingIndex,
-                  storedMessages[index].role == .tool else {
+        var unknownToolCallID: String?
+        let committed = mutateRuntimeMessages(for: sessionID, requireRequestIdentity: true) { storedMessages in
+            guard let sourceIndex = storedMessages.firstIndex(where: { $0.id == sourceMessageID }),
+                  let initialLoadingIndex = storedMessages.firstIndex(where: { $0.id == loadingMessageID }),
+                  sourceIndex < initialLoadingIndex,
+                  var sourceToolCalls = storedMessages[sourceIndex].toolCalls,
+                  !sourceToolCalls.isEmpty else {
+                unknownToolCallID = ""
                 return false
             }
-            if let attemptID {
-                return storedMessages[index].responseAttemptID == attemptID
-            }
-            return storedMessages[index].responseAttemptID == nil
-        }
 
-        var emptyToolMessageIDs = Set<UUID>()
-        var additions: [ChatMessage] = []
-        var shouldContinueRequest = true
-
-        for callIndex in sourceToolCalls.indices {
-            let call = sourceToolCalls[callIndex]
-            let existingMessageIndex = existingToolMessageIndices.first { messageIndex in
-                storedMessages[messageIndex].toolCalls?.contains(where: { $0.id == call.id }) == true
-            }
-            let existingResult = existingMessageIndex.flatMap { messageIndex in
-                resolvedStoredToolResult(
-                    for: call.id,
-                    in: storedMessages[messageIndex]
-                )
-            }
-            let embeddedResult = call.result?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let completedResult = [existingResult, embeddedResult]
-                .compactMap { $0 }
-                .first(where: { !$0.isEmpty })
-
-            if let completedResult {
-                sourceToolCalls[callIndex].result = completedResult
-                if existingMessageIndex == nil {
-                    var reconstructed = ChatMessage(
-                        role: .tool,
-                        content: completedResult,
-                        toolCalls: [
-                            InternalToolCall(
-                                id: call.id,
-                                toolName: call.toolName,
-                                arguments: call.arguments,
-                                result: completedResult,
-                                resultDisposition: call.resultDisposition,
-                                providerSpecificFields: call.providerSpecificFields
-                            )
-                        ]
-                    )
-                    applyResponseAttemptMetadata(attemptMetadata, to: &reconstructed)
-                    additions.append(reconstructed)
+            let attemptID = storedMessages[sourceIndex].responseAttemptID
+            let attemptMetadata = responseAttemptMetadata(from: storedMessages[sourceIndex])
+            let existingToolMessageIndices = storedMessages.indices.filter { index in
+                guard index > sourceIndex,
+                      index < initialLoadingIndex,
+                      storedMessages[index].role == .tool else {
+                    return false
                 }
-                continue
+                if let attemptID {
+                    return storedMessages[index].responseAttemptID == attemptID
+                }
+                return storedMessages[index].responseAttemptID == nil
             }
 
-            if let existingMessageIndex {
-                emptyToolMessageIDs.insert(storedMessages[existingMessageIndex].id)
+            var additions: [ChatMessage] = []
+
+            for callIndex in sourceToolCalls.indices {
+                let call = sourceToolCalls[callIndex]
+                let existingMessageIndex = existingToolMessageIndices.first { messageIndex in
+                    storedMessages[messageIndex].toolCalls?.contains(where: { $0.id == call.id }) == true
+                }
+                let existingResult = existingMessageIndex.flatMap { messageIndex in
+                    resolvedStoredToolResult(
+                        for: call.id,
+                        in: storedMessages[messageIndex]
+                    )
+                }
+                switch ChatToolRetryDecision.decide(storedResult: existingResult, embeddedResult: call.result) {
+                case .reuse(let completedResult):
+                    sourceToolCalls[callIndex].result = completedResult
+                    if existingMessageIndex == nil {
+                        var reconstructed = ChatMessage(
+                            role: .tool,
+                            content: completedResult,
+                            toolCalls: [
+                                InternalToolCall(
+                                    id: call.id,
+                                    toolName: call.toolName,
+                                    arguments: call.arguments,
+                                    result: completedResult,
+                                    resultDisposition: call.resultDisposition,
+                                    providerSpecificFields: call.providerSpecificFields
+                                )
+                            ]
+                        )
+                        applyResponseAttemptMetadata(attemptMetadata, to: &reconstructed)
+                        additions.append(reconstructed)
+                    }
+                    continue
+                case .outcomeUnknown:
+                    // A missing result cannot establish whether an earlier tool ran.
+                    // Retrying a chat is not approval to repeat that tool call.
+                    unknownToolCallID = call.id
+                    return false
+                }
             }
-            let outcome = await handleToolCall(
-                call,
-                sessionID: sessionID,
-                agentRunID: agentRunID,
-                triggeringMessageID: attemptMetadata?.groupID
-            )
-            let result = (outcome.toolResult ?? outcome.message.content)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            sourceToolCalls[callIndex].result = result
-            sourceToolCalls[callIndex].resultDisposition = outcome.resultDisposition
 
-            var outcomeMessage = outcome.message
-            applyResponseAttemptMetadata(attemptMetadata, to: &outcomeMessage)
-            additions.append(outcomeMessage)
-            if outcome.shouldAwaitUserSupplement || outcome.shouldPauseForConversation {
-                shouldContinueRequest = false
-                break
+            storedMessages[sourceIndex].toolCalls = sourceToolCalls
+            guard let loadingIndex = storedMessages.firstIndex(where: { $0.id == loadingMessageID }) else {
+                return false
             }
+            storedMessages.insert(contentsOf: additions, at: loadingIndex)
+            return true
         }
+        guard let committed else {
+            return ResumedToolCallRequest(messages: messagesSnapshot(for: sessionID), shouldContinueRequest: false,
+                                          unknownToolCallID: unknownToolCallID)
+        }
+        publishMessagesIfCurrentSession(committed, for: sessionID)
 
-        storedMessages[sourceIndex].toolCalls = sourceToolCalls
-        if !emptyToolMessageIDs.isEmpty {
-            storedMessages.removeAll { emptyToolMessageIDs.contains($0.id) }
-        }
-        guard let loadingIndex = storedMessages.firstIndex(where: { $0.id == loadingMessageID }) else {
-            return ResumedToolCallRequest(messages: storedMessages, shouldContinueRequest: false)
-        }
-        storedMessages.insert(contentsOf: additions, at: loadingIndex)
-        if !shouldContinueRequest {
-            storedMessages.removeAll { $0.id == loadingMessageID }
-        }
-        persistAndPublishMessages(storedMessages, for: sessionID)
-
-        let requestMessages = shouldContinueRequest
-            ? retryRequestPrefix(through: loadingMessageID, in: storedMessages) ?? storedMessages
-            : ChatResponseAttemptSupport.visibleMessages(from: storedMessages)
+        let requestMessages = retryRequestPrefix(through: loadingMessageID, in: committed) ?? committed
         return ResumedToolCallRequest(
             messages: requestMessages,
-            shouldContinueRequest: shouldContinueRequest
+            shouldContinueRequest: true
         )
     }
 

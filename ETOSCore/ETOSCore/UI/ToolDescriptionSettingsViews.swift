@@ -4,7 +4,6 @@ import SwiftUI
 public struct BuiltInToolDescriptionListView<Editor: View>: View {
     private let isActive: Bool
     private let editor: (ToolDescriptionTarget) -> Editor
-    @ObservedObject private var manager = MCPManager.shared
     @State private var groups: [ToolDescriptionGroup] = []
 
     public init(isActive: Bool = true, @ViewBuilder editor: @escaping (ToolDescriptionTarget) -> Editor) {
@@ -53,8 +52,7 @@ public struct BuiltInToolDescriptionListView<Editor: View>: View {
                 })
             })]
         )
-        .task(id: manager.servers) {
-            await manager.waitForInitialLoadIfNeeded()
+        .task {
             let prompts = await Task.detached(priority: .utility) {
                 BuiltInPromptStore.snapshots(in: .toolDescriptions)
             }.value
@@ -62,7 +60,7 @@ public struct BuiltInToolDescriptionListView<Editor: View>: View {
             groups = [ToolDescriptionGroup(
                 id: "built-in", title: NSLocalizedString("内置工具", comment: ""),
                 rows: prompts.map { ToolDescriptionRow(target: .builtIn($0.id), title: $0.title, isCustomized: $0.isCustomized) }
-            )] + manager.builtInToolDescriptionGroups()
+            )]
         }
     }
 }
@@ -125,8 +123,7 @@ public struct ToolDescriptionEditorView: View {
             id: GuidePageID(rawValue: "tool-description-\(model.target.id)"),
             title: model.title,
             documents: [
-                GuideDocumentReference(id: "built-in-prompts", title: "Built-in Prompts"),
-                GuideDocumentReference(id: "mcp-tools", title: "MCP Tools")
+                GuideDocumentReference(id: "built-in-prompts", title: "Built-in Prompts")
             ],
             isActive: isActive && model.isLoaded && !model.isSaving,
             settings: [

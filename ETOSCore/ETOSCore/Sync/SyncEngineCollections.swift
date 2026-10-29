@@ -3,47 +3,13 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 本文件承载记忆、MCP、媒体、字体、技能、快捷工具与世界书同步逻辑。
+// 本文件承载媒体、字体、技能与快捷工具同步逻辑。
 // ============================================================================
 
 import Foundation
 import Combine
 
 extension SyncEngine {
-    static func mergeMCPServers(_ incoming: [MCPServerConfiguration]) -> (imported: Int, skipped: Int) {
-        guard !incoming.isEmpty else { return (0, 0) }
-
-        var local = MCPServerStore.loadServers()
-        var imported = 0
-        var skipped = 0
-        var localContentHashes = Set(local.map { computeMCPServerContentHash($0) })
-
-        for incomingServer in incoming {
-            guard var server = MCPServerConfigurationTransferService.materializeEnvironmentReferences(
-                in: incomingServer
-            ) else {
-                skipped += 1
-                continue
-            }
-            let incomingHash = computeMCPServerContentHash(server)
-            if localContentHashes.contains(incomingHash) {
-                skipped += 1
-                continue
-            }
-
-            if local.firstIndex(where: { $0.id == server.id }) != nil {
-                server.id = UUID()
-            }
-
-            MCPServerStore.save(server)
-            local.append(server)
-            localContentHashes.insert(incomingHash)
-            imported += 1
-        }
-
-        return (imported, skipped)
-    }
-
     // MARK: - Audio Files
 
     static func mergeAudioFiles(_ incoming: [SyncedAudio]) -> (imported: Int, skipped: Int) {

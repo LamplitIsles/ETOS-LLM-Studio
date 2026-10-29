@@ -7,7 +7,6 @@
 // ============================================================================
 
 import Foundation
-import MCP
 
 enum MCPNativeDeviceToolDefinitions {
     private static let toolIDs: Set<String> = [

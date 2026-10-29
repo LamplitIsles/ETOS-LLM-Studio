@@ -18,7 +18,6 @@ extension ChatView {
         }
 
         let selectionRevision = localAgentModeSelectionRevision
-        await viewModel.chatService.waitForInitialPersistenceStateIfNeeded()
         guard !Task.isCancelled,
               viewModel.currentSession?.id == sessionID,
               localAgentModeSelectionRevision == selectionRevision else { return }
@@ -36,23 +35,12 @@ extension ChatView {
     /// Telegram 风格输入栏
     @ViewBuilder
     func telegramInputBar(availableHeight: CGFloat) -> some View {
-        if let request = viewModel.activeAskUserInputRequest {
-            AskUserInputComposerPanel(
-                request: request,
-                submitAction: { answers in
-                    composerFocused = false
-                    draftText = ""
-                    viewModel.submitAskUserInputAnswers(answers, for: request)
-                },
-                cancelAction: {
-                    composerFocused = false
-                    draftText = ""
-                    viewModel.cancelAskUserInputRequest(using: request)
-                }
-            )
-            .padding(.horizontal, 12)
-            .padding(.bottom, 6 - tabBarCompensation)
-        } else {
+        VStack(spacing: 4) {
+            if viewModel.isSendingMessage || viewModel.isSendDelayPending || viewModel.isSendSubmissionPending {
+                Text(NSLocalizedString("当前会话正在处理，请稍后再发送。", comment: "Session busy"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             TelegramMessageComposer(
                 submissionState: viewModel.sendSubmissionState,
                 sendFlightController: sendFlightController,

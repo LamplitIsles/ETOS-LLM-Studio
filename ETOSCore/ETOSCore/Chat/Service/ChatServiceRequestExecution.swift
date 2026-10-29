@@ -24,15 +24,14 @@ extension ChatService {
             .filter { $0.role == .system }
             .map(\.content)
             .joined(separator: "\n\n")
-        guard var loadingMessage = messagesSnapshot(for: sessionID).first(where: { $0.id == loadingMessageID }) else {
-            logger.warning("无法记录系统提示词快照：未找到回复占位消息 \(loadingMessageID)。")
-            return
+        let updated = await updateExistingConversationMessage(
+            id: loadingMessageID, in: sessionID, requiresRequestIdentity: true
+        ) { message in
+            message.sentSystemPromptSnapshot = snapshot
+            return true
         }
-        loadingMessage.sentSystemPromptSnapshot = snapshot
-        do {
-            _ = try await upsertConversationMessage(loadingMessage, to: sessionID)
-        } catch {
-            logger.error("原子保存系统提示词快照失败：\(error.localizedDescription)")
+        if !updated {
+            logger.warning("无法记录系统提示词快照：请求或回复占位消息已失效 \(loadingMessageID)。")
         }
     }
 
@@ -67,9 +66,6 @@ extension ChatService {
         let sessionForRequest = currentSessionSnapshot?.id == currentSessionID
             ? currentSessionSnapshot
             : conversationSession(withID: currentSessionID)
-        let linkedConversations = await Task.detached(priority: .utility) {
-            Persistence.loadLinkedConversationContacts(sourceSessionID: currentSessionID)
-        }.value
         let preparedRequestMessages = preparedMessagesForRequest(
             from: messages,
             loadingMessageID: loadingMessageID,
@@ -78,9 +74,7 @@ extension ChatService {
         let sessionPreferredModel = sessionForRequest?.preferredModelIdentifier.flatMap { identifier in
             activatedConversationModels.first(where: { $0.id == identifier })
         }
-        let runConfiguredModelIdentifier = conversationRunIDs(for: currentSessionID).flatMap { runIDs in
-            Persistence.loadConversationRun(id: runIDs.runID)?.requestConfiguration.modelIdentifier
-        }
+        let runConfiguredModelIdentifier = activeRequestConfiguration(for: currentSessionID)?.modelIdentifier
         let runConfiguredModel = runConfiguredModelIdentifier.flatMap { identifier in
             activatedConversationModels.first(where: { $0.id == identifier })
                 ?? selectedModelSubject.value.flatMap { $0.id == identifier ? $0 : nil }
@@ -182,11 +176,7 @@ extension ChatService {
             chatSeed: currentSessionID.uuidString
         )
         var messagesToSend: [ChatMessage] = []
-        let includesConversationTools = runnableModel.model.supportsToolCalling
-            && (tools?.contains { ConversationToolDefinitions.containsExposedName($0.name) } == true)
         var finalSystemPrompt = buildFinalSystemPrompt(
-            includeConversationRuntime: includesConversationTools,
-            linkedConversations: linkedConversations,
             includeSystemTime: includeSystemTime && systemTimeInjectionPosition == .front,
             roleplayPrompt: resolvedRoleplay.map(RoleplayRuntime.roleplaySystemPrompt)
         )
@@ -465,30 +455,14 @@ extension ChatService {
             let includeUsageInStream = await MainActor.run { AppConfigStore.shared.enableOpenAIStreamIncludeUsage }
             commonPayload[OpenAIAdapter.streamIncludeUsageControlKey] = includeUsageInStream
         }
-        let providerResolvedTools: [InternalToolDefinition]?
-        do {
-            providerResolvedTools = try await toolsUsingNativeResponsesShellIfNeeded(
-                tools,
-                runnableModel: runnableModel,
-                sessionID: currentSessionID
-            )
-        } catch {
-            let reason = String(
-                format: NSLocalizedString("错误: 无法准备 Responses 本地 Shell：%@", comment: "Prepare Responses local shell failure"),
-                error.localizedDescription
-            )
-            addErrorMessage(reason, sessionID: currentSessionID)
-            emitSessionRequestStatus(.error, sessionID: currentSessionID)
-            persistRequestLog(
-                context: requestLogContext,
-                status: .failed,
-                tokenUsage: nil,
-                finishedAt: Date(),
-                recordUsageEvent: false,
-                errorKind: "responses_local_shell_preparation_failed"
-            )
-            return
+        var providerResolvedTools = tools?.filter {
+            $0.kind != .openAIResponsesLocalShell && $0.name != OpenAIResponsesLocalShellProtocol.toolName
         }
+        if let available = providerResolvedTools,
+           let runID = conversationRunIDs(for: currentSessionID)?.runID {
+            providerResolvedTools = await SkillAllowedToolRuntime.shared.filteredTools(available, runID: runID)
+        }
+        if providerResolvedTools?.isEmpty == true { providerResolvedTools = nil }
         let effectiveTools = runnableModel.model.supportsToolCalling ? providerResolvedTools : nil
         if tools != nil, effectiveTools == nil {
             logger.info("当前模型未启用工具能力，本次请求不会附带工具定义。")
@@ -530,68 +504,14 @@ extension ChatService {
             sessionID: currentSessionID
         )
 
-        let responsesFullInputFallbackRequest: URLRequest? = {
-            guard openAIResponsesRequestUsesPreviousResponseID(request) else { return nil }
-            var fallbackPayload = commonPayload
-            fallbackPayload[OpenAIAdapter.responsesForceFullInputControlKey] = true
-            return adapter.buildChatRequest(
-                for: runnableModel,
-                commonPayload: fallbackPayload,
-                messages: messagesToSend,
-                tools: effectiveTools,
-                audioAttachments: audioAttachments,
-                imageAttachments: imageAttachments,
-                fileAttachments: fileAttachments
-            )
-        }()
-
-        // 恢复时沿用已完成的脚本和工具；仅续写前缀及换 Key 后的视频引用需要更新。
-        let messagesBeforePrefill = assistantPrefill == nil ? messagesToSend : Array(messagesToSend.dropLast())
-        await withAutomaticRequestRetries(
-            request: request, provider: runnableModel.provider,
-            apiFormat: runnableModel.effectiveAPIFormat, loadingMessageID: loadingMessageID,
-            sessionID: currentSessionID, requestLogContext: requestLogContext,
-            initialPrefill: assistantPrefill,
-            rebuildRequest: { prefix in
-                var recoveryPayload = commonPayload
-                recoveryPayload[OpenAIAdapter.responsesForceFullInputControlKey] = true
-                recoveryPayload[OpenAIAdapter.assistantPrefillMessageIDControlKey] = prefix.id.uuidString
-                return adapter.buildChatRequest(
-                    for: runnableModel, commonPayload: recoveryPayload,
-                    messages: messagesBeforePrefill + [ChatMessage(
-                        id: prefix.id, role: .assistant, content: prefix.content,
-                        reasoningContent: prefix.reasoningContent
-                    )],
-                    tools: effectiveTools, audioAttachments: audioAttachments,
-                    imageAttachments: imageAttachments, fileAttachments: fileAttachments
-                )
-            },
-            prepareKeyRetryRequest: { retryRequest in
-                guard let previousKey = selectedGeminiAPIKey,
-                      let geminiAdapter = (adapter as? GeminiAdapter) ?? (adapter as? GeminiInteractionsAdapter)?.geminiAdapter,
-                      let nextKey = retryRequest.value(forHTTPHeaderField: "x-goog-api-key"),
-                      nextKey != previousKey else { return retryRequest }
-                // Files API 的文件归属随凭据变化；切换 Key 后复用该 Key 的缓存或重新上传。
-                let preparation = try await self.prepareGeminiNativeVideoAttachments(
-                    fileAttachments, provider: runnableModel.provider,
-                    adapter: geminiAdapter, selectedAPIKey: nextKey
-                )
-                let updated = try GeminiVideoRequestRebinding.replacingFileReferences(
-                    in: retryRequest, previous: fileAttachments, updated: preparation.attachments
-                )
-                fileAttachments = preparation.attachments
-                selectedGeminiAPIKey = nextKey
-                return updated
-            }
+        await performSingleChatProviderRequest(
+            request: request,
+            loadingMessageID: loadingMessageID, requestLogContext: requestLogContext
         ) { attemptRequest, attemptLoadingID, attemptLogContext, retryHandler in
-            // 自动续写可能创建新占位，仍沿用这次请求的档位快照。
+            // 保留本次请求的思考动画配置。
             setMessageThinkingSweep(
                 usesRainbow: usesRainbowThinkingSweep, messageID: attemptLoadingID, sessionID: currentSessionID
             )
-            let fallbackRequest = self.openAIResponsesRequestUsesPreviousResponseID(attemptRequest)
-                ? responsesFullInputFallbackRequest.map {
-                    runnableModel.provider.preservingAuthentication(from: attemptRequest, in: $0)
-                } : nil
             if effectiveStreaming {
                 await handleStreamedResponse(
                     request: attemptRequest,
@@ -612,7 +532,6 @@ extension ChatService {
                     enableResponseSpeedMetrics: enableResponseSpeedMetrics,
                     requestStartedAt: attemptLogContext.requestedAt,
                     requestLogContext: attemptLogContext,
-                    responsesFullInputFallbackRequest: fallbackRequest,
                     retryHandler: retryHandler
                 )
             } else {
@@ -636,7 +555,6 @@ extension ChatService {
                     requestStartedAt: attemptLogContext.requestedAt,
                     requestLogContext: attemptLogContext,
                     messagesBeforeResponse: messagesToSend,
-                    responsesFullInputFallbackRequest: fallbackRequest,
                     retryHandler: retryHandler
                 )
             }

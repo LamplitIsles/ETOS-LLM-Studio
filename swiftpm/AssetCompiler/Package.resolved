@@ -1,0 +1,32 @@
+{
+  "originHash" : "4e8fd1d8daad52e4e4b3c520c1dab1de8a60fc0a5693500066839c7c53a270c3",
+  "pins" : [
+    {
+      "identity" : "assetkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/TartanLeGrand/AssetKit.git",
+      "state" : {
+        "revision" : "90281d6dc0c4edef6176f9283283271198e4bafd"
+      }
+    },
+    {
+      "identity" : "h",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/h",
+      "state" : {
+        "revision" : "aa3626829160917d4378330617971977cbd78f5b",
+        "version" : "1.0.1"
+      }
+    },
+    {
+      "identity" : "swift-png",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tayloraswift/swift-png",
+      "state" : {
+        "revision" : "2d17c6c51c098628574c0383f1119892655a73a2",
+        "version" : "4.5.2"
+      }
+    }
+  ],
+  "version" : 3
+}

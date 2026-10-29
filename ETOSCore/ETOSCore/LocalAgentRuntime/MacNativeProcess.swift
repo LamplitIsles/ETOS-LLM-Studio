@@ -35,6 +35,33 @@ final class MacNativeProcess: LocalCommandSession, @unchecked Sendable {
         return process
     }
 
+    static func resolveExecutable(
+        _ command: String,
+        environment: [String: String],
+        workingDirectory: URL
+    ) throws -> URL {
+        guard !command.isEmpty, !command.utf8.contains(0) else {
+            throw MCPLocalStdioError.dependencyMissing(command: command, suggestedRecipe: nil)
+        }
+        let candidates: [URL]
+        if command.contains("/") {
+            candidates = [URL(fileURLWithPath: (command as NSString).expandingTildeInPath, relativeTo: workingDirectory)]
+        } else {
+            candidates = (environment["PATH"] ?? "").split(separator: ":", omittingEmptySubsequences: false).map {
+                URL(fileURLWithPath: String($0), isDirectory: true, relativeTo: workingDirectory)
+                    .appendingPathComponent(command)
+            }
+        }
+        guard let executable = candidates.first(where: {
+            var directory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: $0.path, isDirectory: &directory)
+                && !directory.boolValue && FileManager.default.isExecutableFile(atPath: $0.path)
+        }) else {
+            throw MCPLocalStdioError.dependencyMissing(command: command, suggestedRecipe: nil)
+        }
+        return executable.absoluteURL
+    }
+
     private func launch(_ request: LocalLinuxJobRequest, terminalSize: (UInt16, UInt16)?) throws {
         guard !request.executable.isEmpty, !request.executable.utf8.contains(0),
               !request.arguments.isEmpty, request.arguments.allSatisfy({ !$0.utf8.contains(0) }),
@@ -46,7 +73,7 @@ final class MacNativeProcess: LocalCommandSession, @unchecked Sendable {
         guard environment.allSatisfy({ !$0.utf8.contains(0) }) else { throw CocoaError(.fileReadInvalidFileName) }
         let directory = request.workingDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser
-        let executable = try MCPMacStdioProcess.resolveExecutable(request.executable,
+        let executable = try MacNativeProcess.resolveExecutable(request.executable,
             environment: request.environment, workingDirectory: directory)
         var actions: posix_spawn_file_actions_t?
         var attributes: posix_spawnattr_t?

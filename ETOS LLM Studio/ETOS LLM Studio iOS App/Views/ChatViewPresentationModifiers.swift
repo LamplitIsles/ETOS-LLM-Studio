@@ -65,7 +65,7 @@ extension ChatView {
                     displayVersionCount: viewModel.displayVersionCount(for: payload.message),
                     displayCurrentVersionIndex: viewModel.displayCurrentVersionIndex(for: payload.message),
                     canRetry: viewModel.canRetry(message: payload.message),
-                    canPrefill: viewModel.selectedModel?.canRequestAssistantPrefill == true,
+                    canPrefill: false,
                     canRewrite: viewModel.canRewrite(message: payload.message),
                     allMessages: viewModel.allMessagesForSession,
                     providers: viewModel.providers,
@@ -219,14 +219,7 @@ extension ChatView {
             .confirmationDialog(NSLocalizedString("创建分支选项", comment: ""), isPresented: $showBranchOptions, titleVisibility: .visible) {
                 Button(NSLocalizedString("仅复制消息历史", comment: "")) {
                     if let message = messageToBranch {
-                        let newSession = viewModel.branchSessionFromMessage(upToMessage: message, copyPrompts: false)
-                        viewModel.setCurrentSession(newSession)
-                    }
-                    messageToBranch = nil
-                }
-                Button(NSLocalizedString("复制消息历史和提示词", comment: "")) {
-                    if let message = messageToBranch {
-                        let newSession = viewModel.branchSessionFromMessage(upToMessage: message, copyPrompts: true)
+                        let newSession = viewModel.branchSessionFromMessage(upToMessage: message)
                         viewModel.setCurrentSession(newSession)
                     }
                     messageToBranch = nil
@@ -334,6 +327,26 @@ extension ChatView {
             } message: {
                 Text(viewModel.messageRewriteErrorMessage ?? "")
             }
+            .alert(NSLocalizedString("消息操作未完成", comment: "Message edit failure alert title"), isPresented: Binding(
+                get: { viewModel.messageEditErrorMessage != nil },
+                set: { if !$0 { viewModel.messageEditErrorMessage = nil } }
+            )) {
+                Button(NSLocalizedString("确定", comment: ""), role: .cancel) {
+                    viewModel.messageEditErrorMessage = nil
+                }
+            } message: {
+                Text(viewModel.messageEditErrorMessage ?? "")
+            }
+            .alert(NSLocalizedString("工具执行结果未知", comment: "Unknown tool result"), isPresented: Binding(
+                get: { viewModel.unknownToolOutcome != nil },
+                set: { if !$0 { viewModel.acknowledgeUnknownToolOutcome() } }
+            )) {
+                Button(NSLocalizedString("知道了", comment: "Acknowledge"), role: .cancel) {
+                    viewModel.acknowledgeUnknownToolOutcome()
+                }
+            } message: {
+                Text(NSLocalizedString("请先检查工具的实际状态，再决定下一步。", comment: "Unknown tool result guidance"))
+            }
             .alert(
                 Text(NSLocalizedString("提示", comment: "Notice")),
                 isPresented: imageDownloadAlertPresented
@@ -341,14 +354,6 @@ extension ChatView {
                 Button(NSLocalizedString("确定", comment: "OK"), role: .cancel) {}
             } message: {
                 Text(imageDownloadAlertMessage ?? "")
-            }
-            .alert(
-                Text(NSLocalizedString("记忆嵌入失败", comment: "Memory embedding failure alert title")),
-                isPresented: $viewModel.showMemoryEmbeddingErrorAlert
-            ) {
-                Button(NSLocalizedString("好的", comment: "OK"), role: .cancel) {}
-            } message: {
-                Text(viewModel.memoryEmbeddingErrorMessage)
             }
     }
 }

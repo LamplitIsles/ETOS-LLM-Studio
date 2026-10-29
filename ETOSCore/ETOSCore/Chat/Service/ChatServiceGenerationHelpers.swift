@@ -86,20 +86,14 @@ extension ChatService {
     }
 
     private func applyReasoningSummary(_ summary: String, for messageID: UUID, in sessionID: UUID, expectedReasoning: String) async {
-        guard var message = messagesSnapshot(for: sessionID).first(where: { $0.id == messageID }) else { return }
-
-        let currentReasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard currentReasoning == expectedReasoning else { return }
-
-        var metrics = message.responseMetrics ?? MessageResponseMetrics()
-        guard metrics.reasoningSummary != summary else { return }
-
-        metrics.reasoningSummary = summary
-        message.responseMetrics = metrics
-        do {
-            _ = try await upsertConversationMessage(message, to: sessionID)
-        } catch {
-            logger.error("原子保存思考摘要失败：\(error.localizedDescription)")
+        await updateExistingConversationMessage(id: messageID, in: sessionID) { message in
+            let currentReasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard currentReasoning == expectedReasoning else { return false }
+            var metrics = message.responseMetrics ?? MessageResponseMetrics()
+            guard metrics.reasoningSummary != summary else { return false }
+            metrics.reasoningSummary = summary
+            message.responseMetrics = metrics
+            return true
         }
     }
 

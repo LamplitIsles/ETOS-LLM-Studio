@@ -222,9 +222,6 @@ extension SyncEngine {
             || changedKeys.contains(AppConfigKey.appToolsToolApprovalPolicies.rawValue) {
             AppToolManager.shared.reloadAppConfigBackedState()
         }
-        if changedKeys.contains(AppConfigKey.mcpChatToolsEnabled.rawValue) {
-            MCPManager.shared.reloadAppConfigBackedState()
-        }
         if changedKeys.contains(AppConfigKey.shortcutChatToolsEnabled.rawValue) {
             ShortcutToolManager.shared.reloadAppConfigBackedState()
         }

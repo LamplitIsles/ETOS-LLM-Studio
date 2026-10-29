@@ -132,7 +132,6 @@ public actor LocalLinuxToolExecutor {
         runID: UUID,
         triggeringMessageID: UUID?,
         toolCallID: String,
-        selectedMCPServerIDs: [UUID],
         approvedCommandRuleIDs: Set<UUID> = []
     ) async throws -> String {
         let activity = try LocalLinuxActivityBarrier.shared.begin()
@@ -141,8 +140,7 @@ public actor LocalLinuxToolExecutor {
             sessionID: sessionID,
             triggeringMessageID: triggeringMessageID,
             toolCallID: toolCallID,
-            runID: runID,
-            selectedMCPServerIDs: selectedMCPServerIDs
+            runID: runID
         )
 
         switch LocalLinuxToolName(rawValue: toolName) {

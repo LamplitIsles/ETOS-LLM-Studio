@@ -141,7 +141,6 @@ struct MacBackupRestoreView: View {
                 await workspace.remoteAccess.waitForPendingOperations()
                 await workspace.dataImportOperations.cancelAndWaitForPreviews()
                 await configuration.flushPendingWrites()
-                await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
                 try await Task.detached(priority: .userInitiated) {
                     let access = destination.startAccessingSecurityScopedResource()
                     defer { if access { destination.stopAccessingSecurityScopedResource() } }

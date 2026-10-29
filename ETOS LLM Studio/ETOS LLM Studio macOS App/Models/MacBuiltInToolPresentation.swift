@@ -14,9 +14,6 @@ struct MacBuiltInToolPresentation: Identifiable, Sendable {
         case .widgetCard:
             title = NSLocalizedString("显示网页卡片", comment: "")
             description = NSLocalizedString("允许模型调用 show_widget，在对话中渲染 HTML 网页卡片。", comment: "")
-        case .askUserInput:
-            title = NSLocalizedString("询问用户选项", comment: "")
-            description = NSLocalizedString("允许模型调用 ask_user_input，在回答前向用户发起结构化问答。", comment: "")
         case .getSystemTime:
             title = NSLocalizedString("获取系统时间", comment: "")
             description = NSLocalizedString("允许模型调用 get_system_time，免审批获取当前设备时间，解决 KV 缓存时间感知问题。", comment: "")
@@ -28,7 +25,7 @@ struct MacBuiltInToolPresentation: Identifiable, Sendable {
         case .enabled:
             status = NSLocalizedString("已启用", comment: "")
         case .isolatedBySession: status = NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "")
-        case .widgetDisabled, .askUserInputDisabled, .getSystemTimeDisabled: status = NSLocalizedString("未启用", comment: "")
+        case .widgetDisabled, .getSystemTimeDisabled: status = NSLocalizedString("未启用", comment: "")
         @unknown default: status = NSLocalizedString("未启用", comment: "")
         }
     }
@@ -54,7 +51,6 @@ extension ToolCatalogBuiltInToolKind {
     var appToolKind: AppToolKind? {
         switch self {
         case .widgetCard: .showWidget
-        case .askUserInput: .askUserInput
         case .getSystemTime: .getSystemTime
         @unknown default: nil
         }

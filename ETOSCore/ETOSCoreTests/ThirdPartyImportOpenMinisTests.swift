@@ -3,7 +3,7 @@
 // ============================================================================
 // OpenMinis 兼容导入测试
 // - iOS 与 Android 会话导出
-// - Provider、MCP 与 Skill 配置
+// - Provider 与 Skill 配置
 // - 重复导入稳定标识与 ZIP 路径安全边界
 // ============================================================================
 
@@ -15,8 +15,8 @@ import ZIPFoundation
 @Suite("第三方导入 OpenMinis 兼容测试")
 struct ThirdPartyImportOpenMinisTests {
 
-    @Test("Provider 与本地 stdio MCP 会标记敏感凭据")
-    func importProviderAndMCPWithSensitiveCredentials() throws {
+    @Test("Provider 会标记敏感凭据")
+    func importProviderWithSensitiveCredentials() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try writeJSON([
@@ -36,22 +36,11 @@ struct ThirdPartyImportOpenMinisTests {
                 ]]
             ]
         ], to: directory.appendingPathComponent("provider.json"))
-        try writeJSON([
-            "mcpServers": [
-                "git": [
-                    "command": "uvx",
-                    "args": ["mcp-server-git"],
-                    "env": ["TOKEN": "mcp-secret"]
-                ]
-            ]
-        ], to: directory.appendingPathComponent("mcp.json"))
 
         let prepared = try ThirdPartyImportService.prepareImport(source: .openMinis, fileURL: directory)
         let provider = try #require(prepared.package.providers.first)
-        let server = try #require(prepared.package.mcpServers.first)
 
         #expect(prepared.package.options.contains(.providers))
-        #expect(prepared.package.options.contains(.mcpServers))
         #expect(prepared.containsSensitiveCredentials)
         #expect(provider.apiKeys == ["secret-key"])
         let model = try #require(provider.models.first)
@@ -59,14 +48,6 @@ struct ThirdPartyImportOpenMinisTests {
         #expect(model.inputModalities.contains(.image))
         #expect(model.outputModalities.contains(.image))
         #expect(model.capabilities.contains(.reasoning))
-        #expect(server.displayName == "git")
-        if case .localStdio(let configuration) = server.transport {
-            #expect(configuration.command == "uvx")
-            #expect(configuration.arguments == ["mcp-server-git"])
-            #expect(configuration.environment["TOKEN"] == "mcp-secret")
-        } else {
-            Issue.record("OpenMinis stdio MCP 未解析为本地 stdio transport")
-        }
     }
 
     @Test("Skill 目录会导入清单和资源但不执行脚本")

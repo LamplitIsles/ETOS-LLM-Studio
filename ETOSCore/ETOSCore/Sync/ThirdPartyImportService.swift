@@ -67,7 +67,6 @@ public struct ThirdPartyImportPreparedResult {
     }
 
     public var parsedProvidersCount: Int { package.providers.count }
-    public var parsedMCPServersCount: Int { package.mcpServers.count }
     public var parsedSkillsCount: Int { package.skills.count }
 }
 
@@ -121,16 +120,11 @@ public enum ThirdPartyImportService {
 
         let prepared = try fileURLs.map { try prepareImport(source: source, fileURL: $0) }
         var providerIDs = Set<UUID>()
-        var mcpKeys = Set<String>()
         var skillNames = Set<String>()
         let providers = prepared.flatMap(\.package.providers).filter { providerIDs.insert($0.id).inserted }
-        let mcpServers = prepared.flatMap(\.package.mcpServers).filter { server in
-            mcpKeys.insert("\(server.displayName.lowercased())|\(server.humanReadableEndpoint.lowercased())").inserted
-        }
         let skills = prepared.flatMap(\.package.skills).filter { skillNames.insert($0.name).inserted }
         var options: SyncOptions = []
         if !providers.isEmpty { options.insert(.providers) }
-        if !mcpServers.isEmpty { options.insert(.mcpServers) }
         if !skills.isEmpty { options.insert(.skills) }
         return ThirdPartyImportPreparedResult(
             source: source,
@@ -138,7 +132,6 @@ public enum ThirdPartyImportService {
                 options: options,
                 sourcePlatform: "OpenMinis",
                 providers: providers,
-                mcpServers: mcpServers,
                 skills: skills
             ),
             warnings: Array(Set(prepared.flatMap(\.warnings))).sorted(),
@@ -165,13 +158,11 @@ public enum ThirdPartyImportService {
                 let parsed = try parseOpenMinis(fileURL: fileURL)
                 var options: SyncOptions = []
                 if !parsed.payload.providers.isEmpty { options.insert(.providers) }
-                if !parsed.mcpServers.isEmpty { options.insert(.mcpServers) }
                 if !parsed.skills.isEmpty { options.insert(.skills) }
                 let package = SyncPackage(
                     options: options,
                     sourcePlatform: "OpenMinis",
                     providers: parsed.payload.providers,
-                    mcpServers: parsed.mcpServers,
                     skills: parsed.skills
                 )
                 return ThirdPartyImportPreparedResult(

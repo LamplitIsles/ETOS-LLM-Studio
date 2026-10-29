@@ -44,7 +44,7 @@ extension LocalDebugServer {
             if let documentReplacementCoordinator {
                 try await documentReplacementCoordinator { try install(replacement) }
             } else {
-                let cloud = CloudSyncManager.shared, mcp = MCPManager.shared
+                let cloud = CloudSyncManager.shared
                 guard cloud.beginLocalDataRestore() else {
                     throw NSError(domain: "LocalDebugReplacement", code: 1, userInfo: [
                         NSLocalizedDescriptionKey: NSLocalizedString("当前有数据或工具任务正在运行，请稍后重试。", comment: "调试覆盖与同步互斥")
@@ -52,21 +52,13 @@ extension LocalDebugServer {
                 }
                 var didRestore = false
                 defer { cloud.endLocalDataRestore(didRestore: didRestore) }
-                // 关闭配置库会使旧观察失效，成功和失败都必须重新建立 MCP 的连接与观察。
-                await mcp.prepareForDatabaseRestore()
-                do {
-                    await AppConfigStore.shared.flushPendingWrites()
-                    guard canContinueDebugCommand else { throw CancellationError() }
-                    // 进入文件替换后，不把断开取消传播给提交；成功或回滚都必须等到实际结束。
-                    try await Task.detached(priority: .userInitiated) { try install(replacement) }.value
-                    didRestore = true
-                    await AppConfigStore.shared.reloadFromPersistentStoreAndWait()
-                    NotificationCenter.default.post(name: .snapshotRestoreDidFinish, object: nil)
-                } catch {
-                    await mcp.finishDatabaseRestore()
-                    throw error
-                }
-                await mcp.finishDatabaseRestore()
+                await AppConfigStore.shared.flushPendingWrites()
+                guard canContinueDebugCommand else { throw CancellationError() }
+                // 进入文件替换后，不把断开取消传播给提交；成功或回滚都必须等到实际结束。
+                try await Task.detached(priority: .userInitiated) { try install(replacement) }.value
+                didRestore = true
+                await AppConfigStore.shared.reloadFromPersistentStoreAndWait()
+                NotificationCenter.default.post(name: .snapshotRestoreDidFinish, object: nil)
             }
         } catch {
             await discardDebugUpload(replacement)

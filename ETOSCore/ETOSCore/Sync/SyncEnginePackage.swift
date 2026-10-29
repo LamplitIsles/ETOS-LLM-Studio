@@ -20,7 +20,6 @@ extension SyncEngine {
     ) -> SyncPackage {
         var providers: [Provider] = []
         var backgrounds: [SyncedBackground] = []
-        var mcpServers: [MCPServerConfiguration] = []
         var audioFiles: [SyncedAudio] = []
         var imageFiles: [SyncedImage] = []
         var skills: [SyncedSkillBundle] = []
@@ -55,10 +54,6 @@ extension SyncEngine {
                     return SyncedBackground(filename: url.lastPathComponent, data: data)
                 }
             }
-        }
-
-        if options.contains(.mcpServers) {
-            mcpServers = MCPServerStore.loadServers()
         }
 
         if options.contains(.skills) {
@@ -144,7 +139,6 @@ extension SyncEngine {
             sourcePlatform: currentPlatformName,
             providers: providers,
             backgrounds: backgrounds,
-            mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
@@ -185,12 +179,6 @@ extension SyncEngine {
             if result.imported > 0 {
                 NotificationCenter.default.post(name: .syncBackgroundsUpdated, object: nil)
             }
-        }
-
-        if package.options.contains(.mcpServers) {
-            let result = mergeMCPServers(package.mcpServers)
-            summary.importedMCPServers = result.imported
-            summary.skippedMCPServers = result.skipped
         }
 
         if package.options.contains(.skills) {

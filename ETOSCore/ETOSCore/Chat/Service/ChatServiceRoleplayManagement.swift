@@ -192,16 +192,24 @@ extension ChatService {
                     context: resolved.macroContext
                 ).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !greeting.isEmpty, messages[seededGreetingIndex].content != greeting {
-                    var updatedMessages = messages
-                    updatedMessages[seededGreetingIndex].content = greeting
-                    variableSnapshot.removeValue(
-                        scope: .message,
-                        path: RoleplayDisplayedMessageBridge.variableKey,
-                        messageID: seededGreetingMessageID,
-                        versionIndex: updatedMessages[seededGreetingIndex].getCurrentVersionIndex()
-                    )
-                    roleplayStore.saveVariableSnapshot(variableSnapshot, sessionID: sessionID)
-                    updateMessages(updatedMessages, for: sessionID)
+                    let expected = messages[seededGreetingIndex]
+                    var versionIndex: Int?
+                    if let updatedMessages = mutateRuntimeMessages(for: sessionID, { current in
+                        guard let index = current.firstIndex(where: { $0.id == seededGreetingMessageID }),
+                              ChatMessageEdits.matches(current[index], expected: expected) else { return false }
+                        current[index].content = greeting
+                        versionIndex = current[index].getCurrentVersionIndex()
+                        return true
+                    }), let versionIndex {
+                        variableSnapshot.removeValue(
+                            scope: .message,
+                            path: RoleplayDisplayedMessageBridge.variableKey,
+                            messageID: seededGreetingMessageID,
+                            versionIndex: versionIndex
+                        )
+                        roleplayStore.saveVariableSnapshot(variableSnapshot, sessionID: sessionID)
+                        publishMessagesIfCurrentSession(updatedMessages, for: sessionID)
+                    }
                 }
             }
         }
@@ -257,7 +265,12 @@ extension ChatService {
             versionIndex: 0
         ).updatedSnapshot
         roleplayStore.saveVariableSnapshot(variableSnapshot, sessionID: sessionID)
-        updateMessages([greetingMessage], for: sessionID)
+        guard let updatedMessages = mutateRuntimeMessages(for: sessionID, { current in
+            guard current == messages else { return false }
+            current = [greetingMessage]
+            return true
+        }) else { return }
+        publishMessagesIfCurrentSession(updatedMessages, for: sessionID)
     }
 
     public func unbindRoleplay(sessionID: UUID) {

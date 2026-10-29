@@ -20,7 +20,6 @@ public struct SyncOptions: OptionSet, Codable {
     
     public static let providers = SyncOptions(rawValue: 1 << 0)
     public static let backgrounds = SyncOptions(rawValue: 1 << 2)
-    public static let mcpServers = SyncOptions(rawValue: 1 << 4)
     public static let audioFiles = SyncOptions(rawValue: 1 << 5)  // 音频文件同步选项
     public static let imageFiles = SyncOptions(rawValue: 1 << 6)  // 图片文件同步选项
     public static let shortcutTools = SyncOptions(rawValue: 1 << 7) // 快捷指令工具同步选项
@@ -34,7 +33,6 @@ public struct SyncOptions: OptionSet, Codable {
     public static let fullSync: SyncOptions = [
         .providers,
         .backgrounds,
-        .mcpServers,
         .audioFiles,
         .imageFiles,
         .skills,
@@ -249,7 +247,6 @@ public struct SyncPackage: Codable {
     public var sourcePlatform: String?
     public var providers: [Provider]
     public var backgrounds: [SyncedBackground]
-    public var mcpServers: [MCPServerConfiguration]
     public var audioFiles: [SyncedAudio]
     public var imageFiles: [SyncedImage]
     public var skills: [SyncedSkillBundle]
@@ -267,7 +264,7 @@ public struct SyncPackage: Codable {
     public var appStorageSnapshot: Data?
     
     enum CodingKeys: String, CodingKey {
-        case options, sourcePlatform, providers, backgrounds, mcpServers, audioFiles, imageFiles, skills, shortcutTools, feedbackTickets, dailyPulseRuns, dailyPulseFeedbackHistory, dailyPulsePendingCuration, dailyPulseExternalSignals, dailyPulseTasks, usageStatsDayBundles, fontFiles, fontRouteConfigurationData, appStorageSnapshot
+        case options, sourcePlatform, providers, backgrounds, audioFiles, imageFiles, skills, shortcutTools, feedbackTickets, dailyPulseRuns, dailyPulseFeedbackHistory, dailyPulsePendingCuration, dailyPulseExternalSignals, dailyPulseTasks, usageStatsDayBundles, fontFiles, fontRouteConfigurationData, appStorageSnapshot
     }
     
     public init(
@@ -275,7 +272,6 @@ public struct SyncPackage: Codable {
         sourcePlatform: String? = nil,
         providers: [Provider] = [],
         backgrounds: [SyncedBackground] = [],
-        mcpServers: [MCPServerConfiguration] = [],
         audioFiles: [SyncedAudio] = [],
         imageFiles: [SyncedImage] = [],
         skills: [SyncedSkillBundle] = [],
@@ -295,7 +291,6 @@ public struct SyncPackage: Codable {
         self.sourcePlatform = sourcePlatform
         self.providers = providers
         self.backgrounds = backgrounds
-        self.mcpServers = mcpServers
         self.audioFiles = audioFiles
         self.imageFiles = imageFiles
         self.skills = skills
@@ -318,7 +313,6 @@ public struct SyncPackage: Codable {
         sourcePlatform = try container.decodeIfPresent(String.self, forKey: .sourcePlatform)
         providers = try container.decodeIfPresent([Provider].self, forKey: .providers) ?? []
         backgrounds = try container.decodeIfPresent([SyncedBackground].self, forKey: .backgrounds) ?? []
-        mcpServers = try container.decodeIfPresent([MCPServerConfiguration].self, forKey: .mcpServers) ?? []
         audioFiles = try container.decodeIfPresent([SyncedAudio].self, forKey: .audioFiles) ?? []
         imageFiles = try container.decodeIfPresent([SyncedImage].self, forKey: .imageFiles) ?? []
         skills = try container.decodeIfPresent([SyncedSkillBundle].self, forKey: .skills) ?? []
@@ -342,7 +336,6 @@ public struct SyncPackage: Codable {
 public enum SyncRecordType: String, Codable, CaseIterable, Sendable {
     case provider
     case background
-    case mcpServer
     case audioFile
     case imageFile
     case skill
@@ -468,8 +461,6 @@ public struct SyncMergeSummary: Equatable {
     public var skippedProviders: Int
     public var importedBackgrounds: Int
     public var skippedBackgrounds: Int
-    public var importedMCPServers: Int
-    public var skippedMCPServers: Int
     public var importedAudioFiles: Int
     public var skippedAudioFiles: Int
     public var importedImageFiles: Int
@@ -496,8 +487,6 @@ public struct SyncMergeSummary: Equatable {
         skippedProviders: Int = 0,
         importedBackgrounds: Int = 0,
         skippedBackgrounds: Int = 0,
-        importedMCPServers: Int = 0,
-        skippedMCPServers: Int = 0,
         importedAudioFiles: Int = 0,
         skippedAudioFiles: Int = 0,
         importedImageFiles: Int = 0,
@@ -523,8 +512,6 @@ public struct SyncMergeSummary: Equatable {
         self.skippedProviders = skippedProviders
         self.importedBackgrounds = importedBackgrounds
         self.skippedBackgrounds = skippedBackgrounds
-        self.importedMCPServers = importedMCPServers
-        self.skippedMCPServers = skippedMCPServers
         self.importedAudioFiles = importedAudioFiles
         self.skippedAudioFiles = skippedAudioFiles
         self.importedImageFiles = importedImageFiles
@@ -552,8 +539,6 @@ public struct SyncMergeSummary: Equatable {
         skippedProviders: 0,
         importedBackgrounds: 0,
         skippedBackgrounds: 0,
-        importedMCPServers: 0,
-        skippedMCPServers: 0,
         importedAudioFiles: 0,
         skippedAudioFiles: 0,
         importedImageFiles: 0,

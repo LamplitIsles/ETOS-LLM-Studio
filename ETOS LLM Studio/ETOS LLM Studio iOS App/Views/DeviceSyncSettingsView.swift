@@ -308,14 +308,8 @@ struct DeviceSyncSettingsView: View {
         if summary.importedProviders > 0 {
             parts.append(String(format: NSLocalizedString("提供商 +%d", comment: ""), summary.importedProviders))
         }
-        if summary.importedSessions > 0 {
-            parts.append(String(format: NSLocalizedString("会话 +%d", comment: ""), summary.importedSessions))
-        }
         if summary.importedBackgrounds > 0 {
             parts.append(String(format: NSLocalizedString("背景 +%d", comment: ""), summary.importedBackgrounds))
-        }
-        if summary.importedMCPServers > 0 {
-            parts.append(String(format: NSLocalizedString("MCP +%d", comment: ""), summary.importedMCPServers))
         }
         if summary.importedAudioFiles > 0 {
             parts.append(String(format: NSLocalizedString("音频 +%d", comment: ""), summary.importedAudioFiles))

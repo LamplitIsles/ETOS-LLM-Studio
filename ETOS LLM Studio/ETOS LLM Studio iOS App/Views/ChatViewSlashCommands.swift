@@ -38,8 +38,6 @@ extension ChatView {
             presentSlashCommandDestination(.dailyPulse)
         case .usage:
             presentSlashCommandDestination(.usageAnalytics)
-        case .mcp:
-            presentSlashCommandDestination(.mcp)
         case .skills:
             presentSlashCommandDestination(.agentSkills)
         case .shortcuts:
@@ -53,7 +51,7 @@ extension ChatView {
         case .retry:
             guard viewModel.canQuickRetryLatestMessage else {
                 showUnavailableSlashCommandNotice(
-                    NSLocalizedString("当前没有可重试的回复。", comment: "No response available to retry")
+                    NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
                 )
                 return
             }

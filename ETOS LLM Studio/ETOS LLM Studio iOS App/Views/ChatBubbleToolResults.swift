@@ -128,9 +128,6 @@ struct ToolResultsDisclosureView: View, Equatable {
         if toolName == "save_memory" {
             return NSLocalizedString("添加记忆", comment: "Tool label for saving memory.")
         }
-        if let label = MCPManager.shared.displayLabel(for: toolName) {
-            return label
-        }
         if let label = ShortcutToolManager.shared.displayLabel(for: toolName) {
             return label
         }

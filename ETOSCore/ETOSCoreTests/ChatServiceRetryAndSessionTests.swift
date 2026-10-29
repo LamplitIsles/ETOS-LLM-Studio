@@ -233,12 +233,14 @@ extension ChatServiceTests {
         let sourceID = try #require(retry.pendingToolCallMessageID)
         chatService.updateMessages(retry.storedMessages, for: sessionID)
 
-        let resumed = await chatService.resumePendingToolCalls(
-            sourceMessageID: sourceID,
-            loadingMessageID: retry.loadingMessage.id,
-            sessionID: sessionID,
-            agentRunID: UUID()
-        )
+        let token = UUID()
+        chatService.setRequestContext(.init(token: token, task: nil, loadingMessageID: retry.loadingMessage.id, imageGenerationContext: nil), for: sessionID)
+        let resumed = await ChatRequestTaskIdentity.$current.withValue(.init(sessionID: sessionID, token: token)) {
+            await chatService.resumePendingToolCalls(
+                sourceMessageID: sourceID, loadingMessageID: retry.loadingMessage.id, sessionID: sessionID
+            )
+        }
+        chatService.clearRequestContextIfNeeded(for: sessionID, token: token)
         let stored = chatService.messagesForSessionSubject.value
         let reconstructed = try #require(stored.first(where: { $0.role == .tool }))
 
@@ -251,8 +253,8 @@ extension ChatServiceTests {
         await cleanup()
     }
 
-    @Test("轮尾空工具回调会先补执行再在原版本续写")
-    func testRetryExecutesBrokenTailToolCallBeforeContinuing() async throws {
+    @Test("轮尾空工具回调的结果未知，不自动重放")
+    func testRetryDoesNotReplayUnknownTailToolCall() async throws {
         await cleanup()
         let sessionID = try #require(chatService.currentSessionSubject.value?.id)
         let brokenCall = InternalToolCall(
@@ -276,22 +278,22 @@ extension ChatServiceTests {
         let sourceID = try #require(retry.pendingToolCallMessageID)
         chatService.updateMessages(retry.storedMessages, for: sessionID)
 
-        let resumed = await chatService.resumePendingToolCalls(
-            sourceMessageID: sourceID,
-            loadingMessageID: retry.loadingMessage.id,
-            sessionID: sessionID,
-            agentRunID: UUID()
-        )
+        let token = UUID()
+        chatService.setRequestContext(.init(token: token, task: nil, loadingMessageID: retry.loadingMessage.id, imageGenerationContext: nil), for: sessionID)
+        let resumed = await ChatRequestTaskIdentity.$current.withValue(.init(sessionID: sessionID, token: token)) {
+            await chatService.resumePendingToolCalls(
+                sourceMessageID: sourceID, loadingMessageID: retry.loadingMessage.id, sessionID: sessionID
+            )
+        }
+        chatService.clearRequestContextIfNeeded(for: sessionID, token: token)
         let stored = chatService.messagesForSessionSubject.value
         let recoveredSource = try #require(stored.first(where: { $0.id == sourceID }))
-        let recoveredResult = try #require(recoveredSource.toolCalls?.first?.result)
-
-        #expect(resumed.shouldContinueRequest)
+        #expect(!resumed.shouldContinueRequest)
+        #expect(resumed.unknownToolCallID == brokenCall.id)
         #expect(!retry.createsNewVersion)
-        #expect(!recoveredResult.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(!stored.contains(where: { $0.id == emptyCallback.id }))
+        #expect(recoveredSource.toolCalls?.first?.result == nil)
+        #expect(stored.contains(where: { $0.id == emptyCallback.id }))
         #expect(stored.filter { $0.role == .tool }.count == 1)
-        #expect(resumed.messages.last?.id == retry.loadingMessage.id)
 
         await cleanup()
     }

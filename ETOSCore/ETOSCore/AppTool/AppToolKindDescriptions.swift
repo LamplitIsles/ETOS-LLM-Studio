@@ -16,11 +16,6 @@ extension AppToolKind {
                 "在 iOS 聊天中把传入的 HTML Widget 渲染为固定画幅的内联网页卡片。App 会将 widget_code 作为 HTML 片段插入宿主管理的容器，并根据气泡可用宽度与 inline_aspect_ratio 计算卡片高度；不要包含 html、head、body 或 viewport meta，也不要修改宿主页面。请让顶层内容使用 100% 宽高填满容器，并根据容器尺寸响应式布局。inline_aspect_ratio 和 widget_code 必填，title 和 loading_messages 可选。",
                 comment: "Show widget tool description sent to model on iOS"
             )
-        case .askUserInput:
-            return NSLocalizedString(
-                "向用户展示结构化问答面板。支持 single_select / multi_select、可选的“其他输入”、必填校验与自定义提交按钮文案。此工具用于在回答前收集关键信息，调用后应等待用户补充。",
-                comment: "Ask user input tool description sent to model"
-            )
         case .getSystemTime:
             return NSLocalizedString(
                 "获取当前设备系统时间。无需参数；当用户询问当前时间、日期或需要实时本地时间线索时调用。",

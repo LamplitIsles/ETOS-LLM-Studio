@@ -227,7 +227,6 @@ public enum BackgroundGenerationAudioKeepAliveSettings {
 public enum AppConfigKey: String, CaseIterable, Sendable {
     case syncProviders = "sync.options.providers"
     case syncBackgrounds = "sync.options.backgrounds"
-    case syncMCPServers = "sync.options.mcpServers"
     case syncAudioFiles = "sync.options.audioFiles"
     case syncImageFiles = "sync.options.imageFiles"
     case syncSkills = "sync.options.skills"
@@ -260,7 +259,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case localLinuxDefaultSessionMode = "localLinux.defaultSessionMode"
     case localLinuxDefaultTimeoutSeconds = "localLinux.defaultTimeoutSeconds"
     case localLinuxOutputPreviewBytes = "localLinux.outputPreviewBytes"
-    case localLinuxLocalMCPOnDemand = "localLinux.localMCP.onDemand"
     case localLinuxActivePromptProfileID = "localLinux.activePromptProfileID"
     case localLinuxWorkspaceCleanupPolicy = "localLinux.workspace.cleanupPolicy"
     case localLinuxTerminalShortcutIDs = "localLinux.terminal.shortcutIDs"
@@ -271,9 +269,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case appToolsEnabledToolIDs = "appTools.enabledToolIDs"
     case appToolsKnownDefaultToolIDs = "appTools.knownDefaultToolIDs"
     case appToolsToolApprovalPolicies = "appTools.toolApprovalPolicies"
-    case mcpChatToolsEnabled = "mcp.chatToolsEnabled"
-    case mcpToolCallTitleEnabled = "mcp.toolCallTitle.enabled"
-    case mcpDeletedBuiltInServerIDs = "mcp.deletedBuiltInServerIDs"
     case skillsChatToolsEnabled = "skills.chatToolsEnabled"
     case skillsEnabledNames = "skills.enabledNames"
     case shortcutChatToolsEnabled = "shortcut.chatToolsEnabled"
@@ -366,7 +361,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case fontLineSpacingEmIOS = "font.lineSpacingEm.iOS"
     case fontLineSpacingEmWatchOS = "font.lineSpacingEm.watchOS"
     case appLanguage = "ui.appLanguage"
-    case watchInputQuickActionConfiguration = "watch.input.quickActions.configuration"
     case watchAttachmentLastSource = "watch.attachment.lastSource"
     case watchAttachmentSourceHistory = "watch.attachment.sourceHistory"
     case watchBackgroundLastSource = "watch.background.lastSource"
@@ -414,7 +408,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
         switch self {
         case .syncProviders,
              .syncBackgrounds,
-             .syncMCPServers,
              .syncAudioFiles,
              .syncImageFiles,
              .syncSkills,
@@ -451,8 +444,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
         case .localLinuxEnabled:
             return .bool(false)
         case .localLinuxEnvironmentPrivacyEnabled,
-             .localLinuxCommandSafetyEnabled,
-             .localLinuxLocalMCPOnDemand:
+             .localLinuxCommandSafetyEnabled:
             return .bool(true)
         case .localLinuxDefaultMountAccess:
             return .text(LocalLinuxMountAccess.readOnly.rawValue)
@@ -477,23 +469,19 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
         case .browserAgentDelegateToIPhone:
             return .bool(false)
         case .appToolsChatToolsEnabled,
-             .mcpChatToolsEnabled,
-             .mcpToolCallTitleEnabled,
              .skillsChatToolsEnabled,
              .shortcutChatToolsEnabled:
             return .bool(true)
         case .appToolsEnabledToolIDs:
             #if os(watchOS)
-            return .text("[\"ask_user_input\",\"get_system_time\"]")
+            return .text("[\"get_system_time\"]")
             #else
-            return .text("[\"ask_user_input\",\"get_system_time\",\"show_widget\"]")
+            return .text("[\"get_system_time\",\"show_widget\"]")
             #endif
         case .appToolsKnownDefaultToolIDs:
             return .text("[]")
         case .appToolsToolApprovalPolicies:
             return .text("{}")
-        case .mcpDeletedBuiltInServerIDs:
-            return .text("[]")
         case .skillsEnabledNames:
             return .text("[]")
         case .shortcutOfficialImportShortcutName:
@@ -661,8 +649,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
             return .real(FontLibrary.defaultWatchLineSpacingEm)
         case .appLanguage:
             return .text("system")
-        case .watchInputQuickActionConfiguration:
-            return .text(WatchInputQuickActionConfiguration.defaultConfigurationJSON)
         case .watchAttachmentLastSource,
              .watchBackgroundLastSource,
              .chatComposerDraft:
@@ -699,7 +685,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
                 "toolCenter",
                 "dailyPulse",
                 "usageAnalytics",
-                "mcp",
                 "agentSkills",
                 "shortcuts",
                 "roleplay",

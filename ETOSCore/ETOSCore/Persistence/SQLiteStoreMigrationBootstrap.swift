@@ -17,7 +17,6 @@ public enum SQLiteStoreMigrationBootstrap {
         _ = ShortcutToolStore.loadTools()
         _ = FeedbackStore.loadTickets()
         _ = ConfigLoader.loadProviders()
-        _ = MCPServerStore.loadServers()
 
         logger.info("已触发启动期 JSON→SQLite 迁移检查。")
     }

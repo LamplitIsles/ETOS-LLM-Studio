@@ -13,6 +13,7 @@ enum OpenAIResponsesLocalShellProtocol {
     static let skillsField = "openai_responses_local_shell_skills"
 }
 
+#if os(macOS)
 public actor OpenAIResponsesLocalShellRuntime {
     public static let shared = OpenAIResponsesLocalShellRuntime()
 
@@ -107,3 +108,5 @@ public actor OpenAIResponsesLocalShellRuntime {
     }
     #endif
 }
+
+#endif

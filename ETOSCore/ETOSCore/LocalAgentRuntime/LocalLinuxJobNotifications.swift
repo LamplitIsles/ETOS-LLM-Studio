@@ -1,6 +1,7 @@
 import Foundation
 
 public extension Notification.Name {
+    static let localLinuxConfigurationDidChange = Notification.Name("localLinuxConfigurationDidChange")
     static let localLinuxJobsDidChange = Notification.Name("localLinuxJobsDidChange")
     static let localLinuxJobOutputDidChange = Notification.Name("localLinuxJobOutputDidChange")
     static let localLinuxStorageDidChange = Notification.Name("localLinuxStorageDidChange")

@@ -133,12 +133,6 @@ struct SettingsView: View {
                 }
 
                 NavigationLink {
-                    MCPIntegrationView()
-                } label: {
-                    SettingsListIconLabel("MCP 工具集成", icon: .mcp)
-                }
-
-                NavigationLink {
                     AgentSkillsView()
                 } label: {
                     SettingsListIconLabel("Agent Skills", icon: .agentSkills)

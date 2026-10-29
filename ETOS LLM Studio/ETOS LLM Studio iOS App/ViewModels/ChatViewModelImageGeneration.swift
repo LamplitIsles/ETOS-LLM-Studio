@@ -35,16 +35,29 @@ extension ChatViewModel {
         model: RunnableModel? = nil,
         runtimeOverrideParameters: [String: JSONValue] = [:]
     ) {
-        guard !isSendingMessage else { return }
-        let targetSessionID = currentSession?.id
+        guard let targetSessionID = currentSession?.id else {
+            messageEditErrorMessage = NSLocalizedString("会话已不存在，内容未发送。", comment: "Missing send session")
+            return
+        }
+        let lease: ChatRequestLease
+        switch chatService.beginRequest(sessionID: targetSessionID) {
+        case .success(let acquired): lease = acquired
+        case .failure(.busy):
+            messageEditErrorMessage = NSLocalizedString("当前会话正在处理，请稍后再发送。", comment: "Session busy")
+            return
+        case .failure(.sessionMissing):
+            messageEditErrorMessage = NSLocalizedString("会话已不存在，内容未发送。", comment: "Missing send session")
+            return
+        }
         Task { [weak self] in
-            guard let self else { return }
+            guard let self else { lease.release(); return }
             await chatService.generateImageAndProcessMessage(
                 prompt: prompt,
                 imageAttachments: referenceImages,
                 runnableModel: model,
                 runtimeOverrideParameters: runtimeOverrideParameters,
-                targetSessionID: targetSessionID
+                targetSessionID: targetSessionID,
+                requestLease: lease
             )
         }
     }
@@ -58,57 +71,14 @@ extension ChatViewModel {
         referenceImages: [ImageAttachment] = [],
         runtimeOverrideParameters: [String: JSONValue] = [:]
     ) {
-        let prompt = imageGenerationFeedback.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty else { return }
-        generateImage(
-            prompt: prompt,
-            referenceImages: referenceImages,
-            model: model,
-            runtimeOverrideParameters: runtimeOverrideParameters
-        )
+        messageEditErrorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
     }
 
     func removeImageAttachment(fileName: String, fromMessageID messageID: UUID) {
-        guard let sessionID = currentSession?.id else { return }
-        guard let messageIndex = allMessagesForSession.firstIndex(where: { $0.id == messageID }) else { return }
-
-        var updatedMessages = allMessagesForSession
-        var updatedMessage = updatedMessages[messageIndex]
-        guard var imageFileNames = updatedMessage.imageFileNames else { return }
-
-        imageFileNames.removeAll { $0 == fileName }
-        updatedMessage.imageFileNames = imageFileNames.isEmpty ? nil : imageFileNames
-        var excludedImageFileNames = updatedMessage.modelExcludedImageFileNames ?? []
-        excludedImageFileNames.removeAll { $0 == fileName }
-        updatedMessage.modelExcludedImageFileNames = excludedImageFileNames.isEmpty ? nil : excludedImageFileNames
-
-        let hasRemainingPayload = (
-            !updatedMessage.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !ChatMessageAtomicContentSupport.isAttachmentPlaceholder(updatedMessage.content)
-        )
-            || !(updatedMessage.reasoningContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !(updatedMessage.toolCalls ?? []).isEmpty
-            || !(updatedMessage.imageFileNames ?? []).isEmpty
-            || updatedMessage.audioFileName != nil
-            || !(updatedMessage.fileFileNames ?? []).isEmpty
-        if !hasRemainingPayload {
-            chatService.deleteMessage(updatedMessage)
-            saveCurrentSessionDetails()
-            return
-        }
-
-        updatedMessages[messageIndex] = updatedMessage
-
-        chatService.updateMessages(updatedMessages, for: sessionID)
-        saveCurrentSessionDetails()
-
-        let isStillReferenced = updatedMessages.contains { message in
-            (message.imageFileNames ?? []).contains(fileName)
-        }
-        if !isStillReferenced {
-            Task.detached(priority: .utility) {
-                Persistence.deleteImage(fileName: fileName)
-            }
+        guard let sessionID = currentSession?.id,
+              let expected = findMessage(by: messageID) else { return }
+        if !chatService.removeImageAttachment(fileName: fileName, from: expected, sessionID: sessionID) {
+            reportMessageEditFailure()
         }
     }
 
@@ -118,11 +88,12 @@ extension ChatViewModel {
 
     @discardableResult
     func convertMarkdownImagesToDisplayAttachments(in message: ChatMessage) async -> Int {
+        guard let sessionID = currentSession?.id else { return 0 }
         let extraction = await chatService.extractInlineImagesFromMarkdown(message.content)
         guard !extraction.imageFileNames.isEmpty else { return 0 }
 
-        guard var updatedMessage = findMessage(by: message.id),
-              updatedMessage.content == message.content else {
+        guard let expected = chatService.messagesSnapshot(for: sessionID).first(where: { $0.id == message.id }),
+              expected.content == message.content else {
             let orphanedFileNames = extraction.imageFileNames
             await Task.detached(priority: .utility) {
                 for fileName in orphanedFileNames {
@@ -132,11 +103,20 @@ extension ChatViewModel {
             return 0
         }
 
+        var updatedMessage = expected
         updatedMessage.content = extraction.cleanedContent
         updatedMessage.imageFileNames = (updatedMessage.imageFileNames ?? []) + extraction.imageFileNames
         updatedMessage.modelExcludedImageFileNames =
             (updatedMessage.modelExcludedImageFileNames ?? []) + extraction.imageFileNames
-        updateMessage(updatedMessage)
+        guard updateMessage(updatedMessage, expected: expected, sessionID: sessionID) else {
+            let orphanedFileNames = extraction.imageFileNames
+            await Task.detached(priority: .utility) {
+                for fileName in orphanedFileNames {
+                    Persistence.deleteImage(fileName: fileName)
+                }
+            }.value
+            return 0
+        }
         return extraction.imageFileNames.count
     }
 

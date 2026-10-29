@@ -119,7 +119,6 @@ public final class AppConfigStore: ObservableObject {
 
     @Published public var syncProviders: Bool { didSet { write(.syncProviders, syncProviders) } }
     @Published public var syncBackgrounds: Bool { didSet { write(.syncBackgrounds, syncBackgrounds) } }
-    @Published public var syncMCPServers: Bool { didSet { write(.syncMCPServers, syncMCPServers) } }
     @Published public var syncAudioFiles: Bool { didSet { write(.syncAudioFiles, syncAudioFiles) } }
     @Published public var syncImageFiles: Bool { didSet { write(.syncImageFiles, syncImageFiles) } }
     @Published public var syncSkills: Bool { didSet { write(.syncSkills, syncSkills) } }
@@ -155,7 +154,6 @@ public final class AppConfigStore: ObservableObject {
     @Published public var localLinuxDefaultSessionMode: String { didSet { write(.localLinuxDefaultSessionMode, localLinuxDefaultSessionMode) } }
     @Published public var localLinuxDefaultTimeoutSeconds: Int { didSet { write(.localLinuxDefaultTimeoutSeconds, localLinuxDefaultTimeoutSeconds) } }
     @Published public var localLinuxOutputPreviewBytes: Int { didSet { write(.localLinuxOutputPreviewBytes, localLinuxOutputPreviewBytes) } }
-    @Published public var localLinuxLocalMCPOnDemand: Bool { didSet { write(.localLinuxLocalMCPOnDemand, localLinuxLocalMCPOnDemand) } }
     @Published public var localLinuxActivePromptProfileID: String { didSet { write(.localLinuxActivePromptProfileID, localLinuxActivePromptProfileID) } }
     @Published public var localLinuxWorkspaceCleanupPolicy: String { didSet { write(.localLinuxWorkspaceCleanupPolicy, localLinuxWorkspaceCleanupPolicy) } }
     @Published public var localLinuxTerminalShortcutIDs: String { didSet { write(.localLinuxTerminalShortcutIDs, localLinuxTerminalShortcutIDs) } }
@@ -352,25 +350,6 @@ public final class AppConfigStore: ObservableObject {
         }
     }
     @Published public var appLanguage: String { didSet { write(.appLanguage, appLanguage) } }
-    @Published public var watchInputQuickActionConfiguration: String {
-        didSet {
-            write(.watchInputQuickActionConfiguration, watchInputQuickActionConfiguration)
-            let decoded = WatchInputQuickActionConfiguration.decoded(
-                from: watchInputQuickActionConfiguration
-            )
-            if watchInputQuickActionSettings != decoded {
-                watchInputQuickActionSettings = decoded
-            }
-        }
-    }
-    @Published public var watchInputQuickActionSettings: WatchInputQuickActionConfiguration {
-        didSet {
-            let encoded = watchInputQuickActionSettings.encodedString()
-            if watchInputQuickActionConfiguration != encoded {
-                watchInputQuickActionConfiguration = encoded
-            }
-        }
-    }
     @Published public var watchAttachmentLastSource: String { didSet { write(.watchAttachmentLastSource, watchAttachmentLastSource) } }
     @Published public var watchAttachmentSourceHistory: String { didSet { write(.watchAttachmentSourceHistory, watchAttachmentSourceHistory) } }
     @Published public var watchBackgroundLastSource: String { didSet { write(.watchBackgroundLastSource, watchBackgroundLastSource) } }
@@ -448,7 +427,6 @@ public final class AppConfigStore: ObservableObject {
         modelPickerFolderPathsByProvider = updated
     }
     @Published public var chatQuickActionIDs: String { didSet { write(.chatQuickActionIDs, chatQuickActionIDs) } }
-    }
     @Published public var enableSlashCommands: Bool { didSet { write(.enableSlashCommands, enableSlashCommands) } }
     @Published public var chatComposerStyle: String { didSet { write(.chatComposerStyle, chatComposerStyle) } }
     @Published public var iOSHardwareKeyboardReturnSendsMessage: Bool {
@@ -516,7 +494,6 @@ public final class AppConfigStore: ObservableObject {
 
         syncProviders = Self.boolValue(.syncProviders, userDefaults: userDefaults)
         syncBackgrounds = Self.boolValue(.syncBackgrounds, userDefaults: userDefaults)
-        syncMCPServers = Self.boolValue(.syncMCPServers, userDefaults: userDefaults)
         syncAudioFiles = Self.boolValue(.syncAudioFiles, userDefaults: userDefaults)
         syncImageFiles = Self.boolValue(.syncImageFiles, userDefaults: userDefaults)
         syncSkills = Self.boolValue(.syncSkills, userDefaults: userDefaults)
@@ -555,7 +532,6 @@ public final class AppConfigStore: ObservableObject {
         localLinuxDefaultSessionMode = Self.textValue(.localLinuxDefaultSessionMode, userDefaults: userDefaults)
         localLinuxDefaultTimeoutSeconds = Self.integerValue(.localLinuxDefaultTimeoutSeconds, userDefaults: userDefaults)
         localLinuxOutputPreviewBytes = Self.integerValue(.localLinuxOutputPreviewBytes, userDefaults: userDefaults)
-        localLinuxLocalMCPOnDemand = Self.boolValue(.localLinuxLocalMCPOnDemand, userDefaults: userDefaults)
         localLinuxActivePromptProfileID = Self.textValue(.localLinuxActivePromptProfileID, userDefaults: userDefaults)
         localLinuxWorkspaceCleanupPolicy = Self.textValue(.localLinuxWorkspaceCleanupPolicy, userDefaults: userDefaults)
         localLinuxTerminalShortcutIDs = Self.textValue(.localLinuxTerminalShortcutIDs, userDefaults: userDefaults)
@@ -651,14 +627,6 @@ public final class AppConfigStore: ObservableObject {
         fontLineSpacingEmIOS = Self.realValue(.fontLineSpacingEmIOS, userDefaults: userDefaults)
         fontLineSpacingEmWatchOS = Self.realValue(.fontLineSpacingEmWatchOS, userDefaults: userDefaults)
         appLanguage = Self.textValue(.appLanguage, userDefaults: userDefaults)
-        let initialWatchInputQuickActionConfiguration = Self.textValue(
-            .watchInputQuickActionConfiguration,
-            userDefaults: userDefaults
-        )
-        watchInputQuickActionConfiguration = initialWatchInputQuickActionConfiguration
-        watchInputQuickActionSettings = WatchInputQuickActionConfiguration.decoded(
-            from: initialWatchInputQuickActionConfiguration
-        )
         watchAttachmentLastSource = Self.textValue(.watchAttachmentLastSource, userDefaults: userDefaults)
         watchAttachmentSourceHistory = Self.textValue(.watchAttachmentSourceHistory, userDefaults: userDefaults)
         watchBackgroundLastSource = Self.textValue(.watchBackgroundLastSource, userDefaults: userDefaults)

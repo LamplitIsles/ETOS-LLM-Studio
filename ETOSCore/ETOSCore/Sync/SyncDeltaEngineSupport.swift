@@ -59,7 +59,6 @@ extension SyncDeltaEngine {
 
         let providers = package.providers.filter { shouldKeep(.provider, $0.id.uuidString) }
         let backgrounds = package.backgrounds.filter { shouldKeep(.background, $0.filename) }
-        let mcpServers = package.mcpServers.filter { shouldKeep(.mcpServer, $0.id.uuidString) }
         let audioFiles = package.audioFiles.filter { shouldKeep(.audioFile, $0.filename) }
         let imageFiles = package.imageFiles.filter { shouldKeep(.imageFile, $0.filename) }
         let skills = package.skills.filter { shouldKeep(.skill, $0.name) }
@@ -89,7 +88,6 @@ extension SyncDeltaEngine {
         var options = package.options
         if package.options.contains(.providers), !package.providers.isEmpty, providers.isEmpty { options.remove(.providers) }
         if package.options.contains(.backgrounds), !package.backgrounds.isEmpty, backgrounds.isEmpty { options.remove(.backgrounds) }
-        if package.options.contains(.mcpServers), !package.mcpServers.isEmpty, mcpServers.isEmpty { options.remove(.mcpServers) }
         if package.options.contains(.audioFiles), !package.audioFiles.isEmpty, audioFiles.isEmpty { options.remove(.audioFiles) }
         if package.options.contains(.imageFiles), !package.imageFiles.isEmpty, imageFiles.isEmpty { options.remove(.imageFiles) }
         if package.options.contains(.skills), !package.skills.isEmpty, skills.isEmpty { options.remove(.skills) }
@@ -114,7 +112,6 @@ extension SyncDeltaEngine {
             sourcePlatform: package.sourcePlatform,
             providers: providers,
             backgrounds: backgrounds,
-            mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
@@ -165,17 +162,6 @@ extension SyncDeltaEngine {
                     type: .background,
                     recordID: $0.filename,
                     checksum: $0.checksum,
-                    updatedAt: .distantPast
-                )
-            })
-        }
-
-        if package.options.contains(.mcpServers) {
-            records.append(contentsOf: package.mcpServers.map {
-                SyncRecordDescriptor(
-                    type: .mcpServer,
-                    recordID: $0.id.uuidString,
-                    checksum: stableChecksum($0),
                     updatedAt: .distantPast
                 )
             })
@@ -326,7 +312,6 @@ extension SyncDeltaEngine {
 
         var providers: [Provider] = []
         var backgrounds: [SyncedBackground] = []
-        var mcpServers: [MCPServerConfiguration] = []
         var audioFiles: [SyncedAudio] = []
         var imageFiles: [SyncedImage] = []
         var skills: [SyncedSkillBundle] = []
@@ -344,7 +329,6 @@ extension SyncDeltaEngine {
 
         providers = full.providers.filter { keys.contains(SyncRecordDescriptor.key(type: .provider, recordID: $0.id.uuidString)) }
         backgrounds = full.backgrounds.filter { keys.contains(SyncRecordDescriptor.key(type: .background, recordID: $0.filename)) }
-        mcpServers = full.mcpServers.filter { keys.contains(SyncRecordDescriptor.key(type: .mcpServer, recordID: $0.id.uuidString)) }
         audioFiles = full.audioFiles.filter { keys.contains(SyncRecordDescriptor.key(type: .audioFile, recordID: $0.filename)) }
         imageFiles = full.imageFiles.filter { keys.contains(SyncRecordDescriptor.key(type: .imageFile, recordID: $0.filename)) }
         skills = full.skills.filter { keys.contains(SyncRecordDescriptor.key(type: .skill, recordID: $0.name)) }
@@ -386,7 +370,6 @@ extension SyncDeltaEngine {
         var options: SyncOptions = []
         if !providers.isEmpty { options.insert(.providers) }
         if !backgrounds.isEmpty { options.insert(.backgrounds) }
-        if !mcpServers.isEmpty { options.insert(.mcpServers) }
         if !audioFiles.isEmpty { options.insert(.audioFiles) }
         if !imageFiles.isEmpty { options.insert(.imageFiles) }
         if !skills.isEmpty { options.insert(.skills) }
@@ -410,7 +393,6 @@ extension SyncDeltaEngine {
             sourcePlatform: full.sourcePlatform,
             providers: providers,
             backgrounds: backgrounds,
-            mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
@@ -460,8 +442,6 @@ extension SyncDeltaEngine {
             return .providers
         case .background:
             return .backgrounds
-        case .mcpServer:
-            return .mcpServers
         case .audioFile:
             return .audioFiles
         case .imageFile:

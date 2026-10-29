@@ -1,0 +1,63 @@
+version: 1
+bundleID: com.ericterminal.els
+product: ETOSApp
+infoPath: swiftpm/iOSInfo.plist
+entitlementsPath: "ETOS LLM Studio/ETOS LLM Studio iOS App/ETOS LLM Studio iOS App.entitlements"
+iconPath: "ETOS LLM Studio/ETOS LLM Studio iOS App/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+skipLSP: true
+resources:
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/PrivacyInfo.xcprivacy"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/Assets.xcassets"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/ar.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/en.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/es.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/fr.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/ja.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/ru.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/zh-Hans.lproj"
+  - "ETOS LLM Studio/ETOS LLM Studio iOS App/zh-Hant-HK.lproj"
+extensions:
+  - product: ETOSShare
+    bundleID: com.ericterminal.els.share
+    infoPath: swiftpm/ShareInfo.plist
+    entitlementsPath: "ETOS LLM Studio/ETOS Agent Share/ETOS Agent ShareDebug.entitlements"
+    resources:
+      - "ETOS LLM Studio/ETOS Agent Share/PrivacyInfo.xcprivacy"
+      - "ETOS LLM Studio/ETOS Agent Share/Base.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/ar.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/en.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/es.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/fr.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/ja.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/ru.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/zh-Hans.lproj"
+      - "ETOS LLM Studio/ETOS Agent Share/zh-Hant-HK.lproj"
+  - product: ETOSWidgets
+    bundleID: com.ericterminal.els.widgets
+    infoPath: swiftpm/WidgetsInfo.plist
+    entitlementsPath: "ETOS LLM Studio/ETOS Agent Widgets/ETOS Agent WidgetsDebug.entitlements"
+    resources:
+      - "ETOS LLM Studio/ETOS Agent Widgets/PrivacyInfo.xcprivacy"
+      - "ETOS LLM Studio/ETOS Agent Widgets/Assets.xcassets"
+      - "ETOS LLM Studio/ETOS Agent Widgets/ar.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/en.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/es.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/fr.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/ja.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/ru.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/zh-Hans.lproj"
+      - "ETOS LLM Studio/ETOS Agent Widgets/zh-Hant-HK.lproj"
+  - product: ETOSWorkspaceProvider
+    bundleID: com.ericterminal.els.workspace-provider
+    infoPath: swiftpm/WorkspaceProviderInfo.plist
+    entitlementsPath: "ETOS LLM Studio/ETOS Workspace Provider/ETOS_Workspace_Provider.entitlements"
+    resources:
+      - "ETOS LLM Studio/ETOS Workspace Provider/PrivacyInfo.xcprivacy"
+      - "ETOS LLM Studio/ETOS Workspace Provider/ar.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/en.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/es.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/fr.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/ja.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/ru.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/zh-Hans.lproj"
+      - "ETOS LLM Studio/ETOS Workspace Provider/zh-Hant-HK.lproj"

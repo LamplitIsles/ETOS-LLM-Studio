@@ -109,9 +109,6 @@ struct MacSessionListView: View {
                         }
                     }
                     Spacer()
-                    if workspace.pendingQuestionnaireSessionIDs.contains(row.id) {
-                        Image(systemName: "questionmark.bubble").help(NSLocalizedString("等待你的回答", comment: ""))
-                    }
                     if workspace.runningSessionIDs.contains(row.id) { ProgressView().controlSize(.small) }
                 }
                 .padding(.vertical, 4)

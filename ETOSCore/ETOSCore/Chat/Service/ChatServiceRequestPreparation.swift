@@ -18,7 +18,6 @@ extension ChatService {
 
     struct AuxiliaryContextPolicy {
         let includeBuiltInAppTools: Bool
-        let includeMCPTools: Bool
         let includeShortcutTools: Bool
         let includeSkills: Bool
     }
@@ -32,7 +31,6 @@ extension ChatService {
         }
         return AuxiliaryContextPolicy(
             includeBuiltInAppTools: !toolIsolationActive,
-            includeMCPTools: !toolIsolationActive,
             includeShortcutTools: !toolIsolationActive,
             includeSkills: !toolIsolationActive
         )
@@ -40,38 +38,14 @@ extension ChatService {
 
     func resolveRequestTooling(
         for session: ChatSession?,
-        localAgentContext: AgentRuntimeContext? = nil,
-        agentCapabilities: AgentToolCapabilityPolicy? = nil,
-        selectedAgentMCPServerIDs: Set<UUID>? = nil
+        localAgentContext: AgentRuntimeContext? = nil
     ) async -> (tools: [InternalToolDefinition]?, policy: AuxiliaryContextPolicy) {
         let policy = auxiliaryContextPolicy(for: session)
 
         var resolvedTools: [InternalToolDefinition] = []
-        let includeAgentTools = agentCapabilities?.preparesAgentRun
-            ?? (localAgentContext?.mode == .agent && session?.isToolContextIsolationActive != true)
-        let includeConversationTools = agentCapabilities?.includesConversationTools ?? includeAgentTools
-        let includeBrowserTools = agentCapabilities?.includesBrowserTools ?? includeAgentTools
-        let includeLocalLinuxTools = agentCapabilities?.includesLocalLinuxTools
-            ?? includeAgentTools
-        // 只有 Linux Agent Run 需要冻结本次可见的 MCP 集合；普通 Chat 继续使用
-        // MCP 管理页的实时选择，否则空的 Agent 快照会误伤远程 MCP 与内建工具。
-        let selectedServerIDs = includeLocalLinuxTools
-            ? (selectedAgentMCPServerIDs ?? localAgentContext.map { Set($0.selectedMCPServerIDs) })
-            : nil
         if policy.includeBuiltInAppTools {
             let builtInAppTools = await MainActor.run { AppToolManager.shared.builtInToolsForLLM() }
             resolvedTools.append(contentsOf: builtInAppTools)
-        }
-        if policy.includeMCPTools {
-            let mcpTools = await MainActor.run {
-                MCPManager.shared.chatToolsForLLM(
-                    includeConversationAgentTools: includeConversationTools,
-                    includeLocalLinuxTools: includeLocalLinuxTools,
-                    includeBrowserAgentTools: includeBrowserTools,
-                    selectedServerIDs: selectedServerIDs
-                )
-            }
-            resolvedTools.append(contentsOf: mcpTools)
         }
         if policy.includeShortcutTools {
             let shortcutTools = await MainActor.run { ShortcutToolManager.shared.chatToolsForLLM() }
@@ -88,85 +62,6 @@ extension ChatService {
             )
         }
         return (resolvedTools.isEmpty ? nil : resolvedTools, policy)
-    }
-
-    func toolsUsingNativeResponsesShellIfNeeded(
-        _ tools: [InternalToolDefinition]?,
-        runnableModel: RunnableModel,
-        sessionID: UUID
-    ) async throws -> [InternalToolDefinition]? {
-        guard runnableModel.model.supportsToolCalling,
-              var resolved = tools,
-              let runID = conversationRunIDs(for: sessionID)?.runID else {
-            return tools
-        }
-        let usesNativeResponsesShell: Bool
-        if runnableModel.effectiveAPIFormat == "openai-responses" {
-            usesNativeResponsesShell = true
-        } else if runnableModel.effectiveAPIFormat == "openai-compatible" {
-            let overrides = runnableModel.effectiveOverrideParameters.mapValues { $0.toAny() }
-            switch OpenAIAdapter().resolvedConversationAPI(for: overrides) {
-            case .responses:
-                usesNativeResponsesShell = true
-            case .chatCompletions:
-                usesNativeResponsesShell = false
-            }
-        } else {
-            usesNativeResponsesShell = false
-        }
-        resolved = await SkillAllowedToolRuntime.shared.filteredTools(
-            resolved,
-            runID: runID,
-            exemptToolNames: usesNativeResponsesShell
-                ? Set([SkillManager.chatToolName, OpenAIResponsesLocalShellProtocol.toolName])
-                : Set([SkillManager.chatToolName])
-        )
-        guard usesNativeResponsesShell,
-              let context = Persistence.loadLocalAgentRun(id: runID)?.context else {
-            return resolved.isEmpty ? nil : resolved
-        }
-        let hasNativeShell = resolved.contains {
-            $0.kind == .openAIResponsesLocalShell
-                || LocalLinuxToolDefinitions.isCommandExecutionToolExposedName($0.name)
-        }
-        guard hasNativeShell else {
-            return resolved
-        }
-
-        let nativeShell = try await OpenAIResponsesLocalShellRuntime.shared.toolDefinition(for: context)
-        resolved.removeAll {
-            $0.kind == .openAIResponsesLocalShell
-                || LocalLinuxToolDefinitions.isCommandExecutionToolExposedName($0.name)
-                || $0.name == SkillManager.chatToolName
-        }
-        resolved.append(nativeShell)
-        return resolved.isEmpty ? nil : resolved
-    }
-
-    /// Linux 操作说明必须与模型实际可调用的 Linux 工具同时出现，避免 Chat
-    /// 或不支持工具调用的模型承担无用上下文和错误的能力暗示。
-    func shouldIncludeLocalLinuxInstructions(
-        tools: [InternalToolDefinition]?,
-        modelSupportsToolCalling: Bool,
-        localLinuxToolsEnabled: Bool
-    ) -> Bool {
-        guard modelSupportsToolCalling, localLinuxToolsEnabled else { return false }
-        return tools?.contains {
-            $0.kind == .openAIResponsesLocalShell
-                || LocalLinuxToolDefinitions.containsExposedName($0.name)
-        } == true
-    }
-
-    func activeRequestIncludesLocalLinuxTools(sessionID: UUID) -> Bool {
-        guard let runID = conversationRunIDs(for: sessionID)?.runID,
-              let run = Persistence.loadConversationRun(id: runID) else {
-            return false
-        }
-        if let localLinuxToolsEnabled = run.requestConfiguration.localLinuxToolsEnabled {
-            return localLinuxToolsEnabled
-        }
-        // 旧版本的持久化 Run 没有能力快照时，只接受真实 Agent 上下文作为兼容依据。
-        return Persistence.loadLocalAgentRun(id: runID)?.context.mode == .agent
     }
 
     func preparedMessagesForRequest(

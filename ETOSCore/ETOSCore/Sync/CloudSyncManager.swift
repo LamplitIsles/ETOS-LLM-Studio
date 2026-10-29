@@ -731,7 +731,6 @@ public final class CloudSyncManager: ObservableObject {
         var sourcePlatform: String?
         var providers: [Provider] = []
         var backgrounds: [SyncedBackground] = []
-        var mcpServers: [MCPServerConfiguration] = []
         var audioFiles: [SyncedAudio] = []
         var imageFiles: [SyncedImage] = []
         var skills: [SyncedSkillBundle] = []
@@ -753,7 +752,6 @@ public final class CloudSyncManager: ObservableObject {
             sourcePlatform = package.sourcePlatform ?? sourcePlatform
             providers.append(contentsOf: package.providers)
             backgrounds.append(contentsOf: package.backgrounds)
-            mcpServers.append(contentsOf: package.mcpServers)
             audioFiles.append(contentsOf: package.audioFiles)
             imageFiles.append(contentsOf: package.imageFiles)
             skills.append(contentsOf: package.skills)
@@ -778,7 +776,6 @@ public final class CloudSyncManager: ObservableObject {
             sourcePlatform: sourcePlatform,
             providers: providers,
             backgrounds: backgrounds,
-            mcpServers: mcpServers,
             audioFiles: audioFiles,
             imageFiles: imageFiles,
             skills: skills,
@@ -992,7 +989,6 @@ extension SyncMergeSummary {
     var hasAnyImportedChange: Bool {
         importedProviders > 0
             || importedBackgrounds > 0
-            || importedMCPServers > 0
             || importedAudioFiles > 0
             || importedImageFiles > 0
             || importedSkills > 0
@@ -1010,8 +1006,6 @@ extension SyncMergeSummary {
         skippedProviders += other.skippedProviders
         importedBackgrounds += other.importedBackgrounds
         skippedBackgrounds += other.skippedBackgrounds
-        importedMCPServers += other.importedMCPServers
-        skippedMCPServers += other.skippedMCPServers
         importedAudioFiles += other.importedAudioFiles
         skippedAudioFiles += other.skippedAudioFiles
         importedImageFiles += other.importedImageFiles

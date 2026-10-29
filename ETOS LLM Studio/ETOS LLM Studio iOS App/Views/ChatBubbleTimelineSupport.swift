@@ -361,7 +361,6 @@ struct ToolCallSummaryBubbleRow: View {
 
 struct TimelineToolCallStepContent: View {
     let label: String
-    let displayTitle: String?
     let statusTitle: String
     let statusIconName: String
     let statusColor: Color
@@ -369,7 +368,7 @@ struct TimelineToolCallStepContent: View {
     let customTextColor: Color?
 
     private var titleText: String {
-        displayTitle ?? String(
+        String(
             format: NSLocalizedString("%@：%@", comment: ""),
             NSLocalizedString("调用工具", comment: "Tool call timeline title"),
             label

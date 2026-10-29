@@ -47,7 +47,6 @@ struct MacDailyPulseSettingsView: View {
                 TextField(NSLocalizedString("明日想看什么", comment: ""), text: $manager.tomorrowCurationText, axis: .vertical).lineLimit(3...8)
             }
             Section {
-                Toggle(NSLocalizedString("纳入 MCP 服务器能力", comment: ""), isOn: $manager.includeMCPContext)
                 Toggle(NSLocalizedString("纳入快捷指令能力", comment: ""), isOn: $manager.includeShortcutContext)
                 Toggle(NSLocalizedString("纳入最近外部结果", comment: ""), isOn: $manager.includeRecentExternalResults)
                 Toggle(NSLocalizedString("纳入公告与趋势信号", comment: ""), isOn: $manager.includeTrendContext)
@@ -71,7 +70,6 @@ struct MacDailyPulseSettingsView: View {
                     get: { configuration.dailyPulseModelIdentifier }, set: { configuration.dailyPulseModelIdentifier = $0 }),
                 .string("focus", label: NSLocalizedString("当前关注焦点", comment: ""), get: { manager.focusText }, set: { manager.focusText = $0 }),
                 .string("curation", label: NSLocalizedString("明日想看什么", comment: ""), get: { manager.tomorrowCurationText }, set: { manager.tomorrowCurationText = $0 }),
-                .bool("mcp_context", label: NSLocalizedString("纳入 MCP 服务器能力", comment: ""), get: { manager.includeMCPContext }, set: { manager.includeMCPContext = $0 }),
                 .bool("shortcut_context", label: NSLocalizedString("纳入快捷指令能力", comment: ""), get: { manager.includeShortcutContext }, set: { manager.includeShortcutContext = $0 }),
                 .bool("external_results", label: NSLocalizedString("纳入最近外部结果", comment: ""), get: { manager.includeRecentExternalResults }, set: { manager.includeRecentExternalResults = $0 }),
                 .bool("trend_context", label: NSLocalizedString("纳入公告与趋势信号", comment: ""), get: { manager.includeTrendContext }, set: { manager.includeTrendContext = $0 })

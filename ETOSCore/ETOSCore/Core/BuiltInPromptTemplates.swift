@@ -81,14 +81,13 @@ public enum BuiltInPromptID: String, CaseIterable, Identifiable, Sendable {
     case dailyPulseUser = "dailyPulse.user"
     case dailyPulseContinuation = "dailyPulse.continuation"
     case showWidgetToolDescription = "tool.showWidget.description"
-    case askUserInputToolDescription = "tool.askUserInput.description"
     case getSystemTimeToolDescription = "tool.getSystemTime.description"
 
     public var id: String { rawValue }
 
     public var category: BuiltInPromptCategory {
         switch self {
-        case .showWidgetToolDescription, .askUserInputToolDescription, .getSystemTimeToolDescription:
+        case .showWidgetToolDescription, .getSystemTimeToolDescription:
             return .toolDescriptions
         case .systemTime:
             return .chatContext
@@ -110,8 +109,6 @@ public enum BuiltInPromptID: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .showWidgetToolDescription:
             return AppToolKind.showWidget.displayName
-        case .askUserInputToolDescription:
-            return AppToolKind.askUserInput.displayName
         case .getSystemTimeToolDescription:
             return AppToolKind.getSystemTime.displayName
         case .systemTime:
@@ -155,7 +152,7 @@ public enum BuiltInPromptID: String, CaseIterable, Identifiable, Sendable {
 
     public var detail: String {
         switch self {
-        case .showWidgetToolDescription, .askUserInputToolDescription, .getSystemTimeToolDescription:
+        case .showWidgetToolDescription, .getSystemTimeToolDescription:
             return NSLocalizedString("自定义发送给模型的工具描述，不改变工具参数与执行方式。", value: "Customize the tool description sent to the model without changing its parameters or execution.", comment: "")
         case .systemTime:
             return NSLocalizedString("控制把当前设备时间发送给模型时的包裹文本。", comment: "Built-in prompt detail")
@@ -185,7 +182,7 @@ public enum BuiltInPromptID: String, CaseIterable, Identifiable, Sendable {
 
     public var variables: [BuiltInPromptVariable] {
         switch self {
-        case .showWidgetToolDescription, .askUserInputToolDescription, .getSystemTimeToolDescription:
+        case .showWidgetToolDescription, .getSystemTimeToolDescription:
             return []
         case .systemTime:
             return [.time]
@@ -404,8 +401,6 @@ private extension BuiltInPromptID {
         switch self {
         case .showWidgetToolDescription:
             return AppToolKind.showWidget.toolDescription
-        case .askUserInputToolDescription:
-            return AppToolKind.askUserInput.toolDescription
         case .getSystemTimeToolDescription:
             return AppToolKind.getSystemTime.toolDescription
         case .systemTime:
@@ -628,7 +623,7 @@ private extension BuiltInPromptID {
                 - Cards should be concrete, easy to continue in chat, and suitable for turning into a new session.
                 - Prefer recent, actionable, continuous topics strongly tied to the user's real context.
                 - Do not fabricate user experiences or external facts. If context is insufficient, be conservative.
-                - If MCP / Shortcut capability context is provided, you may prioritize cards that can immediately use those capabilities.
+                - If Shortcut capability context is provided, you may prioritize cards that can immediately use those capabilities.
                 - Tool capability descriptions only mean the capability can be called; they do not mean you have already read external real-time data.
                 - If recent external result snapshots are provided, only that section represents external content the user recently actually obtained.
                 - Announcements and trend signals may be treated as recent external changes, but do not exaggerate them into fully confirmed personal facts.

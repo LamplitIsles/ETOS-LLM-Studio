@@ -123,6 +123,7 @@ extension ChatService {
     }
 
     func applyCurrentSession(_ session: ChatSession?, preparedMessages: [ChatMessage]? = nil) {
+        if let session, !chatSessionsSubject.value.contains(where: { $0.id == session.id }) { return }
         let currentSession = currentSessionSubject.value
         if currentSession == session { return }
 
@@ -139,12 +140,10 @@ extension ChatService {
             return
         }
 
-        currentSessionSubject.send(session)
         let messages = preparedMessages ?? session.map { messagesForSessionActivation($0.id) } ?? []
-        if let session {
-            storeRuntimeMessagesSnapshot(messages, for: session.id)
-        }
-        publishMessages(messages)
+        currentSessionSubject.send(session)
+        let latestMessages = session.flatMap { runtimeMessagesSnapshot(for: $0.id) } ?? messages
+        publishMessages(latestMessages)
         logger.info("已切换到会话: \(session?.name ?? "无")")
     }
 

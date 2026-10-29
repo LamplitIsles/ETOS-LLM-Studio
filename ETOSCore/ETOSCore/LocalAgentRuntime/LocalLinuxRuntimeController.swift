@@ -77,8 +77,10 @@ public actor LocalLinuxRuntimeController {
         }
         #if os(macOS)
         updateSnapshot(phase: .ready, progress: nil, error: nil)
-        return snapshotValue
+        #else
+        updateSnapshot(phase: .disabled, progress: nil, error: nil)
         #endif
+        return snapshotValue
     }
 
     public func ensureReady(trigger: LocalLinuxRuntimeTrigger) async throws -> LocalLinuxRuntimeSnapshot {
@@ -108,6 +110,8 @@ public actor LocalLinuxRuntimeController {
         runtimeStarted = true
         updateSnapshot(phase: .ready, progress: nil, error: nil)
         return snapshotValue
+        #else
+        throw LocalLinuxRuntimeError.runtimeUnavailable(NSLocalizedString("本机 shell 仅在 macOS 可用。", comment: "Native shell unavailable"))
         #endif
     }
 
@@ -132,6 +136,8 @@ public actor LocalLinuxRuntimeController {
         didRecoverPersistedJobs = false
         #if os(macOS)
         let phase: LocalLinuxRuntimePhase = .ready
+        #else
+        let phase: LocalLinuxRuntimePhase = .disabled
         #endif
         updateSnapshot(phase: AppConfigStore.boolValue(for: .localLinuxEnabled) ? phase : .disabled, progress: nil, error: nil)
     }

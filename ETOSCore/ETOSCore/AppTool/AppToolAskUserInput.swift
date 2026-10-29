@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 本文件承载“询问用户选项”工具的模型、答案策略与提交格式化。
+// 共享问答值类型与答案策略，供设备消息 Survey 使用。
 // ============================================================================
 
 import Foundation
@@ -79,44 +79,27 @@ public struct AppToolAskUserInputQuestion: Codable, Identifiable, Equatable, Sen
 }
 
 public struct AppToolAskUserInputRequest: Codable, Identifiable, Equatable, Sendable {
-    public static let requestUserInfoKey = "request"
-
     public let requestID: String
     public let title: String?
     public let description: String?
     public let submitLabel: String
     public let questions: [AppToolAskUserInputQuestion]
-    public let sourceSessionID: UUID?
-    public let sourceMessageID: UUID?
 
     public init(
         requestID: String,
         title: String?,
         description: String?,
         submitLabel: String,
-        questions: [AppToolAskUserInputQuestion],
-        sourceSessionID: UUID? = nil,
-        sourceMessageID: UUID? = nil
+        questions: [AppToolAskUserInputQuestion]
     ) {
         self.requestID = requestID
         self.title = title
         self.description = description
         self.submitLabel = submitLabel
         self.questions = questions
-        self.sourceSessionID = sourceSessionID
-        self.sourceMessageID = sourceMessageID
     }
 
     public var id: String { requestID }
-
-    public var userInfo: [AnyHashable: Any] {
-        // 通知回执必须同步认领；同进程直接传值，避免聊天界面在主线程解码 JSON。
-        [Self.requestUserInfoKey: self]
-    }
-
-    public static func decode(from userInfo: [AnyHashable: Any]?) -> AppToolAskUserInputRequest? {
-        userInfo?[requestUserInfoKey] as? Self
-    }
 }
 
 public struct AppToolAskUserInputQuestionAnswer: Codable, Equatable, Sendable {
@@ -141,85 +124,5 @@ public struct AppToolAskUserInputQuestionAnswer: Codable, Equatable, Sendable {
         self.selectedOptionIDs = selectedOptionIDs
         self.selectedOptionLabels = selectedOptionLabels
         self.otherText = otherText
-    }
-}
-
-public struct AppToolAskUserInputSubmission: Codable, Equatable, Sendable {
-    public let requestID: String
-    public let cancelled: Bool
-    public let submittedAt: String
-    public let answers: [AppToolAskUserInputQuestionAnswer]
-
-    public init(
-        requestID: String,
-        cancelled: Bool,
-        submittedAt: String,
-        answers: [AppToolAskUserInputQuestionAnswer]
-    ) {
-        self.requestID = requestID
-        self.cancelled = cancelled
-        self.submittedAt = submittedAt
-        self.answers = answers
-    }
-}
-
-public enum AppToolAskUserInputSubmissionFormatter {
-    public static func messageContent(
-        request: AppToolAskUserInputRequest,
-        submission: AppToolAskUserInputSubmission
-    ) -> String {
-        if submission.cancelled {
-            return NSLocalizedString("用户取消了本次问答。", comment: "Ask user input tool cancelled result")
-        }
-
-        let questionByID = request.questions.reduce(into: [String: AppToolAskUserInputQuestion]()) { result, question in
-            if result[question.id] == nil {
-                result[question.id] = question
-            }
-        }
-        var blocks: [String] = []
-        for answer in submission.answers {
-            let answerText = formattedAnswerText(answer, question: questionByID[answer.questionID])
-            blocks.append("Q: \(answer.question)\nA: \(answerText)")
-        }
-
-        if blocks.isEmpty {
-            return NSLocalizedString("用户未提供回答。", comment: "Ask user input tool empty result")
-        }
-        return blocks.joined(separator: "\n\n")
-    }
-
-    private static func formattedAnswerText(
-        _ answer: AppToolAskUserInputQuestionAnswer,
-        question: AppToolAskUserInputQuestion?
-    ) -> String {
-        var segments: [String] = []
-
-        if let question {
-            let labelByOptionID = question.options.reduce(into: [String: String]()) { result, option in
-                if result[option.id] == nil {
-                    result[option.id] = option.label
-                }
-            }
-            let selectedLabels = answer.selectedOptionIDs.compactMap { optionID in
-                labelByOptionID[optionID]
-            }
-            if !selectedLabels.isEmpty {
-                segments.append(selectedLabels.joined(separator: ","))
-            } else if !answer.selectedOptionLabels.isEmpty {
-                segments.append(answer.selectedOptionLabels.joined(separator: ","))
-            }
-        } else if !answer.selectedOptionLabels.isEmpty {
-            segments.append(answer.selectedOptionLabels.joined(separator: ","))
-        }
-
-        if let other = AppToolAskUserInputAnswerPolicy.normalizedCustomText(answer.otherText) {
-            segments.append(other)
-        }
-
-        if segments.isEmpty {
-            return NSLocalizedString("未填写", comment: "Ask user input unanswered placeholder")
-        }
-        return segments.joined(separator: ",")
     }
 }

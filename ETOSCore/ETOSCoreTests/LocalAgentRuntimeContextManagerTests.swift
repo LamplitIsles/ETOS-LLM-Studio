@@ -36,26 +36,22 @@ struct LocalAgentRuntimeContextManagerTests {
         }
     }
 
-    @Test("App 文件 Run 校验拒绝终态和跨会话")
+    @Test("文件工具只接受当前会话的活动请求")
     func appFileExecutorUsesTrustedRunValidation() {
         let sourceSessionID = UUID()
-        let terminalRun = ConversationRun(
-            sessionID: sourceSessionID,
-            status: .completed,
-            requestConfiguration: .init(agentToolsEnabled: true)
+        let runID = UUID()
+        var context = ChatService.RequestExecutionContext(
+            token: UUID(), task: nil, loadingMessageID: nil, imageGenerationContext: nil,
+            conversationRunID: runID, rootConversationRunID: runID
         )
-        #expect(throws: Error.self) {
-            try LocalAgentFileToolExecutor.validateTrustedConversationRun(terminalRun, sessionID: sourceSessionID)
-        }
-
-        let activeRun = ConversationRun(
-            sessionID: UUID(),
-            status: .waitingTool,
-            requestConfiguration: .init(agentToolsEnabled: true)
-        )
-        #expect(throws: Error.self) {
-            try LocalAgentFileToolExecutor.validateTrustedConversationRun(activeRun, sessionID: sourceSessionID)
-        }
+        #expect(ChatService.containsActiveToolRun([sourceSessionID: context], sessionID: sourceSessionID, runID: runID))
+        #expect(!ChatService.containsActiveToolRun([sourceSessionID: context], sessionID: UUID(), runID: runID))
+        #expect(!ChatService.containsActiveToolRun([sourceSessionID: context], sessionID: sourceSessionID, runID: UUID()))
+        context.hasFinishedResponse = true
+        #expect(!ChatService.containsActiveToolRun([sourceSessionID: context], sessionID: sourceSessionID, runID: runID))
+        context.hasFinishedResponse = false
+        context.isCancelled = true
+        #expect(!ChatService.containsActiveToolRun([sourceSessionID: context], sessionID: sourceSessionID, runID: runID))
     }
 
     @MainActor
@@ -72,7 +68,6 @@ struct LocalAgentRuntimeContextManagerTests {
             status: .running,
             requestConfiguration: .init(agentToolsEnabled: true)
         )
-        #expect(Persistence.saveConversationRun(run))
         #expect(Persistence.loadLocalAgentRun(id: run.id) == nil)
         let requestToken = UUID()
         service.setRequestContext(
@@ -104,7 +99,6 @@ struct LocalAgentRuntimeContextManagerTests {
 
         await service.finishSessionRequestAndCleanupFileHistory(sessionID: session.id)
 
-        #expect(Persistence.loadConversationRun(id: run.id)?.status == .completed)
         #expect(!SandboxFileToolSupport.hasUndoMutation(id: mutationID, runID: run.id))
     }
 
@@ -122,7 +116,6 @@ struct LocalAgentRuntimeContextManagerTests {
             environmentSnapshotHash: "test",
             environmentValues: [:],
             mountIDs: [],
-            selectedMCPServerIDs: [],
             browserSessionID: nil,
             executorDeviceID: "test-device",
             mode: .agent

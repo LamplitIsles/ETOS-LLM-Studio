@@ -59,36 +59,3 @@ public enum MCPClientError: LocalizedError {
         }
     }
 }
-
-
-func isJSONRPCMessageWithoutExpectedResponse(_ data: Data) -> Bool {
-    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        return false
-    }
-    if object["method"] != nil && object["id"] == nil {
-        return true
-    }
-    if object["method"] == nil,
-       object["id"] != nil,
-       object["result"] != nil || object["error"] != nil {
-        return true
-    }
-    return false
-}
-
-public extension MCPClientInfo {
-    static var appDefault: MCPClientInfo {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        return MCPClientInfo(name: "ETOS LLM Studio", version: version)
-    }
-}
-
-public extension MCPClientCapabilities {
-    static var standard: MCPClientCapabilities {
-        MCPClientCapabilities()
-    }
-
-    static var httpOnly: MCPClientCapabilities {
-        MCPClientCapabilities()
-    }
-}

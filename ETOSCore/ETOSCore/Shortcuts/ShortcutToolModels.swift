@@ -288,6 +288,7 @@ public enum ShortcutToolError: LocalizedError {
     case unknownTool
     case cannotOpenShortcutApp
     case callbackTimeout
+    case outcomeUnknown
     case executionFailed(String)
 
     public var errorDescription: String? {
@@ -306,6 +307,8 @@ public enum ShortcutToolError: LocalizedError {
             return NSLocalizedString("无法启动快捷指令。", comment: "")
         case .callbackTimeout:
             return NSLocalizedString("等待快捷指令回调超时。", comment: "")
+        case .outcomeUnknown:
+            return NSLocalizedString("快捷指令可能已启动，但执行结果未知。", comment: "Shortcut execution outcome unknown")
         case .executionFailed(let message):
             return message
         }

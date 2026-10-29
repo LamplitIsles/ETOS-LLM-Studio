@@ -2,14 +2,13 @@ import ETOSCore
 import Foundation
 
 enum MacDataImportCategory: String, CaseIterable, Sendable, Identifiable {
-    case providers, backgrounds, mcpServers, audioFiles, imageFiles
+    case providers, backgrounds, audioFiles, imageFiles
     case skills, shortcutTools, feedbackTickets, dailyPulse, usageStats, fontFiles, appStorage
     var id: String { rawValue }
     var option: SyncOptions {
         switch self {
         case .providers: .providers
         case .backgrounds: .backgrounds
-        case .mcpServers: .mcpServers
         case .audioFiles: .audioFiles
         case .imageFiles: .imageFiles
         case .skills: .skills
@@ -25,7 +24,6 @@ enum MacDataImportCategory: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .providers: NSLocalizedString("提供商配置", comment: "")
         case .backgrounds: NSLocalizedString("背景图片", comment: "")
-        case .mcpServers: NSLocalizedString("MCP 服务器", comment: "")
         case .audioFiles: NSLocalizedString("音频文件", comment: "")
         case .imageFiles: NSLocalizedString("图片文件", comment: "")
         case .skills: NSLocalizedString("Agent Skills", comment: "")
@@ -37,7 +35,7 @@ enum MacDataImportCategory: String, CaseIterable, Sendable, Identifiable {
         case .appStorage: NSLocalizedString("软件设置", comment: "")
         }
     }
-    static let selectable: [Self] = [.providers, .mcpServers, .skills]
+    static let selectable: [Self] = [.providers, .skills]
 }
 
 struct MacDataImportRow: Identifiable, Sendable {
@@ -62,7 +60,7 @@ struct MacDataImportPreview: Sendable {
         let counts: [MacDataImportCategory: Int] = [
             .providers: package.providers.count,
             .backgrounds: package.backgrounds.count,
-            .mcpServers: package.mcpServers.count, .audioFiles: package.audioFiles.count,
+            .audioFiles: package.audioFiles.count,
             .imageFiles: package.imageFiles.count, .skills: package.skills.count,
             .shortcutTools: package.shortcutTools.count,
             .feedbackTickets: package.feedbackTickets.count, .dailyPulse: package.dailyPulseRuns.count,
@@ -79,8 +77,7 @@ struct MacDataImportPreview: Sendable {
         if package.providers.contains(where: {
             $0.apiKeys.contains(where: { !$0.isEmpty }) || !$0.headerOverrides.isEmpty || $0.proxyConfiguration != nil
         }) { sensitive.insert(.providers) }
-        if !package.mcpServers.isEmpty { sensitive.insert(.mcpServers) }
-        if prepared.containsSensitiveCredentials { sensitive.formUnion([.providers, .mcpServers]) }
+        if prepared.containsSensitiveCredentials { sensitive.insert(.providers) }
         sensitiveScopes = sensitive.intersection(availableScopes)
         settingsMayContainCredentials = package.options.contains(.appStorage) && package.appStorageSnapshot != nil
         var result = categories.map { MacDataImportRow(id: $0.rawValue, title: $0.title, value: String(counts[$0, default: 0])) }
@@ -109,13 +106,11 @@ struct MacDataImportPreview: Sendable {
         let selected = selection.intersection(Set(MacDataImportCategory.selectable))
         var options: SyncOptions = []
         if selected.contains(.providers), !original.providers.isEmpty { options.insert(.providers) }
-        if selected.contains(.mcpServers), !original.mcpServers.isEmpty { options.insert(.mcpServers) }
         if selected.contains(.skills), !original.skills.isEmpty { options.insert(.skills) }
         options.formIntersection(original.options)
         guard !options.isEmpty else { throw ThirdPartyImportError.noImportableContent }
         return SyncPackage(options: options, sourcePlatform: original.sourcePlatform,
             providers: options.contains(.providers) ? original.providers : [],
-            mcpServers: options.contains(.mcpServers) ? original.mcpServers : [],
             skills: options.contains(.skills) ? original.skills : [])
     }
 }
@@ -148,7 +143,7 @@ struct MacDataImportReport: Sendable {
         let counts: [(MacDataImportCategory, Int, Int)] = [
             (.providers, summary.importedProviders, summary.skippedProviders),
             (.backgrounds, summary.importedBackgrounds, summary.skippedBackgrounds),
-            (.mcpServers, summary.importedMCPServers, summary.skippedMCPServers), (.audioFiles, summary.importedAudioFiles, summary.skippedAudioFiles),
+            (.audioFiles, summary.importedAudioFiles, summary.skippedAudioFiles),
             (.imageFiles, summary.importedImageFiles, summary.skippedImageFiles), (.skills, summary.importedSkills, summary.skippedSkills),
             (.shortcutTools, summary.importedShortcutTools, summary.skippedShortcutTools),
             (.feedbackTickets, summary.importedFeedbackTickets, summary.skippedFeedbackTickets), (.dailyPulse, summary.importedDailyPulseRuns, summary.skippedDailyPulseRuns),

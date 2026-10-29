@@ -17,7 +17,9 @@ extension ChatService {
         runnableModel: RunnableModel? = nil,
         runtimeOverrideParameters: [String: JSONValue] = [:],
         targetSessionID: UUID? = nil,
-        onMessagesPrepared: ChatSendPresentationHandler? = nil
+        onMessagesPrepared: ChatSendPresentationHandler? = nil,
+        requestLease: ChatRequestLease? = nil,
+        onInputAccepted: ChatInputAcceptanceHandler? = nil
     ) async {
         let currentSessionSnapshot = currentSessionSubject.value
         let resolvedSessionID = targetSessionID ?? currentSessionSnapshot?.id
@@ -38,6 +40,38 @@ extension ChatService {
                 )
             )
             return
+        }
+
+        let lease: ChatRequestLease
+        if let requestLease {
+            guard requestLease.sessionID == currentSession.id,
+                  ownsRequestReservation(sessionID: currentSession.id, token: requestLease.token) else { return }
+            lease = requestLease
+        } else {
+            switch beginRequest(sessionID: currentSession.id) {
+            case .success(let acquired): lease = acquired
+            case .failure: return
+            }
+        }
+        let inherited = ChatRequestTaskIdentity.current.map {
+            $0.sessionID == currentSession.id && $0.token == lease.token
+        } ?? false
+        guard inherited || lease.claim(for: self) else { return }
+        var acceptedGroup: [ChatMessage] = []
+        var inputStillRetained = false
+        var requestTaskRegistered = false
+        defer {
+            if !requestTaskRegistered, !acceptedGroup.isEmpty,
+               Task.isCancelled || !ownsRequestReservation(sessionID: currentSession.id, token: lease.token) {
+                if rollbackUnsentInput(acceptedGroup, sessionID: currentSession.id, token: lease.token, sourceRetained: inputStillRetained) {
+                    lease.setInputAccepted(false)
+                } else if runtimeMessagesSnapshot(for: currentSession.id) == nil {
+                    lease.setInputAccepted(false)
+                } else {
+                    reportRetainedStoppedInput(sessionID: currentSession.id, token: lease.token)
+                }
+            }
+            lease.finishPreparation()
         }
 
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,6 +157,7 @@ extension ChatService {
 
         var savedImages: [(fileName: String, source: ChatSendPresentationSource)] = []
         for imageAttachment in imageAttachments {
+            guard !imageAttachment.data.isEmpty else { continue }
             var targetName = imageAttachment.fileName
             if targetName.isEmpty {
                 targetName = "\(UUID().uuidString).jpg"
@@ -139,6 +174,11 @@ extension ChatService {
             } else {
                 logger.error("生图参考图保存失败: \(targetName)")
             }
+        }
+        guard savedImages.count == imageAttachments.count else {
+            addErrorMessage(NSLocalizedString("内容准备失败，请检查附件后重试。", comment: "Input attachment preparation failed"), sessionID: currentSession.id)
+            requestStatusSubject.send(.error)
+            return
         }
 
         let requestedAt = Date()
@@ -184,18 +224,25 @@ extension ChatService {
         )
 
         do {
-            for message in userMessages {
-                _ = try await appendConversationMessage(message, to: currentSession.id)
-            }
-            _ = try await appendConversationMessage(loadingMessage, to: currentSession.id)
+            try appendConversationMessagesAtomically(userMessages + [loadingMessage], to: currentSession.id, requestToken: lease.token)
+        } catch is CancellationError {
+            return
         } catch {
-            addErrorMessage(
-                NSLocalizedString("错误: 无法保存会话消息。", comment: "Unable to persist conversation messages"),
-                sessionID: currentSession.id
-            )
+            addErrorMessage(error.localizedDescription, sessionID: currentSession.id)
             requestStatusSubject.send(.error)
             return
         }
+        acceptedGroup = userMessages + [loadingMessage]
+        lease.setInputAccepted(true)
+        if let onInputAccepted {
+            var sources: [ChatSendPresentationSource: UUID] = [.text: userMessage.id]
+            for (savedImage, message) in zip(savedImages, userMessages) { sources[savedImage.source] = message.id }
+            let cancelled = Task.isCancelled || !ownsRequestReservation(sessionID: currentSession.id, token: lease.token)
+            inputStillRetained = await onInputAccepted(ChatSendPresentation(sessionID: currentSession.id,
+                messageIDsBySource: sources, responseGroupID: userMessage.id), cancelled)
+        }
+        guard !Task.isCancelled,
+              ownsRequestReservation(sessionID: currentSession.id, token: lease.token) else { return }
         let messages = messagesSnapshot(for: currentSession.id)
         scheduleUserMessageAchievementDetectionIfNeeded(
             content: trimmedPrompt,
@@ -243,8 +290,8 @@ extension ChatService {
         )
         logger.info("生图请求即将发送: session=\(currentSession.id.uuidString)")
 
-        let requestToken = UUID()
-        setRequestContext(
+        let requestToken = lease.token
+        guard updateReservedRequestContext(
             RequestExecutionContext(
                 token: requestToken,
                 task: nil,
@@ -253,50 +300,56 @@ extension ChatService {
                     sessionID: currentSession.id,
                     loadingMessageID: loadingMessage.id,
                     prompt: trimmedPrompt
-                )
+                ),
+                taskRegistrationPending: true
             ),
             for: currentSession.id
-        )
+        ) else { return }
 
+        let startGate = ChatRequestStartGate()
         let requestTask = Task<Void, Error> { [weak self] in
+            try await startGate.waitUntilRegistered()
             guard let self else { return }
-            var effectiveModel = runnableModel.model
-            if !runtimeOverrideParameters.isEmpty {
-                effectiveModel.overrideParameters = effectiveModel.overrideParameters.merging(runtimeOverrideParameters) { _, runtime in
-                    runtime
+            await ChatRequestTaskIdentity.$current.withValue(.init(sessionID: currentSession.id, token: requestToken)) {
+                var effectiveModel = runnableModel.model
+                if !runtimeOverrideParameters.isEmpty {
+                    effectiveModel.overrideParameters = effectiveModel.overrideParameters.merging(runtimeOverrideParameters) { _, runtime in
+                        runtime
+                    }
                 }
+                let effectiveRunnableModel = RunnableModel(provider: runnableModel.provider, model: effectiveModel)
+                let modelReference = MessageModelReference(
+                    providerID: effectiveRunnableModel.provider.id,
+                    providerName: effectiveRunnableModel.provider.name,
+                    modelUUID: effectiveRunnableModel.model.id,
+                    modelName: effectiveRunnableModel.model.modelName,
+                    modelDisplayName: effectiveRunnableModel.model.displayName
+                )
+                let requestLogContext = RequestLogContext(
+                    requestID: UUID(),
+                    sessionID: currentSession.id,
+                    providerID: effectiveRunnableModel.provider.id,
+                    providerName: effectiveRunnableModel.provider.name,
+                    modelID: effectiveRunnableModel.model.modelName,
+                    requestSource: .imageGeneration,
+                    isStreaming: false,
+                    requestedAt: Date(),
+                    modelReference: modelReference,
+                    modelPricing: effectiveRunnableModel.model.pricing
+                )
+                await self.executeImageGenerationRequest(
+                    adapter: adapter,
+                    runnableModel: effectiveRunnableModel,
+                    prompt: trimmedPrompt,
+                    referenceImages: effectiveReferenceImages,
+                    loadingMessageID: loadingMessage.id,
+                    currentSessionID: currentSession.id,
+                    requestLogContext: requestLogContext
+                )
             }
-            let effectiveRunnableModel = RunnableModel(provider: runnableModel.provider, model: effectiveModel)
-            let modelReference = MessageModelReference(
-                providerID: effectiveRunnableModel.provider.id,
-                providerName: effectiveRunnableModel.provider.name,
-                modelUUID: effectiveRunnableModel.model.id,
-                modelName: effectiveRunnableModel.model.modelName,
-                modelDisplayName: effectiveRunnableModel.model.displayName
-            )
-            let requestLogContext = RequestLogContext(
-                requestID: UUID(),
-                sessionID: currentSession.id,
-                providerID: effectiveRunnableModel.provider.id,
-                providerName: effectiveRunnableModel.provider.name,
-                modelID: effectiveRunnableModel.model.modelName,
-                requestSource: .imageGeneration,
-                isStreaming: false,
-                requestedAt: Date(),
-                modelReference: modelReference,
-                modelPricing: effectiveRunnableModel.model.pricing
-            )
-            await self.executeImageGenerationRequest(
-                adapter: adapter,
-                runnableModel: effectiveRunnableModel,
-                prompt: trimmedPrompt,
-                referenceImages: effectiveReferenceImages,
-                loadingMessageID: loadingMessage.id,
-                currentSessionID: currentSession.id,
-                requestLogContext: requestLogContext
-            )
         }
-        updateRequestTask(requestTask, for: currentSession.id, token: requestToken)
+        updateRequestTask(requestTask, for: currentSession.id, token: requestToken, startGate: startGate)
+        requestTaskRegistered = true
 
         defer {
             clearRequestContextIfNeeded(for: currentSession.id, token: requestToken)
@@ -478,7 +531,7 @@ extension ChatService {
             let revisedPrompt = revisedPrompts.first(where: { !$0.isEmpty })
             let content = revisedPrompt ?? NSLocalizedString("[图片]", comment: "Image message placeholder")
 
-            if let loadingMessage = messagesSnapshot(for: currentSessionID).first(where: { $0.id == loadingMessageID }) {
+            let committed = replaceExistingResponseMessage(id: loadingMessageID, in: currentSessionID) { loadingMessage in
                 let completedMessage = ChatMessage(
                     id: loadingMessage.id,
                     role: .assistant,
@@ -491,18 +544,15 @@ extension ChatService {
                     responseAttemptIndex: loadingMessage.responseAttemptIndex,
                     selectedResponseAttemptID: loadingMessage.selectedResponseAttemptID
                 )
-                let atomizedMessages = ChatMessageAtomicContentSupport.atomized(completedMessage)
-                var updatedMessages = messagesSnapshot(for: currentSessionID)
-                if let loadingIndex = updatedMessages.firstIndex(where: { $0.id == loadingMessageID }) {
-                    updatedMessages.replaceSubrange(loadingIndex...loadingIndex, with: atomizedMessages)
-                    persistAndPublishMessages(updatedMessages, for: currentSessionID)
-                    logger.info(
-                        "生图消息已落盘: session=\(currentSessionID.uuidString), loadingMessageID=\(loadingMessageID.uuidString), imageCount=\(generatedImageFileNames.count)"
-                    )
-                }
-            } else {
-                logger.warning("未找到生图占位消息，无法替换: loadingMessageID=\(loadingMessageID.uuidString)")
+                return ChatMessageAtomicContentSupport.atomized(completedMessage)
             }
+            guard committed else {
+                logger.warning("生图请求或占位消息已失效，未写入结果: loadingMessageID=\(loadingMessageID.uuidString)")
+                return
+            }
+            logger.info(
+                "生图消息已落盘: session=\(currentSessionID.uuidString), loadingMessageID=\(loadingMessageID.uuidString), imageCount=\(generatedImageFileNames.count)"
+            )
 
             emitSessionRequestStatus(.finished, sessionID: currentSessionID)
             persistRequestLog(

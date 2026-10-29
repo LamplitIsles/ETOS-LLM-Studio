@@ -29,7 +29,6 @@ extension ChatService {
         enableResponseSpeedMetrics: Bool,
         requestStartedAt: Date,
         requestLogContext: RequestLogContext,
-        responsesFullInputFallbackRequest: URLRequest? = nil,
         retryHandler: ((Error) async -> Bool)? = nil
     ) async {
         setMessageReceivingStream(true, messageID: loadingMessageID, sessionID: currentSessionID)
@@ -607,33 +606,6 @@ extension ChatService {
                 bodyData: bodyData,
                 httpStatusCode: code
             )
-            if let fallbackRequest = responsesFullInputFallbackRequest,
-               isOpenAIResponsesPreviousResponseMissing(statusCode: code, bodyData: bodyData) {
-                logger.info("Responses previous_response_id 已失效，正在改用完整 input 重试。")
-                await handleStreamedResponse(
-                    request: fallbackRequest,
-                    provider: provider,
-                    adapter: adapter,
-                    loadingMessageID: loadingMessageID,
-                    currentSessionID: currentSessionID,
-                    userMessage: userMessage,
-                    wasTemporarySession: wasTemporarySession,
-                    aiTemperature: aiTemperature,
-                    aiTopP: aiTopP,
-                    maxChatHistory: maxChatHistory,
-                    availableTools: availableTools,
-                    includeSystemTime: includeSystemTime,
-                    systemTimeInjectionPosition: systemTimeInjectionPosition,
-                    enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
-                    periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
-                    enableResponseSpeedMetrics: enableResponseSpeedMetrics,
-                    requestStartedAt: requestStartedAt,
-                    requestLogContext: requestLogContext,
-                    responsesFullInputFallbackRequest: nil,
-                    retryHandler: retryHandler
-                )
-                return
-            }
             messages = flushPendingStreamingMessages(
                 messages,
                 loadingMessageID: loadingMessageID,
@@ -805,16 +777,21 @@ extension ChatService {
         }
 
         guard let toolCalls = responseMessage.toolCalls, !toolCalls.isEmpty else {
-            await updateMessage(with: responseMessage, for: loadingMessageID, in: currentSessionID)
+            guard await updateMessage(with: responseMessage, for: loadingMessageID, in: currentSessionID) else {
+                await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+                return
+            }
             scheduleReasoningSummaryIfNeeded(for: loadingMessageID, in: currentSessionID)
             await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
             return
         }
 
-        await updateMessage(with: responseMessage, for: loadingMessageID, in: currentSessionID)
+        guard await updateMessage(with: responseMessage, for: loadingMessageID, in: currentSessionID) else {
+            await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+            return
+        }
         scheduleReasoningSummaryIfNeeded(for: loadingMessageID, in: currentSessionID)
         let toolCallMessageID = loadingMessageID
-        await ensureToolCallsVisible(toolCalls, in: toolCallMessageID, sessionID: currentSessionID)
         let activeAttemptMetadata = responseAttemptMetadata(for: toolCallMessageID, in: currentSessionID)
             ?? responseAttemptMetadata(from: responseMessage)
         let activeAgentRunID = conversationRunIDs(for: currentSessionID)?.runID
@@ -836,16 +813,20 @@ extension ChatService {
 
         var blockingResultMessages: [ChatMessage] = []
         var shouldAwaitUserSupplement = false
-        var shouldPauseForConversation = false
+        var hasUnknownToolOutcome = false
         if !blockingCalls.isEmpty {
             logger.info("正在执行 \(blockingCalls.count) 个阻塞式工具，即将进入二次调用流程...")
             for toolCall in blockingCalls {
-                let outcome = await handleToolCall(
+                guard let outcome = await handleToolCall(
                     toolCall,
                     sessionID: currentSessionID,
                     agentRunID: activeAgentRunID,
-                    triggeringMessageID: activeAttemptMetadata?.groupID
-                )
+                    triggeringMessageID: activeAttemptMetadata?.groupID,
+                    sourceMessageID: toolCallMessageID
+                ) else {
+                    await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+                    return
+                }
                 if let toolResult = outcome.toolResult {
                     await attachToolResult(
                         toolResult,
@@ -856,30 +837,21 @@ extension ChatService {
                         sessionID: currentSessionID
                     )
                 }
-                if outcome.shouldPauseForConversation {
-                    shouldPauseForConversation = true
-                    break
+                guard permitsToolCall(toolCall, messageID: toolCallMessageID, sessionID: currentSessionID) else {
+                    await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+                    return
                 }
-                var outcomeMessage = outcome.message
-                applyResponseAttemptMetadata(activeAttemptMetadata, to: &outcomeMessage)
-                blockingResultMessages.append(outcomeMessage)
+                if !outcome.outcomeUnknown {
+                    var outcomeMessage = outcome.message
+                    applyResponseAttemptMetadata(activeAttemptMetadata, to: &outcomeMessage)
+                    blockingResultMessages.append(outcomeMessage)
+                }
+                hasUnknownToolOutcome = hasUnknownToolOutcome || outcome.outcomeUnknown
                 if outcome.shouldAwaitUserSupplement {
                     shouldAwaitUserSupplement = true
                     break
                 }
             }
-        }
-
-        if shouldPauseForConversation {
-            if !blockingResultMessages.isEmpty {
-                _ = try? await insertConversationResponseAttemptMessagesAtomically(
-                    blockingResultMessages,
-                    afterAttemptOf: toolCallMessageID,
-                    in: currentSessionID
-                )
-            }
-            await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
-            return
         }
 
         if shouldAwaitUserSupplement {
@@ -888,7 +860,11 @@ extension ChatService {
                 afterAttemptOf: toolCallMessageID,
                 in: currentSessionID
             )
-            await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+            if hasUnknownToolOutcome {
+                emitSessionRequestStatus(.error, sessionID: currentSessionID)
+            } else {
+                await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+            }
             return
         }
 
@@ -898,43 +874,58 @@ extension ChatService {
             // 避免后台回写与续写占位消息竞争插入位置，或让模型看不到已执行的调用。
             if hasAssistantContent && blockingCalls.isEmpty {
                 logger.info("在后台启动 \(nonBlockingCalls.count) 个非阻塞式工具...")
-                Task {
-                    for toolCall in nonBlockingCalls {
-                        let outcome = await handleToolCall(
-                            toolCall,
-                            sessionID: currentSessionID,
-                            agentRunID: activeAgentRunID,
-                            triggeringMessageID: activeAttemptMetadata?.groupID
-                        )
-                        if let toolResult = outcome.toolResult {
-                            await attachToolResult(
-                                toolResult,
-                                disposition: outcome.resultDisposition,
-                                to: toolCall.id,
-                                toolName: toolCall.toolName,
-                                loadingMessageID: toolCallMessageID,
-                                sessionID: currentSessionID
+                let started = startBackgroundToolRequest(
+                    sessionID: currentSessionID, runID: activeAgentRunID
+                ) { startGate in
+                    Task {
+                        do { try await startGate.waitUntilRegistered() } catch { return }
+                        for toolCall in nonBlockingCalls {
+                            guard !Task.isCancelled else { break }
+                            guard let outcome = await handleToolCall(
+                                toolCall,
+                                sessionID: currentSessionID,
+                                agentRunID: activeAgentRunID,
+                                triggeringMessageID: activeAttemptMetadata?.groupID,
+                                sourceMessageID: toolCallMessageID
+                            ) else { break }
+                            guard !Task.isCancelled else { break }
+                            if let toolResult = outcome.toolResult {
+                                await attachToolResult(
+                                    toolResult,
+                                    disposition: outcome.resultDisposition,
+                                    to: toolCall.id,
+                                    toolName: toolCall.toolName,
+                                    loadingMessageID: toolCallMessageID,
+                                    sessionID: currentSessionID
+                                )
+                            }
+                            guard permitsToolCall(toolCall, messageID: toolCallMessageID, sessionID: currentSessionID) else { break }
+                            if outcome.outcomeUnknown { break }
+                            var outcomeMessage = outcome.message
+                            self.applyResponseAttemptMetadata(activeAttemptMetadata, to: &outcomeMessage)
+                            _ = try? await self.insertConversationResponseAttemptMessagesAtomically(
+                                [outcomeMessage],
+                                afterAttemptOf: toolCallMessageID,
+                                in: currentSessionID
                             )
+                            logger.info("  - 非阻塞式工具 '\(toolCall.toolName)' 已在后台执行完毕并保存了结果。")
                         }
-                        var outcomeMessage = outcome.message
-                        self.applyResponseAttemptMetadata(activeAttemptMetadata, to: &outcomeMessage)
-                        _ = try? await self.insertConversationResponseAttemptMessagesAtomically(
-                            [outcomeMessage],
-                            afterAttemptOf: toolCallMessageID,
-                            in: currentSessionID
-                        )
-                        logger.info("  - 非阻塞式工具 '\(toolCall.toolName)' 已在后台执行完毕并保存了结果。")
                     }
                 }
+                guard started else { return }
             } else {
                 logger.info("本轮需要工具续写，将等待非阻塞式工具执行结果后一起发起二次调用。")
                 for toolCall in nonBlockingCalls {
-                    let outcome = await handleToolCall(
+                    guard let outcome = await handleToolCall(
                         toolCall,
                         sessionID: currentSessionID,
                         agentRunID: activeAgentRunID,
-                        triggeringMessageID: activeAttemptMetadata?.groupID
-                    )
+                        triggeringMessageID: activeAttemptMetadata?.groupID,
+                        sourceMessageID: toolCallMessageID
+                    ) else {
+                        await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+                        return
+                    }
                     if let toolResult = outcome.toolResult {
                         await attachToolResult(
                             toolResult,
@@ -945,9 +936,16 @@ extension ChatService {
                             sessionID: currentSessionID
                         )
                     }
-                    var outcomeMessage = outcome.message
-                    applyResponseAttemptMetadata(activeAttemptMetadata, to: &outcomeMessage)
-                    nonBlockingResultsForFollowUp.append(outcomeMessage)
+                    guard permitsToolCall(toolCall, messageID: toolCallMessageID, sessionID: currentSessionID) else {
+                        await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+                        return
+                    }
+                    if !outcome.outcomeUnknown {
+                        var outcomeMessage = outcome.message
+                        applyResponseAttemptMetadata(activeAttemptMetadata, to: &outcomeMessage)
+                        nonBlockingResultsForFollowUp.append(outcomeMessage)
+                    }
+                    hasUnknownToolOutcome = hasUnknownToolOutcome || outcome.outcomeUnknown
                     if outcome.shouldAwaitUserSupplement {
                         shouldAwaitUserSupplement = true
                         break
@@ -962,7 +960,11 @@ extension ChatService {
                 afterAttemptOf: toolCallMessageID,
                 in: currentSessionID
             )
-            await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+            if hasUnknownToolOutcome {
+                emitSessionRequestStatus(.error, sessionID: currentSessionID)
+            } else {
+                await finishSessionRequestAndCleanupFileHistory(sessionID: currentSessionID)
+            }
             return
         }
 
@@ -987,10 +989,6 @@ extension ChatService {
                 emitSessionRequestStatus(.error, sessionID: currentSessionID)
                 return
             }
-            await consumePendingUserSteeringEvents(
-                in: currentSessionID,
-                includedMessageIDs: Set(updatedMessages.map(\.id))
-            )
             updateRequestLoadingMessageID(followUpLoadingMessage.id, for: currentSessionID)
 
             logger.info("正在将工具结果发回 AI 以生成最终回复...")
@@ -1014,14 +1012,20 @@ extension ChatService {
     }
 
     func finishSessionRequestAndCleanupFileHistory(sessionID: UUID) async {
+        guard !Task.isCancelled else { return }
         let runID = conversationRunIDs(for: sessionID)?.runID
+        if let runID, !containsActiveToolRun(sessionID: sessionID, runID: runID) { return }
         emitSessionRequestStatus(.finished, sessionID: sessionID)
-        guard let runID,
-              Persistence.loadConversationRun(id: runID)?.status.isTerminal == true else {
-            return
-        }
-        if Persistence.loadLocalAgentRun(id: runID)?.state == .running {
-            await LocalAgentRuntimeContextManager.shared.finishRun(id: runID, state: .completed)
+        guard let runID else { return }
+        guard claimCompletedToolRunCleanup(sessionID: sessionID, runID: runID) else { return }
+        await finishToolRunResources(runID: runID, state: .completed)
+    }
+
+    func finishToolRunResources(runID: UUID, state: LocalAgentRunState) async {
+        defer { toolRunCleanupDidFinish(runID: runID) }
+        let effectiveState = commitToolRunCleanupState(runID: runID, fallback: state)
+        if effectiveState != .completed || Persistence.loadLocalAgentRun(id: runID)?.state == .running {
+            await LocalAgentRuntimeContextManager.shared.finishRun(id: runID, state: effectiveState)
         } else {
             await SkillAllowedToolRuntime.shared.finishRun(id: runID)
             await LocalAgentFileToolExecutor.shared.finishRun(id: runID)

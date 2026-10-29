@@ -8575,3 +8575,33 @@ If seulement le Archiver state changes, Aucun re-embedding est performed.";
 "Gemini Interactions API 地址说明" = "Utilisez une URL de base telle que https://generativelanguage.googleapis.com/v1. Les requêtes utilisent /interactions.";
 "Gemini Interactions 配置说明" = "Sélectionnez Gemini Interactions, puis saisissez votre clé API Gemini et une URL de base se terminant par /v1. Conservez la version API requise par votre passerelle. Récupérez les modèles ou ajoutez un modèle compatible, activez ses capacités et enregistrez. Les configurations Gemini existantes continuent à utiliser generateContent.\n\nPar défaut, l’historique est envoyé depuis cet appareil avec store=false. Texte, images, audio, documents, vidéos et outils de fonction locaux utilisent les étapes Interactions. Activez le raisonnement pour ajouter thinking_level et thinking_summaries dans generation_config. Les paramètres globaux temperature, top_p et top_k ne sont pas envoyés, car le schéma API actuel ne les accepte pas.\n\nLe JSON personnalisé doit utiliser les champs Interactions ; les paramètres generateContent ne peuvent pas être copiés tels quels. Cet adaptateur gère les requêtes de modèles au premier plan, sans agents gérés, tâches en arrière-plan ni chaînage previous_interaction_id. Les modèles d’image utilisent Interactions ; les modèles d’embedding conservent le point de terminaison Gemini dédié.";
 "Gemini Interactions 未返回完整的有效响应。" = "Gemini Interactions n’a pas renvoyé de réponse complète et valide.";
+
+"消息操作未完成" = "Action sur le message non terminée";
+"消息已变化或正在生成，请刷新后重试。" = "Le message a changé ou est en cours de génération. Actualisez et réessayez.";
+
+"当前会话正在处理，请稍后再发送。" = "Cette conversation est occupée. Réessayez plus tard.";
+"会话已不存在，内容未发送。" = "La conversation n’existe plus. Le contenu n’a pas été envoyé.";
+"会话已切换，请查看原会话后再继续。" = "La conversation a changé. Vérifiez la conversation initiale avant de continuer.";
+"此功能暂不可用。" = "Cette fonction est temporairement indisponible.";
+"该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。" = "Cette demande est déjà enregistrée, mais son résultat est inconnu. Vérifiez la conversation avant de continuer.";
+"内容已添加到当前会话，发送结果请在应用中查看。" = "Le contenu a été ajouté à la conversation actuelle. Consultez le résultat dans l’application.";
+"工具执行结果未知" = "Résultat de l’outil inconnu";
+"请先检查工具的实际状态，再决定下一步。" = "Vérifiez l’état réel de l’outil avant de continuer.";
+"可为每条 API Key 添加备注，方便区分来源。关闭多 Key 模式后只使用第一条，其余 Key 和备注仍会保留。" = "Ajoutez une note à chaque clé API pour l’identifier. Si le mode multiclés est désactivé, seule la première est utilisée ; les autres et leurs notes sont conservées.";
+
+"内容准备失败，请检查附件后重试。" = "Impossible de préparer le contenu. Vérifiez les pièces jointes et réessayez.";
+"请求已停止；请查看对话后再继续。" = "La demande a été arrêtée. Vérifiez la conversation avant de continuer.";
+"快捷指令可能已启动，但执行结果未知。" = "Le raccourci a peut-être démarré, mais son résultat est inconnu.";
+"快捷指令可能已启动，但未收到回调，执行结果未知。" = "Le raccourci a peut-être démarré, mais aucun retour n’a été reçu ; son résultat est inconnu.";
+"快捷指令可能已启动，取消后执行结果未知。" = "Le raccourci a peut-être démarré ; son résultat après annulation est inconnu.";
+"工具调用的执行结果未知，无法安全继续重试；请检查该工具的实际状态。" = "Le résultat de l’outil est inconnu. Vérifiez son état avant de réessayer.";
+
+"内置工具控制网页卡片和系统时间等功能是否可用于聊天。" = "Les outils intégrés contrôlent la disponibilité des cartes web et de l’heure système dans la discussion.";
+"mac.builtin.tools.current.help" = "Configurez les outils de carte web et d’heure système. Les activer ne les exécute pas. L’isolation de session peut les rendre indisponibles.";
+
+"请先停止当前请求并等待结束，再删除会话。" = "Arrêtez la requête en cours et attendez sa fin avant de supprimer la conversation.";
+"支持 OpenMinis Provider JSON 与 Skill ZIP。" = "Prend en charge les fichiers Provider JSON et Skill ZIP d’OpenMinis.";
+"外部上下文可包含快捷指令能力、最近结果和公告趋势。" = "Le contexte externe peut inclure les raccourcis, les résultats récents et les tendances des annonces.";
+"还没有积累到可复用的外部信号历史。" = "Aucun historique de signaux externes réutilisable n’a encore été recueilli.";
+"支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。" = "Prend en charge les sessions OpenMinis iOS/Android en JSON/ZIP, Provider JSON et Skill ZIP. Sélectionnez les compétences à importer ; aucun script ni dépendance ne sera exécuté ou installé.";
+"自动删除只作用于以后删除的会话。" = "La suppression automatique ne concerne que les conversations supprimées à partir de maintenant.";

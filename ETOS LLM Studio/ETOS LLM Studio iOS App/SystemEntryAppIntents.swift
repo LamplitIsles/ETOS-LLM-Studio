@@ -26,9 +26,13 @@ struct StartETOSAgentTaskIntent: AppIntent {
             title: taskTitle,
             requestID: UUID(uuidString: requestID ?? "") ?? UUID()
         )
-        let message = result.wasAlreadyHandled
-            ? NSLocalizedString("该任务请求已接收。", comment: "Idempotent Agent intent result")
-            : NSLocalizedString("任务已交给 ETOS Agent。", comment: "Agent intent success")
+        let message: String
+        switch result.outcome {
+        case .locallyAccepted:
+            message = NSLocalizedString("内容已添加到当前会话，发送结果请在应用中查看。", comment: "Locally accepted Agent task")
+        case .alreadyRecorded:
+            message = NSLocalizedString("该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。", comment: "Previously recorded Agent task")
+        }
         return .result(value: result.sessionID.uuidString, dialog: IntentDialog(stringLiteral: message))
     }
 }

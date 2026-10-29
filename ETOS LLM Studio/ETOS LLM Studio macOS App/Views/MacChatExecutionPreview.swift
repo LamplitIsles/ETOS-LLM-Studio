@@ -71,7 +71,7 @@ struct MacChatExecutionPreview: View {
                     }.buttonStyle(.borderless)
                     if expanded {
                         if mode == .agentTools, let tool {
-                            Text(tool.displayTitle ?? tool.toolName).font(.caption).foregroundStyle(.secondary)
+                            Text(tool.toolName).font(.caption).foregroundStyle(.secondary)
                             Text(tool.previewText).font(.caption.monospaced()).lineLimit(4).textSelection(.enabled)
                         } else {
                             ForEach(terminal.lines) { Text($0.displayText).font(.caption.monospaced()).lineLimit(1) }
@@ -96,7 +96,7 @@ struct MacChatExecutionPreview: View {
                         MacLinuxTerminalView(isActive: active, runtime: workspace.linux, initialJobID: terminal.jobID)
                     } else if let tool {
                         Form {
-                            LabeledContent(NSLocalizedString("工具", comment: ""), value: tool.displayTitle ?? tool.toolName)
+                            LabeledContent(NSLocalizedString("工具", comment: ""), value: tool.toolName)
                             Section(NSLocalizedString("参数", comment: "")) { Text(tool.arguments).font(.body.monospaced()).textSelection(.enabled) }
                             if let result = tool.result {
                                 Section(NSLocalizedString("结果", comment: "")) { Text(result).font(.body.monospaced()).textSelection(.enabled) }

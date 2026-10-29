@@ -7,7 +7,6 @@ public enum ChatQuickAction: String, CaseIterable, Identifiable, Sendable {
     case toolCenter
     case dailyPulse
     case usageAnalytics
-    case mcp
     case agentSkills
     case shortcuts
     case roleplay
@@ -26,7 +25,6 @@ public enum ChatQuickAction: String, CaseIterable, Identifiable, Sendable {
         case .toolCenter: return NSLocalizedString("工具中心", comment: "聊天快捷功能标题")
         case .dailyPulse: return NSLocalizedString("每日脉冲", comment: "聊天快捷功能标题")
         case .usageAnalytics: return NSLocalizedString("用量统计", comment: "聊天快捷功能标题")
-        case .mcp: return NSLocalizedString("MCP 工具集成", comment: "聊天快捷功能标题")
         case .agentSkills: return NSLocalizedString("Agent Skills", comment: "聊天快捷功能标题")
         case .shortcuts: return NSLocalizedString("快捷指令工具集成", comment: "聊天快捷功能标题")
         case .roleplay: return NSLocalizedString("角色扮演与酒馆兼容", comment: "聊天快捷功能标题")
@@ -45,7 +43,6 @@ public enum ChatQuickAction: String, CaseIterable, Identifiable, Sendable {
         case .toolCenter: return "wrench"
         case .dailyPulse: return "sparkles"
         case .usageAnalytics: return "chart.bar"
-        case .mcp: return "network"
         case .agentSkills: return "star"
         case .shortcuts: return "bolt"
         case .roleplay: return "theatermasks"

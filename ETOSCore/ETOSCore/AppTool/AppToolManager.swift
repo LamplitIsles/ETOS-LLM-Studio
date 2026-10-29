@@ -28,8 +28,8 @@ public final class AppToolManager: ObservableObject {
     nonisolated static let toolApprovalPoliciesUserDefaultsKey = "appTools.toolApprovalPolicies"
     // 记录已经向用户"首次引入"过的默认工具 ID，防止每次启动都强制重新启用
     nonisolated static let knownDefaultToolIDsUserDefaultsKey = "appTools.knownDefaultToolIDs"
-    nonisolated static let defaultEnabledToolKinds: Set<AppToolKind> = [.showWidget, .askUserInput, .getSystemTime]
-    nonisolated static let builtInToolKinds: Set<AppToolKind> = [.showWidget, .askUserInput, .getSystemTime]
+    nonisolated static let defaultEnabledToolKinds: Set<AppToolKind> = [.showWidget, .getSystemTime]
+    nonisolated static let builtInToolKinds: Set<AppToolKind> = [.showWidget, .getSystemTime]
 
     @Published public internal(set) var chatToolsEnabled: Bool
     @Published var enabledToolIDs: Set<String>
@@ -167,18 +167,10 @@ public final class AppToolManager: ObservableObject {
         Self.logger.info("拓展工具 \(kind.rawValue, privacy: .public) 审批策略已更新为 \(policy.rawValue, privacy: .public)。")
     }
 
-    public func chatToolsForLLM() -> [InternalToolDefinition] {
-        // 原拓展工具已迁移为内建 MCP Server，由 MCPManager 统一暴露与审批。
-        return []
-    }
-
     public func builtInToolsForLLM() -> [InternalToolDefinition] {
         var tools: [InternalToolDefinition] = []
         if isToolEnabled(.showWidget) {
             tools.append(toolDefinition(for: .showWidget))
-        }
-        if isToolEnabled(.askUserInput) {
-            tools.append(toolDefinition(for: .askUserInput))
         }
         if isToolEnabled(.getSystemTime) {
             tools.append(toolDefinition(for: .getSystemTime))
@@ -197,8 +189,10 @@ public final class AppToolManager: ObservableObject {
         toolName: String,
         argumentsJSON: String,
         sourceSessionID: UUID? = nil,
-        sourceMessageID: UUID? = nil
+        sourceMessageID: UUID? = nil,
+        admission: (@Sendable () -> Bool)? = nil
     ) async throws -> String {
+        guard admission?() != false else { throw CancellationError() }
         if let kind = AppToolKind.resolve(from: toolName) {
             guard kind.isAvailableOnCurrentPlatform else {
                 throw AppToolExecutionError.toolDisabled(kind.displayName)

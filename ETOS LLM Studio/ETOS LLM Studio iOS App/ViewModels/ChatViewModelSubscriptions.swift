@@ -79,7 +79,6 @@ extension ChatViewModel {
     func reloadAfterSnapshotRestore() {
         AppConfigStore.shared.reloadFromPersistentStore()
         chatService.reloadProviders()
-        chatService.reloadSessionStateFromPersistenceAfterMigration()
         DailyPulseManager.shared.reloadPersistedRuns()
         DailyPulseDeliveryCoordinator.shared.reloadFromStorage()
     }
@@ -129,7 +128,6 @@ extension ChatViewModel {
     @objc func handleDidBecomeActive() {
         isApplicationActive = true
         BackgroundGenerationKeepAliveManager.shared.refreshStatus()
-        chatService.reloadLocalModelsAndProvidersIfNeeded()
         clearCurrentSessionReplyNotifications()
     }
 
@@ -158,6 +156,12 @@ extension ChatViewModel {
 
     func setupSubscriptions() {
         observeUserMessagePreviewCharacterLimit()
+        Publishers.CombineLatest(chatService.unknownToolOutcomesSubject, chatService.currentSessionSubject)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] outcomes, session in
+                self?.unknownToolOutcome = session.flatMap { outcomes[$0.id]?.first }
+            }
+            .store(in: &cancellables)
         NotificationCenter.default.publisher(for: AppConfigStore.persistentStoreDidLoadNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -319,7 +323,6 @@ extension ChatViewModel {
                 guard let self else { return }
                 self.runningSessionIDs = runningSessionIDs
                 refreshCurrentSessionSendingState()
-                flushPendingToolSupplementMessagesIfPossible()
                 refreshBackgroundGenerationState()
                 updateAutoReasoningPreviewState()
             }
@@ -378,15 +381,6 @@ extension ChatViewModel {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: .appToolAskUserInputRequested)
-            .sink { [weak self] notification in
-                guard let self,
-                      let request = AppToolAskUserInputRequest.decode(from: notification.userInfo),
-                      let receipt = AppToolUIRequestDeliveryReceipt.decode(from: notification.userInfo) else { return }
-                receiveAskUserInputRequest(request, receipt: receipt)
-            }
-            .store(in: &cancellables)
-
         syncSpeechModelSelection()
         syncTitleGenerationModelSelection()
         syncDailyPulseModelSelection()
@@ -404,12 +398,31 @@ extension ChatViewModel {
             userInput = text
         case "send_message":
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            userInput = text
-            sendMessage()
-        case "generate":
-            if let latestAssistant = allMessagesForSession.last(where: { $0.role == .assistant }) {
-                retryMessage(latestAssistant)
+            let lease: ChatRequestLease
+            switch chatService.beginRequest(sessionID: sessionID) {
+            case .success(let acquired): lease = acquired
+            case .failure(.busy):
+                messageEditErrorMessage = NSLocalizedString("当前会话正在处理，请稍后再发送。", comment: "Session busy")
+                return
+            case .failure(.sessionMissing):
+                messageEditErrorMessage = NSLocalizedString("会话已不存在，内容未发送。", comment: "Missing send session")
+                return
             }
+            Task { [weak self] in
+                guard let self else { lease.release(); return }
+                await chatService.sendAndProcessMessage(
+                    content: text, aiTemperature: aiTemperature, aiTopP: aiTopP,
+                    maxChatHistory: maxChatHistory, enableStreaming: enableStreaming,
+                    includeSystemTime: includeSystemTimeInPrompt,
+                    systemTimeInjectionPosition: systemTimeInjectionPosition,
+                    enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
+                    periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
+                    enableResponseSpeedMetrics: enableResponseSpeedMetrics,
+                    targetSessionID: sessionID, requestLease: lease
+                )
+            }
+        case "generate":
+            messageEditErrorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
         default:
             return
         }

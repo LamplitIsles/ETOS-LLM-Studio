@@ -10,7 +10,6 @@ import Foundation
 
 public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable {
     case showWidget = "show_widget"
-    case askUserInput = "ask_user_input"
     case getSystemTime = "get_system_time"
     case echoText = "echo_text"
     case fillUserInput = "fill_user_input"
@@ -38,7 +37,7 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
 
     public var requiresApproval: Bool {
         switch self {
-        case .showWidget, .askUserInput, .getSystemTime:
+        case .showWidget, .getSystemTime:
             return false
         default:
             return true
@@ -49,8 +48,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
         switch self {
         case .showWidget:
             return "app_show_widget"
-        case .askUserInput:
-            return "app_ask_user_input"
         case .getSystemTime:
             return "app_get_system_time"
         case .echoText:
@@ -102,8 +99,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
         switch self {
         case .showWidget:
             return NSLocalizedString("显示网页卡片", comment: "Show widget tool name")
-        case .askUserInput:
-            return NSLocalizedString("询问用户选项", comment: "Ask user input tool name")
         case .getSystemTime:
             return NSLocalizedString("获取系统时间", comment: "Get system time tool name")
         case .echoText:
@@ -155,8 +150,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
         switch self {
         case .showWidget:
             return NSLocalizedString("在聊天中渲染可视化网页卡片（Widget）。", comment: "Show widget tool summary")
-        case .askUserInput:
-            return NSLocalizedString("弹出结构化问答面板，支持单选、多选和“其他输入”。", comment: "Ask user input tool summary")
         case .getSystemTime:
             return NSLocalizedString("返回当前设备系统时间。", comment: "Get system time tool summary")
         case .echoText:
@@ -208,8 +201,6 @@ public enum AppToolKind: String, CaseIterable, Identifiable, Hashable, Sendable 
         switch self {
         case .showWidget:
             return NSLocalizedString("工具详情：显示网页卡片", comment: "Show widget tool detail description")
-        case .askUserInput:
-            return NSLocalizedString("工具详情：询问用户选项", comment: "Ask user input tool detail description")
         case .getSystemTime:
             return NSLocalizedString("工具详情：获取系统时间", comment: "Get system time tool detail description")
         case .echoText:

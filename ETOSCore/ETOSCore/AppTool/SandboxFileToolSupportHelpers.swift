@@ -16,6 +16,7 @@ extension SandboxFileToolSupport {
     struct SandboxUndoContext: Sendable {
         let runID: UUID
         let mutationID: UUID
+        var validateAdmission: (@Sendable () throws -> Void)? = nil
     }
 
     @TaskLocal static var fileSpace: FileSpace?

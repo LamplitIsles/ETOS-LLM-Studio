@@ -7,7 +7,6 @@
 // ============================================================================
 
 import Foundation
-import MCP
 
 enum MCPNativePersonalDataToolDefinitions {
     static let toolIDs = [

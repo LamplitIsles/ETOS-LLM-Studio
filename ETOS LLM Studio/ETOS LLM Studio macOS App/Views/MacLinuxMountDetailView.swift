@@ -60,7 +60,7 @@ struct MacLinuxMountDetailView: View {
                         choosingDirectory = true
                     }
                 } footer: {
-                    Text(NSLocalizedString("提升为读写需要再次通过系统文件选择器确认目录。活跃任务持有租约时，请先停止任务再普通卸载。", comment: "")).font(.footnote).foregroundStyle(.secondary)
+                    Text(NSLocalizedString("提升为读写需要再次通过系统文件选择器确认目录。", comment: "")).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Button(NSLocalizedString("移除挂载…", comment: ""), role: .destructive) {
@@ -99,12 +99,9 @@ struct MacLinuxMountDetailView: View {
         .confirmationDialog(NSLocalizedString("移除此挂载？", comment: ""), isPresented: Binding(
             get: { removing != nil }, set: { if !$0 { removing = nil } }
         ), titleVisibility: .visible, presenting: removing) { target in
-            Button(NSLocalizedString("移除挂载", comment: ""), role: .destructive) { remove(target, force: false) }
-            if target.record.activeLeaseCount > 0 {
-                Button(NSLocalizedString("立即停止使用并移除", comment: ""), role: .destructive) { remove(target, force: true) }
-            }
+            Button(NSLocalizedString("移除挂载", comment: ""), role: .destructive) { remove(target) }
             Button(NSLocalizedString("取消", comment: ""), role: .cancel) { removing = nil }
-        } message: { _ in Text(NSLocalizedString("移除只会撤销 Linux 的目录入口，不会删除外部文件。强制移除可能中断正在使用它的任务。", comment: "")) }
+        } message: { _ in Text(NSLocalizedString("移除会删除 ETOS 中的文件夹入口，不会删除外部文件。已开始的访问可能持续到操作结束。", comment: "")) }
         .guideSettingsPageContext(
             id: GuidePageID(rawValue: "mac-linux-mount-\(mountID)-\(model.lease)-\(model.version)-\(runtime.epoch)"), title: NSLocalizedString("挂载", comment: ""),
             documents: [GuideDocumentReference(id: "local-linux", title: "Local Linux"), GuideDocumentReference(id: "macos-workspace", title: "macOS Workspace")],
@@ -141,12 +138,12 @@ struct MacLinuxMountDetailView: View {
         }
     }
 
-    private func remove(_ target: MacLinuxMountRemoval, force: Bool) {
+    private func remove(_ target: MacLinuxMountRemoval) {
         guard active else { return }
         Task {
             do {
                 try await model.perform(expectedLease: target.lease, revision: target.revision) { services in
-                    try await services.mounts.delete(id: target.record.id, force: force, expected: target.record)
+                    try await services.mounts.delete(id: target.record.id, expected: target.record)
                 }
                 dismiss()
             } catch { }

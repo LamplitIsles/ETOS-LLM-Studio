@@ -404,14 +404,12 @@ internal struct DailyPulsePreferenceProfile: Hashable, Sendable {
 }
 
 internal struct DailyPulseExternalContext: Hashable, Sendable {
-    let mcpSourceLines: [String]
     let shortcutSourceLines: [String]
     let recentSnapshotLines: [String]
     let trendSourceLines: [String]
     let signalHistoryLines: [String]
 
     static let empty = DailyPulseExternalContext(
-        mcpSourceLines: [],
         shortcutSourceLines: [],
         recentSnapshotLines: [],
         trendSourceLines: [],
@@ -419,8 +417,7 @@ internal struct DailyPulseExternalContext: Hashable, Sendable {
     )
 
     var hasSignals: Bool {
-        !mcpSourceLines.isEmpty
-            || !shortcutSourceLines.isEmpty
+        !shortcutSourceLines.isEmpty
             || !recentSnapshotLines.isEmpty
             || !trendSourceLines.isEmpty
             || !signalHistoryLines.isEmpty
@@ -428,20 +425,15 @@ internal struct DailyPulseExternalContext: Hashable, Sendable {
 
     var summaryText: String {
         let empty = NSLocalizedString("（无）", comment: "Daily Pulse prompt empty placeholder")
-        let mcpTitle = NSLocalizedString("可用 MCP 外部能力：", comment: "Daily Pulse external context MCP title")
         let shortcutTitle = NSLocalizedString("可用快捷指令能力：", comment: "Daily Pulse external context shortcuts title")
         let snapshotTitle = NSLocalizedString("最近已获取到的外部结果快照：", comment: "Daily Pulse external context snapshots title")
         let trendTitle = NSLocalizedString("公告与趋势信号：", comment: "Daily Pulse external context trends title")
         let signalHistoryTitle = NSLocalizedString("最近积累的外部信号历史：", comment: "Daily Pulse external context signal history title")
-        let mcpSummary = mcpSourceLines.isEmpty ? empty : mcpSourceLines.joined(separator: "\n")
         let shortcutSummary = shortcutSourceLines.isEmpty ? empty : shortcutSourceLines.joined(separator: "\n")
         let snapshotSummary = recentSnapshotLines.isEmpty ? empty : recentSnapshotLines.joined(separator: "\n")
         let trendSummary = trendSourceLines.isEmpty ? empty : trendSourceLines.joined(separator: "\n")
         let signalHistorySummary = signalHistoryLines.isEmpty ? empty : signalHistoryLines.joined(separator: "\n")
         return """
-        \(mcpTitle)
-        \(mcpSummary)
-
         \(shortcutTitle)
         \(shortcutSummary)
 

@@ -86,6 +86,14 @@ extension SessionFolderBrowserView {
 
     func applySessionAlerts<Content: View>(to content: Content) -> some View {
         content
+            .alert(NSLocalizedString("消息操作未完成", comment: "Message edit failure alert title"), isPresented: Binding(
+                get: { viewModel.messageEditErrorMessage != nil },
+                set: { if !$0 { viewModel.messageEditErrorMessage = nil } }
+            )) {
+                Button(NSLocalizedString("确定", comment: ""), role: .cancel) { viewModel.messageEditErrorMessage = nil }
+            } message: {
+                Text(viewModel.messageEditErrorMessage ?? "")
+            }
             .alert(NSLocalizedString("确认删除会话", comment: ""), isPresented: Binding(
                 get: { sessionToDelete != nil },
                 set: { isPresented in
@@ -552,18 +560,8 @@ extension SessionFolderBrowserView {
                 onEditTags: {
                     sessionForTagEditing = session
                 },
-                onSendToCompanion: {
-                    syncManager.sendSessionToCompanion(sessionID: session.id)
-                },
                 onStopRuntime: {
-                    Task {
-                        await ChatService.shared.stopConversationRuntime(for: session.id)
-                    }
-                },
-                onContinueRuntime: {
-                    Task {
-                        _ = await ChatService.shared.continueConversationRuntime(for: session.id)
-                    }
+                    viewModel.cancelSending(for: session.id)
                 }
             )
         }
@@ -669,9 +667,7 @@ extension SessionFolderBrowserView {
         let sessions = selectedSessions
         let folders = selectedFolders
         guard !sessions.isEmpty || !folders.isEmpty else { return }
-        if !sessions.isEmpty {
-            viewModel.deleteSessions(sessions)
-        }
+        if !sessions.isEmpty && !viewModel.deleteSessions(sessions) { return }
         folders.forEach { viewModel.deleteSessionFolder($0) }
         selectedSessionIDs.removeAll()
         selectedFolderIDs.removeAll()

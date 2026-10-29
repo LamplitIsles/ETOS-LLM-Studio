@@ -71,7 +71,7 @@ public final class ShortcutToolManager: ObservableObject {
         let toolName: String
         let transport: ShortcutExecutionTransport
         let startedAt: Date
-        let continuation: CheckedContinuation<ShortcutToolExecutionResult, Never>
+        let continuation: CheckedContinuation<ShortcutTransportAttempt<ShortcutToolExecutionResult>, Never>
         var timeoutTask: Task<Void, Never>?
     }
 
@@ -450,16 +450,23 @@ public final class ShortcutToolManager: ObservableObject {
         return "\(NSLocalizedString("[快捷指令]", comment: "Shortcut tool display prefix")) \(tool.displayName)"
     }
 
-    public func executeToolFromChat(toolName: String, argumentsJSON: String) async throws -> String {
+    public func executeToolFromChat(toolName: String, argumentsJSON: String, admission: (@Sendable () -> Bool)? = nil, onOutcomeUnknown: (@Sendable () -> Void)? = nil) async throws -> String {
+        guard admission?() != false else { throw CancellationError() }
         guard chatToolsEnabled else {
             throw ShortcutToolError.executionFailed(NSLocalizedString("快捷指令工具总开关已关闭。", comment: ""))
         }
         guard let tool = routedTools[toolName] else {
             throw ShortcutToolError.unknownTool
         }
-        let result = await executeWithFallback(tool: tool, argumentsJSON: argumentsJSON, allowRelayOnWatch: true)
-        try Task.checkCancellation()
+        let attempt = await executeWithFallback(tool: tool, argumentsJSON: argumentsJSON, allowRelayOnWatch: true, admission: admission)
+        let result = attempt.result
         lastExecutionResult = result
+
+        if case .outcomeUnknown = attempt {
+            onOutcomeUnknown?()
+            throw ShortcutToolError.outcomeUnknown
+        }
+        try Task.checkCancellation()
 
         guard result.success else {
             throw ShortcutToolError.executionFailed(result.errorMessage ?? NSLocalizedString("快捷指令执行失败。", comment: ""))
@@ -493,7 +500,7 @@ public final class ShortcutToolManager: ObservableObject {
             )
         }
 
-        let result = await executeWithFallback(tool: tool, argumentsJSON: request.argumentsJSON, allowRelayOnWatch: false)
+        let result = await executeWithFallback(tool: tool, argumentsJSON: request.argumentsJSON, allowRelayOnWatch: false).result
         var relayResult = result
         relayResult.transport = .relay
         lastExecutionResult = relayResult

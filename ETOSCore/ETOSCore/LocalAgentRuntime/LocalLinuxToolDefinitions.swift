@@ -1,23 +1,18 @@
+#if os(macOS)
 // ============================================================================
 // LocalLinuxToolDefinitions.swift
 // ============================================================================
 // ETOS LLM Studio
 //
-// Linux 工具通过内建 MCP 进入现有工具治理链路；这里仅描述模型可见协议。
+// macOS 原生进程工具通过内建 MCP 进入现有工具治理链路；这里描述模型可见协议。
 // ============================================================================
 
 import Foundation
 
 enum LocalLinuxToolName: String, CaseIterable {
-    #if os(macOS)
     case run = "native_run"
     case shell = "native_shell"
     case process = "native_process"
-    #else
-    case run = "linux_run"
-    case shell = "linux_shell"
-    case process = "linux_process"
-    #endif
 }
 
 enum LocalLinuxToolDefinitions {
@@ -40,9 +35,6 @@ enum LocalLinuxToolDefinitions {
     private static func matchesExposedName(_ name: String, tool: LocalLinuxToolName) -> Bool {
         let raw = tool.rawValue
         return name == raw
-            || name == "mcp_\(raw)"
-            || (name.hasPrefix(MCPManager.toolNamePrefix) && name.hasSuffix("/\(raw)"))
-            || (name.hasPrefix(MCPManager.toolAliasPrefix) && name.hasSuffix("_\(raw)"))
     }
 
     private static var run: InternalToolDefinition {
@@ -120,32 +112,16 @@ enum LocalLinuxToolDefinitions {
     }
 
     private static var runDescription: String {
-        #if os(macOS)
         NSLocalizedString("mac.shell.tool.run", value: "Run a native macOS program and wait for its exit status and bounded output. Missing software is not installed automatically.", comment: "")
-        #else
-        NSLocalizedString("直接执行 Linux 程序并等待完成，返回退出状态、诊断和有界输出；不会自动安装缺失的软件。", comment: "")
-        #endif
     }
     private static var executableDescription: String {
-        #if os(macOS)
         NSLocalizedString("mac.shell.tool.executable", value: "A macOS executable path or a command in PATH.", comment: "")
-        #else
-        NSLocalizedString("Linux 可执行文件路径或 PATH 中的命令名。", comment: "")
-        #endif
     }
     private static var directoryDescription: String {
-        #if os(macOS)
         NSLocalizedString("mac.shell.tool.directory", value: "Optional absolute macOS working directory; defaults to this conversation's workspace.", comment: "")
-        #else
-        NSLocalizedString("可选 guest 工作目录；默认使用当前会话工作区。", comment: "")
-        #endif
     }
     private static var processDescription: String {
-        #if os(macOS)
         NSLocalizedString("mac.shell.tool.process", value: "Manage this conversation's native macOS tasks and PTYs: list, start, read, write, resize, interrupt, cancel or finish input.", comment: "")
-        #else
-        NSLocalizedString("管理本会话的 Linux 任务和交互式 PTY：列出、启动终端、读取输出、写入、缩放、中断、取消或结束输入。", comment: "")
-        #endif
     }
 
     private static var commandTimeoutProperty: JSONValue {
@@ -154,13 +130,7 @@ enum LocalLinuxToolDefinitions {
             "minimum": .int(0),
             "description": .string(NSLocalizedString("可选超时秒数；0 表示不设超时。", comment: "Linux timeout"))
         ]
-        #if os(macOS)
         return .dictionary(property)
-        #else
-        var boundedProperty = property
-        boundedProperty["maximum"] = .int(Int(LocalLinuxBridgeConstants.maximumTimeoutMilliseconds / 1_000))
-        return .dictionary(boundedProperty)
-        #endif
     }
 
     private static var commandOutputLimitProperty: JSONValue {
@@ -169,13 +139,7 @@ enum LocalLinuxToolDefinitions {
             "minimum": .int(0),
             "description": .string(NSLocalizedString("可选原始输出终止阈值；0 表示不设上限。", comment: "Linux output limit"))
         ]
-        #if os(macOS)
         return .dictionary(property)
-        #else
-        var boundedProperty = property
-        boundedProperty["maximum"] = .int(Int(LocalLinuxBridgeConstants.maximumOutputLimitBytes))
-        return .dictionary(boundedProperty)
-        #endif
     }
 
     private static func integerProperty(_ description: String) -> JSONValue {
@@ -198,3 +162,4 @@ enum LocalLinuxToolDefinitions {
         ])
     }
 }
+#endif

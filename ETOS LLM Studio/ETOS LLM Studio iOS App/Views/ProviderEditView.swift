@@ -338,7 +338,6 @@ struct ProviderEditView: View {
                 access: .writeOnly
             ),
             "multi_key_enabled": GuideSnapshotField(label: NSLocalizedString("多 Key 模式", comment: ""), value: .bool(keyEditor.draft.multiKeyEnabled)),
-            "maximum_key_retries": GuideSnapshotField(label: NSLocalizedString("最大换 Key 次数", comment: ""), value: .int(Int(keyEditor.draft.maximumRetriesText) ?? 3)),
             "key_count": GuideSnapshotField(label: NSLocalizedString("API Key 数量", comment: ""), value: .int(keyEditor.keyCount), access: .readOnly),
             "uses_provider_proxy": GuideSnapshotField(
                 label: NSLocalizedString("使用独立代理", comment: "提供商向导快照字段"),
@@ -367,8 +366,7 @@ struct ProviderEditView: View {
             "chat_endpoint_path": NSLocalizedString("聊天端点后缀", comment: "提供商向导修改字段"),
             "api_format": NSLocalizedString("API 格式", comment: "提供商向导修改字段"),
             "api_key": NSLocalizedString("API Key", comment: "提供商向导修改字段"),
-            "multi_key_enabled": NSLocalizedString("多 Key 模式", comment: ""),
-            "maximum_key_retries": NSLocalizedString("最大换 Key 次数", comment: "")
+            "multi_key_enabled": NSLocalizedString("多 Key 模式", comment: "")
         ]
         try GuideToolArguments.requireOnlyKeys(Set(labels.keys), in: arguments)
         _ = try GuideToolArguments.optionalString("name", in: arguments)
@@ -457,7 +455,6 @@ struct ProviderEditView: View {
             case "api_format": values[key] = .string(provider.apiFormat)
             case "api_key": values[key] = .string(keyEditor.apiKeysText)
             case "multi_key_enabled": values[key] = .bool(keyEditor.draft.multiKeyEnabled)
-            case "maximum_key_retries": values[key] = .int(Int(keyEditor.draft.maximumRetriesText) ?? 3)
             default: break
             }
         }

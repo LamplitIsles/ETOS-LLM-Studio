@@ -137,8 +137,7 @@ public enum GuideToolCatalog {
             "chat_endpoint_path": stringProperty("OpenAI 兼容聊天端点后缀"),
             "api_format": stringProperty("openai-compatible、openai-responses、gemini、gemini-interactions 或 anthropic"),
             "api_key": stringProperty("用户刚刚主动提供的新 API Key；可用逗号分隔多条；不可尝试读取现有值"),
-            "multi_key_enabled": .dictionary(["type": .string("boolean"), "description": .string("是否启用多 Key 顺序轮换；关闭后保留全部密钥，只使用第一条")]),
-            "maximum_key_retries": .dictionary(["type": .string("integer"), "minimum": .int(0), "maximum": .int(10), "description": .string("当前提供商每轮聊天请求最多换 Key 几次；与全局自动重试独立计数，0 只禁用换 Key，不包含首次请求")])
+            "multi_key_enabled": .dictionary(["type": .string("boolean"), "description": .string("是否启用多 Key 顺序轮换；关闭后保留全部密钥，只使用第一条")])
         ])
     )
 
@@ -195,60 +194,6 @@ public enum GuideToolCatalog {
             "port": integerProperty("1 到 65535 的端口"),
             "username": stringProperty("代理用户名，空字符串表示清除"),
             "password": stringProperty("用户刚刚主动提供的新代理密码；不可尝试读取现有值")
-        ])
-    )
-
-    public static let updateMCPPreferences = InternalToolDefinition(
-        name: "propose_mcp_preferences",
-        description: "提出 MCP 工具箱总设置与服务器顺序修改。",
-        parameters: objectSchema(properties: [
-            "chat_tools_enabled": boolProperty("是否向普通聊天模型暴露 MCP 工具"),
-            "tool_call_title_enabled": boolProperty("是否让 AI 生成 MCP 调用标题"),
-            "server_order": GuideOrderedSettingsSupport.identifierOrderSchema
-        ])
-    )
-
-    public static let createMCPServer = InternalToolDefinition(
-        name: "propose_mcp_server_creation",
-        description: "提出创建一个 HTTP、SSE 或本地 stdio MCP Server。配置会先经过客户端校验和原生预览，用户确认后才保存。",
-        parameters: objectSchema(
-            properties: [
-                "name": stringProperty("服务器显示名称"),
-                "configuration": .dictionary([
-                    "type": .string("object"),
-                    "description": .string("单个标准 MCP Server 配置：HTTP 使用 type、url、headers；SSE 另可使用 messageUrl；stdio 使用 command、args、env、cwd")
-                ]),
-                "notes": stringProperty("可选备注"),
-                "select_for_chat": boolProperty("保存后是否加入普通聊天工具")
-            ],
-            required: ["name", "configuration"]
-        )
-    )
-
-    public static let updateMCPServer = InternalToolDefinition(
-        name: "propose_mcp_server_configuration",
-        description: "提出当前 MCP Server 的修改。configuration 只在需要修改连接配置时填写；省略时保留现有连接与秘密。",
-        parameters: objectSchema(properties: [
-            "display_name": stringProperty("服务器显示名称"),
-            "notes": stringProperty("备注，空字符串表示清除"),
-            "selected_for_chat": boolProperty("是否加入普通聊天工具"),
-            "configuration": .dictionary([
-                "type": .string("object"),
-                "description": .string("完整连接配置。HTTP/SSE/stdio 沿用 mcpServers 单项格式；OAuth 使用 type=oauth、url、tokenEndpoint、clientID、grantType，并可写入新的秘密字段。已有秘密不可读取，省略时会保留。")
-            ])
-        ])
-    )
-
-    public static let updateMCPTool = InternalToolDefinition(
-        name: "propose_mcp_tool_configuration",
-        description: "提出当前 MCP 工具的启用状态与审批策略修改。原生敏感能力固定为每次询问。",
-        parameters: objectSchema(properties: [
-            "enabled": boolProperty("是否启用此工具"),
-            "approval_policy": .dictionary([
-                "type": .string("string"),
-                "enum": .array(MCPToolApprovalPolicy.allCases.map { .string($0.rawValue) }),
-                "description": .string("ask_every_time、always_allow 或 always_deny")
-            ])
         ])
     )
 
@@ -401,86 +346,6 @@ public enum GuideToolCatalog {
             ]),
             "uniqueItems": .bool(true)
         ])
-    }
-}
-
-public struct GuideMCPServerProposalConfiguration: Sendable {
-    public let server: MCPServerConfiguration
-    public let containsSensitiveValues: Bool
-
-    public init(server: MCPServerConfiguration, containsSensitiveValues: Bool) {
-        self.server = server
-        self.containsSensitiveValues = containsSensitiveValues
-    }
-}
-
-public enum GuideMCPServerProposalSupport {
-    private static let allowedKeys: Set<String> = [
-        "name",
-        "configuration",
-        "notes",
-        "select_for_chat"
-    ]
-
-    public static func buildProposal(
-        call: InternalToolCall,
-        pageID: GuidePageID
-    ) throws -> GuideActionProposal {
-        guard call.toolName == GuideToolCatalog.createMCPServer.name else {
-            throw GuideError.unsupportedTool(call.toolName)
-        }
-        let arguments = try GuideToolArguments.decode(call.arguments)
-        let decoded = try decode(arguments)
-        let displayValue = GuideSecretRedactor.redact(.dictionary(arguments))
-        return GuideActionProposal(
-            pageID: pageID,
-            toolCallID: call.id,
-            toolName: call.toolName,
-            summary: decoded.containsSensitiveValues
-                ? NSLocalizedString("创建 MCP 服务器（包含认证或环境变量，请仔细确认）", comment: "MCP 向导敏感创建提案摘要")
-                : NSLocalizedString("创建 MCP 服务器", comment: "MCP 向导创建提案摘要"),
-            mutations: [GuideSettingMutation(
-                path: "server",
-                label: NSLocalizedString("MCP 服务器配置", comment: "MCP 向导创建修改字段"),
-                oldValue: nil,
-                newValue: displayValue
-            )],
-            arguments: arguments
-        )
-    }
-
-    public static func decode(
-        _ arguments: [String: JSONValue]
-    ) throws -> GuideMCPServerProposalConfiguration {
-        try GuideToolArguments.requireOnlyKeys(allowedKeys, in: arguments)
-        let name = try GuideToolArguments.string("name", in: arguments)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty,
-              case .dictionary(let configuration)? = arguments["configuration"] else {
-            throw GuideError.invalidToolArguments
-        }
-        let notes = try GuideToolArguments.optionalString("notes", in: arguments)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let selectForChat = try GuideToolArguments.optionalBool("select_for_chat", in: arguments) ?? false
-        let root = JSONValue.dictionary([
-            "mcpServers": .dictionary([name: .dictionary(configuration)])
-        ])
-        let data = try JSONSerialization.data(withJSONObject: root.toAny(), options: [.sortedKeys])
-        let imported = try MCPServerConfigurationTransferService.importConfigurations(from: data)
-        guard imported.servers.count == 1, imported.skippedNames.isEmpty else {
-            throw GuideError.invalidToolArguments
-        }
-        var server = imported.servers[0]
-        server.notes = notes?.isEmpty == false ? notes : nil
-        server.isSelectedForChat = selectForChat
-        let hasEnvironmentValues = ["env", "environment"].contains { key in
-            guard case .dictionary(let values)? = configuration[key] else { return false }
-            return !values.isEmpty
-        }
-        return GuideMCPServerProposalConfiguration(
-            server: server,
-            containsSensitiveValues: !imported.sensitiveServerNames.isEmpty || hasEnvironmentValues
-        )
     }
 }
 

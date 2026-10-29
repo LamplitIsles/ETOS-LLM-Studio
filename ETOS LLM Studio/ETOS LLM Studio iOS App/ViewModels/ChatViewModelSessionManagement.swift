@@ -40,7 +40,7 @@ extension ChatViewModel {
             updatedMessage.toolCalls = nil
             updatedMessage.toolCallsPlacement = nil
             updatedMessage.fullErrorContent = nil
-            updateMessage(updatedMessage)
+            updateMessage(updatedMessage, expected: currentMessage)
         }
     }
 
@@ -50,11 +50,18 @@ extension ChatViewModel {
 
     func deleteSession(at offsets: IndexSet) {
         let sessionsToDelete = offsets.map { chatSessions[$0] }
-        chatService.deleteSessions(sessionsToDelete)
+        deleteSessions(sessionsToDelete)
     }
 
-    func deleteSessions(_ sessions: [ChatSession]) {
-        chatService.deleteSessions(sessions)
+    @discardableResult
+    func deleteSessions(_ sessions: [ChatSession]) -> Bool {
+        switch chatService.deleteSessions(sessions) {
+        case .success:
+            return true
+        case .failure(.busy):
+            messageEditErrorMessage = NSLocalizedString("请先停止当前请求并等待结束，再删除会话。", comment: "Cannot delete a session while its request is active")
+            return false
+        }
     }
 
     func messageCount(for session: ChatSession) async -> Int {
@@ -64,7 +71,7 @@ extension ChatViewModel {
         if let temporaryCount = chatService.temporaryChatMessageCount(for: session.id) {
             return temporaryCount
         }
-        return await Persistence.loadMessageCountAsync(for: session.id)
+        return chatService.messagesSnapshot(for: session.id).count
     }
 
     @discardableResult
@@ -73,7 +80,7 @@ extension ChatViewModel {
     }
 
     @discardableResult
-    func branchSessionFromMessage(upToMessage: ChatMessage, copyPrompts: Bool) -> ChatSession {
+    func branchSessionFromMessage(upToMessage: ChatMessage) -> ChatSession {
         guard let session = currentSession else {
             logger.error("无法创建分支会话：当前会话为空，将创建新会话作为回退。")
             chatService.createNewSession()
@@ -83,7 +90,7 @@ extension ChatViewModel {
             logger.error("创建新会话失败，返回临时会话实例作为回退。")
             return ChatSession(id: UUID(), name: NSLocalizedString("新的对话", comment: ""), isTemporary: true)
         }
-        return chatService.branchSessionFromMessage(from: session, upToMessage: upToMessage, copyPrompts: copyPrompts)
+        return chatService.branchSessionFromMessage(from: session, upToMessage: upToMessage)
     }
 
     func deleteLastMessage(for session: ChatSession) {
@@ -234,21 +241,7 @@ extension ChatViewModel {
     }
 
     func retryMessage(_ message: ChatMessage, prefill: Bool = false) {
-        Task {
-            await chatService.retryMessage(
-                message,
-                aiTemperature: aiTemperature,
-                aiTopP: aiTopP,
-                maxChatHistory: maxChatHistory,
-                enableStreaming: enableStreaming,
-                includeSystemTime: includeSystemTimeInPrompt,
-                systemTimeInjectionPosition: systemTimeInjectionPosition,
-                enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
-                periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
-                enableResponseSpeedMetrics: enableResponseSpeedMetrics,
-                prefill: prefill
-            )
-        }
+        messageEditErrorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
     }
 
     func retryVideoAnalysis(
@@ -289,20 +282,11 @@ extension ChatViewModel {
     }
 
     func canRetry(message: ChatMessage) -> Bool {
-        if isSendingMessage {
-            guard let lastMessage = allMessagesForSession.last else { return false }
-            if lastMessage.id == message.id { return true }
-            guard message.role == .user else { return false }
-            return allMessagesForSession.last(where: { $0.role == .user })?.id == message.id
-        }
-
-        return message.role == .user || message.role == .assistant || message.role == .error
+        false
     }
 
     func canRewrite(message: ChatMessage) -> Bool {
-        guard !isSendingMessage else { return false }
-        guard message.role == .assistant else { return false }
-        return !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        false
     }
 
     func saveCurrentSessionDetails() {
@@ -327,41 +311,18 @@ extension ChatViewModel {
     }
 
     func switchToPreviousVersion(of message: ChatMessage) {
-        if let updatedMessages = ChatResponseAttemptSupport.selectPreviousAttempt(for: message, in: allMessagesForSession) {
-            updateMessages(updatedMessages)
-            return
-        }
-        guard var updatedMessage = findMessage(by: message.id),
-              updatedMessage.hasMultipleVersions else { return }
-
-        let newIndex = max(0, updatedMessage.getCurrentVersionIndex() - 1)
-        updatedMessage.switchToVersion(newIndex)
-        updateMessage(updatedMessage)
+        switchToVersion(max(0, displayCurrentVersionIndex(for: message) - 1), of: message)
     }
 
     func switchToNextVersion(of message: ChatMessage) {
-        if let updatedMessages = ChatResponseAttemptSupport.selectNextAttempt(for: message, in: allMessagesForSession) {
-            updateMessages(updatedMessages)
-            return
-        }
-        guard var updatedMessage = findMessage(by: message.id),
-              updatedMessage.hasMultipleVersions else { return }
-
-        let newIndex = min(updatedMessage.getAllVersions().count - 1, updatedMessage.getCurrentVersionIndex() + 1)
-        updatedMessage.switchToVersion(newIndex)
-        updateMessage(updatedMessage)
+        switchToVersion(min(displayVersionCount(for: message) - 1, displayCurrentVersionIndex(for: message) + 1), of: message)
     }
 
     func switchToVersion(_ index: Int, of message: ChatMessage) {
-        if let info = responseAttemptVersionInfo(for: message) {
-            let attempts = ChatResponseAttemptSupport.orderedAttemptIDs(for: info.responseGroupID, in: allMessagesForSession)
-            guard attempts.indices.contains(index) else { return }
-            updateMessages(ChatResponseAttemptSupport.selectAttempt(attemptID: attempts[index], groupID: info.responseGroupID, in: allMessagesForSession))
-            return
+        guard let sessionID = currentSession?.id else { return }
+        if !chatService.selectMessageVersion(at: index, of: message, sessionID: sessionID) {
+            reportMessageEditFailure()
         }
-        guard var updatedMessage = findMessage(by: message.id) else { return }
-        updatedMessage.switchToVersion(index)
-        updateMessage(updatedMessage)
     }
 
     func deleteCurrentVersion(of message: ChatMessage) {
@@ -369,21 +330,10 @@ extension ChatViewModel {
     }
 
     func deleteVersion(at index: Int, of message: ChatMessage) {
-        if responseAttemptVersionInfo(for: message) != nil {
-            if deleteResponseAttemptVersion(at: index, of: message) {
-                return
-            }
+        guard let sessionID = currentSession?.id else { return }
+        if !chatService.deleteMessageVersion(at: index, of: message, sessionID: sessionID) {
+            reportMessageEditFailure()
         }
-
-        guard var updatedMessage = findMessage(by: message.id) else { return }
-
-        if updatedMessage.getAllVersions().count <= 1 {
-            deleteMessage(updatedMessage)
-            return
-        }
-
-        guard updatedMessage.removeVersionAndReturnCurrentIndex(at: index) != nil else { return }
-        updateMessage(updatedMessage)
     }
 
     func deleteAllVersions(of message: ChatMessage) {
@@ -391,39 +341,28 @@ extension ChatViewModel {
     }
 
     func addVersionToMessage(_ message: ChatMessage, newContent: String) {
-        guard var updatedMessage = findMessage(by: message.id) else { return }
-        updatedMessage.addVersion(newContent)
-        updateMessage(updatedMessage)
+        guard let sessionID = currentSession?.id else { return }
+        if !chatService.addMessageVersion(content: newContent, to: message, sessionID: sessionID) {
+            reportMessageEditFailure()
+        }
     }
 
     func findMessage(by id: UUID) -> ChatMessage? {
         allMessagesForSession.first { $0.id == id }
     }
 
-    func updateMessage(_ message: ChatMessage) {
-        guard let index = allMessagesForSession.firstIndex(where: { $0.id == message.id }) else { return }
-        var updatedMessages = allMessagesForSession
-        updatedMessages[index] = message
-        updateMessages(updatedMessages)
-    }
-
-    func updateMessages(_ updatedMessages: [ChatMessage]) {
-        chatService.updateMessages(updatedMessages, for: currentSession?.id ?? UUID())
-        saveCurrentSessionDetails()
-    }
-
-    func deleteResponseAttemptVersion(at index: Int, of message: ChatMessage) -> Bool {
-        guard let groupID = responseAttemptVersionInfo(for: message)?.responseGroupID else {
+    @discardableResult
+    func updateMessage(_ message: ChatMessage, expected: ChatMessage, sessionID: UUID? = nil) -> Bool {
+        guard let sessionID = sessionID ?? currentSession?.id else { return false }
+        guard chatService.replaceMessage(message, expected: expected, sessionID: sessionID) else {
+            reportMessageEditFailure()
             return false
         }
-
-        guard let updatedMessages = ChatResponseAttemptSupport.deleteAttempt(
-            at: index,
-            groupID: groupID,
-            in: allMessagesForSession
-        ) else { return false }
-
-        updateMessages(updatedMessages)
         return true
     }
+
+    func reportMessageEditFailure() {
+        messageEditErrorMessage = NSLocalizedString("消息已变化或正在生成，请刷新后重试。", comment: "Message edit conflict")
+    }
+
 }

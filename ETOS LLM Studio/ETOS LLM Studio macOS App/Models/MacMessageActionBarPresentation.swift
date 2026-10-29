@@ -21,12 +21,11 @@ struct MacMessageActionBarPresentation {
         fontScale = configuration.fontScale
         let requestDate = message.responseMetrics?.requestStartedAt ?? message.requestedAt
         let cost = MessageCostResolver.resolvedCost(for: message, providers: providers)
-        let retryable = MessageActionBarAvailability.retryableMessageIDs(in: [message], isSending: false).contains(message.id)
         let prepared = configuration.items(for: role).compactMap { item -> Item? in
             var value: String?
             var help = item.macTitle
             switch item {
-            case .quickRetry: guard retryable else { return nil }
+            case .quickRetry: return nil
             case .copyMessage: guard !message.content.isEmpty else { return nil }
             case .readAloud: guard MessageActionBarAvailability.canReadAloud(message) else { return nil }
             case .requestTime:

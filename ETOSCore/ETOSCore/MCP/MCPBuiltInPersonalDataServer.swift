@@ -8,14 +8,8 @@
 // ============================================================================
 
 import Foundation
-import Logging
-import MCP
 
 public enum MCPBuiltInPersonalDataServer {
-    public static let serverID = UUID(uuidString: "45544F53-0000-0000-0000-504452534E4C")!
-    public static let endpoint = "builtin://personal-data"
-    private static let nativeToolsMigrationFlagKey = "mcp.personalDataNativeToolsDisabled.v1"
-
     private static let legacyToolIDs = [
         "health.list_types",
         "health.query_samples",
@@ -35,61 +29,6 @@ public enum MCPBuiltInPersonalDataServer {
 
     public static var toolIDs: [String] {
         legacyToolIDs + MCPNativePersonalDataToolDefinitions.toolIDs
-    }
-
-    public static func isBuiltInPersonalDataServer(_ server: MCPServerConfiguration) -> Bool {
-        server.id == serverID || server.transport == .builtInPersonalData
-    }
-
-    static func defaultConfiguration() -> MCPServerConfiguration {
-        MCPServerConfiguration(
-            id: serverID,
-            displayName: NSLocalizedString("内建个人数据", comment: "Built-in personal data MCP server name"),
-            notes: NSLocalizedString("提供健康、日历、提醒事项、联系人、照片与位置工具。仅在工具正式调用时申请对应系统权限；新加入的工具默认关闭。", comment: "Built-in personal data MCP server notes"),
-            transport: .builtInPersonalData,
-            isSelectedForChat: true,
-            disabledToolIds: MCPNativePersonalDataToolDefinitions.toolIDs,
-            sortIndex: 100
-        )
-    }
-
-    static func prepareServersForManager(
-        _ storedServers: [MCPServerConfiguration],
-        deletedBuiltInServerIDs: Set<UUID> = []
-    ) -> (
-        servers: [MCPServerConfiguration],
-        serverToPersist: MCPServerConfiguration?
-    ) {
-        var servers = storedServers
-        let defaultServer = defaultConfiguration()
-        guard let index = servers.firstIndex(where: { $0.id == serverID }) else {
-            guard !deletedBuiltInServerIDs.contains(serverID) else {
-                return (servers, nil)
-            }
-            servers.append(defaultServer)
-            Persistence.writeAppConfig(key: nativeToolsMigrationFlagKey, integer: 1, typeHint: "integer")
-            return (servers, defaultServer)
-        }
-
-        var server = servers[index]
-        var shouldPersist = false
-        if server.transport != .builtInPersonalData {
-            server.transport = .builtInPersonalData
-            shouldPersist = true
-        }
-        if server.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            server.displayName = defaultServer.displayName
-            shouldPersist = true
-        }
-        if Persistence.readAppConfigInteger(key: nativeToolsMigrationFlagKey) != 1 {
-            server.disabledToolIds = Array(
-                Set(server.disabledToolIds).union(MCPNativePersonalDataToolDefinitions.toolIDs)
-            ).sorted()
-            Persistence.writeAppConfig(key: nativeToolsMigrationFlagKey, integer: 1, typeHint: "integer")
-            shouldPersist = true
-        }
-        servers[index] = server
-        return (servers, shouldPersist ? server : nil)
     }
 
     static func toolDescriptions() -> [MCPToolDescription] {
@@ -322,91 +261,6 @@ public enum MCPBuiltInPersonalDataServer {
             ],
             required: required
         )
-    }
-}
-
-public actor MCPBuiltInPersonalDataTransport: Transport, MCPSDKTransportControl {
-    private let engine = MCPBuiltInPersonalDataServerEngine()
-    private let loggerInstance = Logger(
-        label: "etos.mcp.transport.builtin-personal-data",
-        factory: { _ in SwiftLogNoOpLogHandler() }
-    )
-    private let stream: AsyncThrowingStream<Data, Error>
-    private let continuation: AsyncThrowingStream<Data, Error>.Continuation
-    private var connected = false
-    private var protocolVersion: String?
-
-    public nonisolated var logger: Logger { loggerInstance }
-
-    public init() {
-        var continuation: AsyncThrowingStream<Data, Error>.Continuation!
-        self.stream = AsyncThrowingStream { continuation = $0 }
-        self.continuation = continuation
-    }
-
-    public func connect() async throws {
-        connected = true
-    }
-
-    public func disconnect() async {
-        guard connected else { return }
-        connected = false
-        continuation.finish()
-    }
-
-    public nonisolated func disconnect() {
-        Task {
-            await self.disconnect()
-        }
-    }
-
-    public func send(_ data: Data) async throws {
-        guard connected else {
-            throw MCPClientError.notConnected
-        }
-        if isJSONRPCMessageWithoutExpectedResponse(data) {
-            try await engine.handleNotification(data)
-            return
-        }
-        let response = try await engine.handleMessage(data)
-        continuation.yield(response)
-    }
-
-    public func receive() -> AsyncThrowingStream<Data, Error> {
-        stream
-    }
-
-    public func currentResumptionToken() async -> String? {
-        nil
-    }
-
-    public func updateResumptionToken(_ token: String?) async {}
-
-    public func updateProtocolVersion(_ protocolVersion: String?) async {
-        self.protocolVersion = protocolVersion
-    }
-
-    public func terminateSession() async {
-        await disconnect()
-    }
-}
-
-public final class MCPBuiltInPersonalDataLegacyTransport: MCPTransport, MCPProtocolVersionConfigurableTransport, @unchecked Sendable {
-    private let engine = MCPBuiltInPersonalDataServerEngine()
-    private var protocolVersion: String?
-
-    public init() {}
-
-    public func sendMessage(_ payload: Data) async throws -> Data {
-        try await engine.handleMessage(payload)
-    }
-
-    public func sendNotification(_ payload: Data) async throws {
-        try await engine.handleNotification(payload)
-    }
-
-    public func updateProtocolVersion(_ protocolVersion: String?) async {
-        self.protocolVersion = protocolVersion
     }
 }
 

@@ -24,7 +24,7 @@ public struct StorageFileAccess: Sendable {
     public static func application() -> Self {
         let databases = Persistence.snapshotRestoreTargetURLs()
         return Self(root: StorageUtility.documentsDirectory,
-            managedDatabases: [databases.chatStoreURL, databases.configStoreURL, databases.memoryStoreURL])
+            managedDatabases: [databases.chatStoreURL, databases.configStoreURL])
     }
 
     public func readableURL(_ url: URL) throws -> URL {

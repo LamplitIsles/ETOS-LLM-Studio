@@ -21,7 +21,11 @@ struct AgentToolCapabilityPolicy: Equatable, Sendable {
         localLinuxEnabled: Bool
     ) -> AgentToolCapabilityPolicy {
         let allowsChatTools = !isToolContextIsolated
+        #if os(macOS)
         let includesLocalLinux = allowsChatTools && localLinuxEnabled && mode == .agent
+        #else
+        let includesLocalLinux = false
+        #endif
         return AgentToolCapabilityPolicy(
             preparesAgentRun: includesLocalLinux,
             includesConversationTools: allowsChatTools,

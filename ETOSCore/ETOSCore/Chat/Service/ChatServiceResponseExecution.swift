@@ -12,7 +12,7 @@ import os.log
 
 extension ChatService {
     /// 仅在内存中保留“最近一条助手消息”的流式速度采样，避免历史样本长期占用内存。
-    private func normalizedMessagesForRuntime(
+    func normalizedMessagesForRuntime(
         _ messages: [ChatMessage],
         keepingSpeedSamplesFor preferredMessageID: UUID? = nil
     ) -> [ChatMessage] {
@@ -75,12 +75,11 @@ extension ChatService {
         loadingMessageID: UUID,
         sessionID: UUID
     ) -> [ChatMessage] {
-        let merged = messagesByMergingStreamingUpdate(
+        let merged = mergeAndStoreStreamingMessage(
             messages,
             loadingMessageID: loadingMessageID,
             sessionID: sessionID
         )
-        storeRuntimeMessagesSnapshot(merged, for: sessionID)
         publishMessagesIfCurrentSession(merged, for: sessionID, keepingSpeedSamplesFor: loadingMessageID)
         return merged
     }
@@ -92,12 +91,11 @@ extension ChatService {
         coalescer: inout StreamingUIPublishCoalescer,
         force: Bool = false
     ) -> [ChatMessage] {
-        let merged = messagesByMergingStreamingUpdate(
+        let merged = mergeAndStoreStreamingMessage(
             messages,
             loadingMessageID: loadingMessageID,
             sessionID: sessionID
         )
-        storeRuntimeMessagesSnapshot(merged, for: sessionID)
         if coalescer.shouldPublish(force: force) {
             publishMessagesIfCurrentSession(merged, for: sessionID, keepingSpeedSamplesFor: loadingMessageID)
         }
@@ -110,12 +108,11 @@ extension ChatService {
         sessionID: UUID,
         coalescer: inout StreamingUIPublishCoalescer
     ) -> [ChatMessage] {
-        let merged = messagesByMergingStreamingUpdate(
+        let merged = mergeAndStoreStreamingMessage(
             messages,
             loadingMessageID: loadingMessageID,
             sessionID: sessionID
         )
-        storeRuntimeMessagesSnapshot(merged, for: sessionID)
         if coalescer.shouldFlushPending() {
             publishMessagesIfCurrentSession(merged, for: sessionID, keepingSpeedSamplesFor: loadingMessageID)
         }
@@ -127,19 +124,9 @@ extension ChatService {
         loadingMessageID: UUID,
         sessionID: UUID
     ) async -> [ChatMessage] {
-        guard let updatedMessage = messages.first(where: { $0.id == loadingMessageID }) else {
-            return messagesSnapshot(for: sessionID)
-        }
-        do {
-            _ = try await upsertConversationMessage(
-                updatedMessage,
-                to: sessionID,
-                keepingSpeedSamplesFor: loadingMessageID
-            )
-        } catch {
-            logger.error("原子保存流式回复失败：\(error.localizedDescription)")
-        }
-        return messagesSnapshot(for: sessionID)
+        let merged = mergeAndStoreStreamingMessage(messages, loadingMessageID: loadingMessageID, sessionID: sessionID)
+        publishMessagesIfCurrentSession(merged, for: sessionID, keepingSpeedSamplesFor: loadingMessageID)
+        return merged
     }
 
     func handleStandardResponse(
@@ -162,7 +149,6 @@ extension ChatService {
         requestStartedAt: Date,
         requestLogContext: RequestLogContext,
         messagesBeforeResponse: [ChatMessage] = [],
-        responsesFullInputFallbackRequest: URLRequest? = nil,
         retryHandler: ((Error) async -> Bool)? = nil
     ) async {
         let responsePrefix = messagesSnapshot(for: currentSessionID).first { $0.id == loadingMessageID }
@@ -282,34 +268,6 @@ extension ChatService {
                 bodyData: bodyData,
                 httpStatusCode: code
             )
-            if let fallbackRequest = responsesFullInputFallbackRequest,
-               isOpenAIResponsesPreviousResponseMissing(statusCode: code, bodyData: bodyData) {
-                logger.info("Responses previous_response_id 已失效，正在改用完整 input 重试。")
-                await handleStandardResponse(
-                    request: fallbackRequest,
-                    provider: provider,
-                    adapter: adapter,
-                    loadingMessageID: loadingMessageID,
-                    currentSessionID: currentSessionID,
-                    userMessage: userMessage,
-                    wasTemporarySession: wasTemporarySession,
-                    availableTools: availableTools,
-                    aiTemperature: aiTemperature,
-                    aiTopP: aiTopP,
-                    maxChatHistory: maxChatHistory,
-                    includeSystemTime: includeSystemTime,
-                    systemTimeInjectionPosition: systemTimeInjectionPosition,
-                    enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
-                    periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
-                    enableResponseSpeedMetrics: enableResponseSpeedMetrics,
-                    requestStartedAt: requestStartedAt,
-                    requestLogContext: requestLogContext,
-                    messagesBeforeResponse: messagesBeforeResponse,
-                    responsesFullInputFallbackRequest: nil,
-                    retryHandler: retryHandler
-                )
-                return
-            }
             if await retryHandler?(NetworkError.badStatusCode(code: code, responseBody: bodyData)) == true {
                 return
             }

@@ -774,10 +774,6 @@ struct GuideInfrastructureTests {
             GuideToolCatalog.updateProviderModels,
             GuideToolCatalog.replaceModelRequestBody,
             GuideToolCatalog.updateGlobalProxy,
-            GuideToolCatalog.updateMCPPreferences,
-            GuideToolCatalog.createMCPServer,
-            GuideToolCatalog.updateMCPServer,
-            GuideToolCatalog.updateMCPTool,
             GuideToolCatalog.updateShortcutPreferences,
             GuideToolCatalog.updateShortcutTool,
             GuideDeclarativeSettingsSupport.toolDefinition(pageTitle: "测试设置", settings: []),
@@ -789,111 +785,6 @@ struct GuideInfrastructureTests {
         ]
         #expect(guideDefinitions.allSatisfy { AppToolKind.resolve(from: $0.name) == nil })
         #expect(Set(guideDefinitions.map(\.name)).count == guideDefinitions.count)
-    }
-
-    @Test("MCP 创建提案复用标准导入校验并隐藏认证值")
-    func mcpCreationProposalUsesValidatedConfiguration() throws {
-        let call = InternalToolCall(
-            id: "create-mcp",
-            toolName: GuideToolCatalog.createMCPServer.name,
-            arguments: #"{"name":"Docs","configuration":{"type":"http","url":"https://mcp.example.com","headers":{"Authorization":"Bearer private-token"}},"notes":"内部文档","select_for_chat":true}"#
-        )
-
-        let proposal = try GuideMCPServerProposalSupport.buildProposal(
-            call: call,
-            pageID: "mcp-toolbox"
-        )
-        let decoded = try GuideMCPServerProposalSupport.decode(proposal.arguments)
-
-        #expect(decoded.server.displayName == "Docs")
-        #expect(decoded.server.notes == "内部文档")
-        #expect(decoded.server.isSelectedForChat)
-        #expect(decoded.containsSensitiveValues)
-        #expect(proposal.summary.contains("仔细确认"))
-        #expect(!proposal.mutations[0].newValue.prettyPrintedCompact().contains("private-token"))
-        guard case .http(let endpoint, _, let headers) = decoded.server.transport else {
-            Issue.record("应解析为 HTTP MCP Server")
-            return
-        }
-        #expect(endpoint.absoluteString == "https://mcp.example.com")
-        #expect(headers["Authorization"] == "Bearer private-token")
-    }
-
-    @Test("MCP 修改提案保留隐藏认证值并支持完整撤销")
-    func mcpUpdatePreservesSecretsAndSupportsUndo() throws {
-        let original = MCPServerConfiguration(
-            displayName: "Docs",
-            notes: "旧备注",
-            transport: .http(
-                endpoint: try #require(URL(string: "https://old.example.com/mcp")),
-                apiKey: "private-api-key",
-                additionalHeaders: [
-                    "Authorization": "Bearer private-header",
-                    "X-Trace-ID": "trace-old"
-                ]
-            ),
-            isSelectedForChat: false
-        )
-        let call = InternalToolCall(
-            id: "update-mcp",
-            toolName: GuideToolCatalog.updateMCPServer.name,
-            arguments: #"{"display_name":"Docs New","notes":"新备注","selected_for_chat":true,"configuration":{"type":"http","url":"https://new.example.com/mcp","headers":{"X-Trace-ID":"trace-new"}}}"#
-        )
-
-        let proposal = try GuideMCPServerSettingsSupport.buildProposal(
-            call: call,
-            pageID: "mcp-server",
-            server: original
-        )
-        #expect(!proposal.mutations[0].newValue.prettyPrintedCompact().contains("private-"))
-        let application = try GuideMCPServerSettingsSupport.apply(proposal, to: original)
-        #expect(application.server.id == original.id)
-        #expect(application.server.displayName == "Docs New")
-        #expect(application.server.isSelectedForChat)
-        guard case .http(let endpoint, let apiKey, let headers) = application.server.transport else {
-            Issue.record("更新后应保留 HTTP 传输")
-            return
-        }
-        #expect(endpoint.absoluteString == "https://new.example.com/mcp")
-        #expect(apiKey == "private-api-key")
-        #expect(headers["Authorization"] == "Bearer private-header")
-        #expect(headers["X-Trace-ID"] == "trace-new")
-
-        let undo = try #require(application.execution.undoProposal)
-        let restored = try GuideMCPServerSettingsSupport.apply(undo, to: application.server)
-        #expect(restored.server == original)
-    }
-
-    @Test("MCP 原生敏感工具不能由向导放宽审批")
-    func mcpNativeToolApprovalCannotBeRelaxed() throws {
-        let tool = MCPToolDescription(
-            toolId: "clipboard.write",
-            description: "写入剪贴板",
-            inputSchema: nil,
-            examples: nil
-        )
-        let server = MCPServerConfiguration(
-            displayName: "Native",
-            transport: .builtInPersonalData
-        )
-        let call = InternalToolCall(
-            id: "relax-approval",
-            toolName: GuideToolCatalog.updateMCPTool.name,
-            arguments: #"{"enabled":false,"approval_policy":"always_allow"}"#
-        )
-        let proposal = try GuideMCPToolSettingsSupport.buildProposal(
-            call: call,
-            pageID: "mcp-tool",
-            server: server,
-            tool: tool
-        )
-        let application = try GuideMCPToolSettingsSupport.apply(
-            proposal,
-            server: server,
-            tool: tool
-        )
-        #expect(!application.enabled)
-        #expect(application.approvalPolicy == .askEveryTime)
     }
 
     @Test("快捷指令工具提案只修改声明字段并可撤销")

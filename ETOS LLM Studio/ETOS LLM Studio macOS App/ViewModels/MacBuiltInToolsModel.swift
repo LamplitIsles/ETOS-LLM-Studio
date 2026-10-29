@@ -39,14 +39,14 @@ final class MacBuiltInToolsModel: ObservableObject {
 
     func refresh() {
         guard let manager, !isSuspended else { return }
-        let widget = manager.isToolEnabled(.showWidget), ask = manager.isToolEnabled(.askUserInput), time = manager.isToolEnabled(.getSystemTime)
+        let widget = manager.isToolEnabled(.showWidget), time = manager.isToolEnabled(.getSystemTime)
         let toolsIsolated = toolsIsolated, query = query, enabledOnly = enabledOnly
         presentationTask?.cancel(); presentationID = UUID()
         let token = presentationID
         presentationTask = Task { [weak self] in
             let prepared = await Task.detached(priority: .utility) {
                 let states = ToolCatalogSupport.builtInToolStates(
-                    enableWidgetTool: widget, enableAskUserInputTool: ask, enableGetSystemTimeTool: time,
+                    enableWidgetTool: widget, enableGetSystemTimeTool: time,
                     isToolIsolated: toolsIsolated)
                 return MacBuiltInToolPresentation.prepare(states: states, query: query, enabledOnly: enabledOnly)
             }.value

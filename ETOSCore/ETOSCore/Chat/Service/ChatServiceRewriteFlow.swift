@@ -12,6 +12,7 @@ import os.log
 
 extension ChatService {
     public enum MessageRewriteError: LocalizedError {
+        case unavailable
         case currentSessionMissing
         case messageNotFound
         case unsupportedMessageRole
@@ -22,6 +23,8 @@ extension ChatService {
 
         public var errorDescription: String? {
             switch self {
+            case .unavailable:
+                return NSLocalizedString("此功能暂不可用。", comment: "Legacy message rewrite unavailable")
             case .currentSessionMissing:
                 return NSLocalizedString("当前没有可用会话，无法重写消息。", comment: "Rewrite message error")
             case .messageNotFound:
@@ -48,196 +51,10 @@ extension ChatService {
         referenceVersions: [MessageRewriteReferenceVersion] = [],
         selectionTarget: MessageRewriteSelectionTarget? = nil,
         runnableModel: RunnableModel? = nil,
-        expectedMessage: ChatMessage? = nil
+        expectedMessage: ChatMessage? = nil,
+        requestLease: ChatRequestLease? = nil
     ) async throws {
-        // 初始化和取消旧请求都会挂起，先固定用户提交时的来源与模型。
-        let requestedSessionID = sessionID ?? currentSessionSubject.value?.id
-        let requestedModel = runnableModel ?? detachedChatCompletionFallbackModel()
-        try Task.checkCancellation()
-
-        let trimmedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedInstruction.isEmpty else {
-            throw MessageRewriteError.emptyInstruction
-        }
-
-        let resolvedSessionID: UUID
-        if let sessionID = requestedSessionID {
-            resolvedSessionID = sessionID
-        } else if let currentSessionID = currentSessionSubject.value?.id {
-            resolvedSessionID = currentSessionID
-        } else {
-            throw MessageRewriteError.currentSessionMissing
-        }
-
-        guard message.role == .assistant else {
-            throw MessageRewriteError.unsupportedMessageRole
-        }
-
-        let messages = messagesSnapshot(for: resolvedSessionID)
-        guard let messageIndex = messages.firstIndex(where: { $0.id == message.id }) else {
-            throw MessageRewriteError.messageNotFound
-        }
-
-        let originalMessage = messages[messageIndex]
-        if let expectedMessage, originalMessage != expectedMessage { throw MessageToolCallEditingError.messageChanged }
-        guard !originalMessage.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MessageRewriteError.emptyOriginalContent
-        }
-
-        guard let targetModel = requestedModel ?? detachedChatCompletionFallbackModel() else { throw DetachedCompletionError.noAvailableModel }
-        await cancelRequest(for: resolvedSessionID)
-        try Task.checkCancellation()
-
-        var updatedMessages = messagesSnapshot(for: resolvedSessionID)
-        guard let refreshedMessageIndex = updatedMessages.firstIndex(where: { $0.id == message.id }) else {
-            throw MessageRewriteError.messageNotFound
-        }
-        let refreshedMessage = updatedMessages[refreshedMessageIndex]
-        if let expectedMessage, refreshedMessage != expectedMessage { throw MessageToolCallEditingError.messageChanged }
-        guard refreshedMessage.role == .assistant else {
-            throw MessageRewriteError.unsupportedMessageRole
-        }
-        let originalContent = refreshedMessage.content
-        guard !originalContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MessageRewriteError.emptyOriginalContent
-        }
-        if let selectionTarget,
-           selectionTarget.replacingSelection(
-                in: originalContent,
-                with: selectionTarget.sourceText
-           ) == nil {
-            throw MessageRewriteError.selectionOutdated
-        }
-
-        let attemptMetadata = prepareRewriteAttemptMetadata(
-            in: &updatedMessages,
-            targetIndex: refreshedMessageIndex
-        )
-
-        var loadingMessage = ChatMessage(
-            role: .assistant,
-            content: "",
-            requestedAt: Date(),
-            responseGroupID: attemptMetadata.groupID,
-            responseAttemptID: attemptMetadata.attemptID,
-            responseAttemptIndex: attemptMetadata.attemptIndex,
-            selectedResponseAttemptID: attemptMetadata.attemptID
-        )
-        loadingMessage.modelReference = refreshedMessage.modelReference
-        loadingMessage.costEstimate = refreshedMessage.costEstimate
-        loadingMessage.sentSystemPromptSnapshot = BuiltInPromptStore.render(
-            selectionTarget == nil ? .messageRewriteSystem : .messagePartialRewriteSystem
-        )
-
-        let insertionIndex = rewriteInsertionIndex(
-            in: updatedMessages,
-            targetIndex: refreshedMessageIndex,
-            attemptID: refreshedMessage.responseAttemptID
-        )
-        updatedMessages.insert(loadingMessage, at: insertionIndex)
-        persistAndPublishMessages(updatedMessages, for: resolvedSessionID)
-
-        let loadingMessageID = loadingMessage.id
-        let loadingRequestedAt = loadingMessage.requestedAt
-
-        let requestToken = UUID()
-        emitSessionRequestStatus(.started, sessionID: resolvedSessionID)
-        setRequestContext(
-            RequestExecutionContext(
-                token: requestToken,
-                task: nil,
-                loadingMessageID: loadingMessageID,
-                imageGenerationContext: nil
-            ),
-            for: resolvedSessionID
-        )
-
-        let requestTask = Task<Void, Error> { [weak self] in
-            guard let self else { return }
-            try Task.checkCancellation()
-            await self.prepareThinkingSweepAppearance(
-                for: targetModel, messageID: loadingMessageID, sessionID: resolvedSessionID
-            )
-            let sanitizedContent: String
-            if let selectionTarget {
-                let replacement = try await self.generatePartialRewriteReplacement(
-                    originalContent: originalContent,
-                    selectionTarget: selectionTarget,
-                    instruction: trimmedInstruction,
-                    aiTemperature: aiTemperature,
-                    sessionID: resolvedSessionID,
-                    runnableModel: targetModel
-                ).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !replacement.isEmpty else {
-                    throw MessageRewriteError.emptyRewriteResult
-                }
-                guard let reconstructed = selectionTarget.replacingSelection(
-                    in: originalContent,
-                    with: replacement
-                ) else {
-                    throw MessageRewriteError.selectionOutdated
-                }
-                sanitizedContent = reconstructed
-            } else {
-                let rewrittenContent = try await self.generateRewriteContent(
-                    originalContent: originalContent.trimmingCharacters(in: .whitespacesAndNewlines),
-                    instruction: trimmedInstruction,
-                    referenceVersions: referenceVersions,
-                    aiTemperature: aiTemperature,
-                    sessionID: resolvedSessionID,
-                    runnableModel: targetModel
-                )
-                sanitizedContent = rewrittenContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !sanitizedContent.isEmpty else {
-                    throw MessageRewriteError.emptyRewriteResult
-                }
-            }
-            try Task.checkCancellation()
-            let modelReference = MessageModelReference(
-                providerID: targetModel.provider.id,
-                providerName: targetModel.provider.name,
-                modelUUID: targetModel.model.id,
-                modelName: targetModel.model.modelName,
-                modelDisplayName: targetModel.model.displayName
-            )
-            var rewrittenMessage = ChatMessage(
-                role: .assistant,
-                content: sanitizedContent,
-                requestedAt: loadingRequestedAt,
-                responseGroupID: attemptMetadata.groupID,
-                responseAttemptID: attemptMetadata.attemptID,
-                responseAttemptIndex: attemptMetadata.attemptIndex,
-                selectedResponseAttemptID: attemptMetadata.attemptID
-            )
-            rewrittenMessage.modelReference = modelReference
-            await self.applyRewriteResult(
-                rewrittenMessage,
-                loadingMessageID: loadingMessageID,
-                sessionID: resolvedSessionID
-            )
-        }
-        updateRequestTask(requestTask, for: resolvedSessionID, token: requestToken)
-
-        defer {
-            clearRequestContextIfNeeded(for: resolvedSessionID, token: requestToken)
-        }
-
-        do {
-            // 外层编辑器/窗口取消后，也必须等待真正的网络任务退出再清理占位版本。
-            try await withTaskCancellationHandler { try await requestTask.value } onCancel: { requestTask.cancel() }
-            emitSessionRequestStatus(.finished, sessionID: resolvedSessionID)
-        } catch {
-            if isCancellationError(error) {
-                await removeMessage(withID: loadingMessageID, in: resolvedSessionID)
-                if self.loadingMessageID(for: resolvedSessionID) == loadingMessageID {
-                    emitSessionRequestStatus(.cancelled, sessionID: resolvedSessionID)
-                }
-                throw CancellationError()
-            }
-            await removeMessage(withID: loadingMessageID, in: resolvedSessionID)
-            emitSessionRequestStatus(.error, sessionID: resolvedSessionID)
-            throw error
-        }
+        throw MessageRewriteError.unavailable
     }
 
     private func generateRewriteContent(
@@ -405,32 +222,31 @@ extension ChatService {
         let rewrittenMessage = messageRegexRules.isEmpty
             ? rewrittenMessage
             : applyMessageRegexRules(to: rewrittenMessage, rules: messageRegexRules, mode: .persist)
-        guard let existingMessage = messagesSnapshot(for: sessionID).first(where: { $0.id == loadingMessageID }) else { return }
-        let updatedMessage = ChatMessage(
-            id: loadingMessageID,
-            role: .assistant,
-            content: rewrittenMessage.content,
-            requestedAt: existingMessage.requestedAt ?? rewrittenMessage.requestedAt,
-            reasoningContent: nil,
-            reasoningProviderSpecificFields: nil,
-            toolCalls: nil,
-            toolCallsPlacement: nil,
-            tokenUsage: rewrittenMessage.tokenUsage ?? existingMessage.tokenUsage,
-            modelReference: rewrittenMessage.modelReference ?? existingMessage.modelReference,
-            costEstimate: rewrittenMessage.costEstimate ?? existingMessage.costEstimate,
-            sentSystemPromptSnapshot: existingMessage.sentSystemPromptSnapshot,
-            responseMetrics: rewrittenMessage.responseMetrics ?? existingMessage.responseMetrics,
-            responseGroupID: rewrittenMessage.responseGroupID,
-            responseAttemptID: rewrittenMessage.responseAttemptID,
-            responseAttemptIndex: rewrittenMessage.responseAttemptIndex,
-            selectedResponseAttemptID: rewrittenMessage.selectedResponseAttemptID
-        )
-        do {
-            _ = try await upsertConversationMessage(updatedMessage, to: sessionID)
-        } catch {
-            logger.error("原子保存消息重写结果失败：\(error.localizedDescription)")
-            return
+        let updated = await updateExistingConversationMessage(
+            id: loadingMessageID, in: sessionID, requiresRequestIdentity: true
+        ) { existingMessage in
+            existingMessage = ChatMessage(
+                id: loadingMessageID,
+                role: .assistant,
+                content: rewrittenMessage.content,
+                requestedAt: existingMessage.requestedAt ?? rewrittenMessage.requestedAt,
+                reasoningContent: nil,
+                reasoningProviderSpecificFields: nil,
+                toolCalls: nil,
+                toolCallsPlacement: nil,
+                tokenUsage: rewrittenMessage.tokenUsage ?? existingMessage.tokenUsage,
+                modelReference: rewrittenMessage.modelReference ?? existingMessage.modelReference,
+                costEstimate: rewrittenMessage.costEstimate ?? existingMessage.costEstimate,
+                sentSystemPromptSnapshot: existingMessage.sentSystemPromptSnapshot,
+                responseMetrics: rewrittenMessage.responseMetrics ?? existingMessage.responseMetrics,
+                responseGroupID: rewrittenMessage.responseGroupID,
+                responseAttemptID: rewrittenMessage.responseAttemptID,
+                responseAttemptIndex: rewrittenMessage.responseAttemptIndex,
+                selectedResponseAttemptID: rewrittenMessage.selectedResponseAttemptID
+            )
+            return true
         }
+        guard updated else { return }
         logger.info("已完成消息重写并保存为新版本: \(loadingMessageID.uuidString)")
     }
 }

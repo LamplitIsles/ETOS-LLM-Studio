@@ -145,38 +145,6 @@ struct LocalDebugView: View {
                 }
             }
 
-            if server.isRunning, server.pendingOpenAIRequest != nil || server.pendingOpenAIQueueCount > 0 {
-                Section {
-                    if let pending = server.pendingOpenAIRequest {
-                        let modelName = pending.model ?? NSLocalizedString("未知", comment: "")
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(String(format: NSLocalizedString("请求详情：模型 %@ · 消息数 %d", comment: ""), modelName, pending.messageCount))
-                                .etFont(.subheadline)
-                            Text(formatPendingTime(pending.receivedAt))
-                                .etFont(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        HStack {
-                            Button(NSLocalizedString("保存日志", comment: "")) {
-                                server.resolvePendingOpenAIRequest(save: true)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            
-                            Button(NSLocalizedString("忽略", comment: "")) {
-                                server.resolvePendingOpenAIRequest(save: false)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                } header: {
-                    Text(NSLocalizedString("API 流量分析", comment: ""))
-                } footer: {
-                    if server.pendingOpenAIQueueCount > 1 {
-                        Text(String(format: NSLocalizedString("队列中还有 %d 条记录", comment: ""), server.pendingOpenAIQueueCount - 1))
-                    }
-                }
-            }
-            
             // 使用说明
             Section(header: Text(NSLocalizedString("文档", comment: "")), footer: Text(NSLocalizedString("远程诊断模式 · 主动连接调试端", comment: ""))) {
                 Button {
@@ -264,7 +232,7 @@ struct LocalDebugView: View {
     private func connectToServer() {
         let address = trimmedServerURL
         guard !address.isEmpty else { return }
-        AppConfigStore.persistSynchronously(.text(address), for: .localDebugLastServerAddress, quickSync: false)
+        AppConfigStore.persistSynchronously(.text(address), for: .localDebugLastServerAddress)
         server.connect(to: address)
         UIApplication.shared.isIdleTimerDisabled = true
     }
@@ -298,13 +266,6 @@ struct LocalDebugView: View {
         pendingDiscoveredServer = candidate
     }
 
-    private func formatPendingTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = .autoupdatingCurrent
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .medium
-        return formatter.string(from: date)
-    }
 }
 
 // MARK: - 调试日志视图

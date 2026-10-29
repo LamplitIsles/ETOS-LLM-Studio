@@ -19,30 +19,7 @@ final class MacSlashCommandActions: ObservableObject {
     }
 
     func retry(workspace: MacWorkspaceModel) {
-        guard !suspended, workspace.canManageLocalModels,
-              let service = workspace.service, let sessionID = workspace.currentSession?.id else { return }
-        guard !isWorking, workspace.canModifyCurrentHistory else {
-            workspace.errorMessage = MacWorkspaceWriteError.busy.localizedDescription; return
-        }
-        guard workspace.effectiveModelName != nil else {
-            workspace.errorMessage = NSLocalizedString("请先激活一个聊天模型。", comment: ""); return
-        }
-        let expected = epoch
-        isWorking = true
-        task = Task { [weak self, weak workspace] in
-            let latest = await Task.detached(priority: .userInitiated) { () -> ChatMessage? in
-                let messages = service.messagesSnapshot(for: sessionID)
-                guard ChatQuickRetrySupport.canRetryLatestMessage(in: messages, isSending: service.runningSessionIDsSubject.value.contains(sessionID)) else { return nil }
-                return ChatResponseAttemptSupport.visibleMessages(from: messages).last
-            }.value
-            guard let self else { return }
-            isWorking = false; task = nil
-            guard !suspended, epoch == expected, let workspace, workspace.canManageLocalModels,
-                  workspace.currentSession?.id == sessionID, service.currentSessionSubject.value?.id == sessionID else { return }
-            guard let latest else {
-                workspace.errorMessage = NSLocalizedString("当前没有可重试的回复。", comment: ""); return
-            }
-            workspace.retryMessage(latest)
-        }
+        guard !suspended else { return }
+        workspace.errorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
     }
 }

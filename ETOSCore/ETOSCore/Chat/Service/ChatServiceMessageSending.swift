@@ -34,7 +34,9 @@ extension ChatService {
         conversationRun: ConversationRun? = nil,
         existingInputMessageID: UUID? = nil,
         requestedLocalAgentMode: LocalAgentMode? = nil,
-        onMessagesPrepared: ChatSendPresentationHandler? = nil
+        onMessagesPrepared: ChatSendPresentationHandler? = nil,
+        requestLease: ChatRequestLease? = nil,
+        onInputAccepted: ChatInputAcceptanceHandler? = nil
     ) async {
 
         let resolvedTargetSessionID = targetSessionID ?? currentSessionSubject.value?.id
@@ -49,6 +51,35 @@ extension ChatService {
             )
             requestStatusSubject.send(.error)
             return
+        }
+
+        let lease: ChatRequestLease
+        if let requestLease {
+            guard requestLease.sessionID == currentSession.id,
+                  ownsRequestReservation(sessionID: currentSession.id, token: requestLease.token) else { return }
+            lease = requestLease
+        } else {
+            switch beginRequest(sessionID: currentSession.id) {
+            case .success(let acquired): lease = acquired
+            case .failure: return
+            }
+        }
+        guard lease.claim(for: self) else { return }
+        var acceptedGroup: [ChatMessage] = []
+        var inputStillRetained = false
+        var requestTaskRegistered = false
+        defer {
+            if !requestTaskRegistered, !acceptedGroup.isEmpty,
+               Task.isCancelled || !ownsRequestReservation(sessionID: currentSession.id, token: lease.token) {
+                if rollbackUnsentInput(acceptedGroup, sessionID: currentSession.id, token: lease.token, sourceRetained: inputStillRetained) {
+                    lease.setInputAccepted(false)
+                } else if runtimeMessagesSnapshot(for: currentSession.id) == nil {
+                    lease.setInputAccepted(false)
+                } else {
+                    reportRetainedStoppedInput(sessionID: currentSession.id, token: lease.token)
+                }
+            }
+            lease.finishPreparation()
         }
 
         // 新增后台等待前固定目标与模型；输入准备期间切换界面不能改写本轮路由。
@@ -88,11 +119,6 @@ extension ChatService {
         if let conversationRun, runConfiguredModelIdentifier != nil, runConfiguredModel == nil {
             let reason = NSLocalizedString("错误: 没有选中的可用模型。请在设置中激活一个模型。", comment: "No active model error")
             addErrorMessage(reason, sessionID: currentSession.id)
-            _ = Persistence.updateConversationRunStatus(
-                id: conversationRun.id,
-                status: .failed,
-                errorMessage: reason
-            )
             requestStatusSubject.send(.error)
             return
         }
@@ -111,13 +137,17 @@ extension ChatService {
                 return
             }
 
-            await generateImageAndProcessMessage(
-                prompt: content,
-                imageAttachments: imageAttachments,
-                runnableModel: selectedModel,
-                targetSessionID: currentSession.id,
-                onMessagesPrepared: onMessagesPrepared
-            )
+            await ChatRequestTaskIdentity.$current.withValue(.init(sessionID: currentSession.id, token: lease.token)) {
+                await generateImageAndProcessMessage(
+                    prompt: content,
+                    imageAttachments: imageAttachments,
+                    runnableModel: selectedModel,
+                    targetSessionID: currentSession.id,
+                    onMessagesPrepared: onMessagesPrepared,
+                    requestLease: lease,
+                    onInputAccepted: onInputAccepted
+                )
+            }
             return
         }
 
@@ -137,6 +167,13 @@ extension ChatService {
                 sourceMessageID: sourceMessageID, conversationEventID: conversationEventID
             )
         }.value
+        guard !Task.isCancelled,
+              ownsRequestReservation(sessionID: currentSession.id, token: lease.token) else { return }
+        guard preparedInput.failures.isEmpty else {
+            addErrorMessage(NSLocalizedString("内容准备失败，请检查附件后重试。", comment: "Input attachment preparation failed"), sessionID: currentSession.id)
+            requestStatusSubject.send(.error)
+            return
+        }
         let messageContent = preparedInput.content
         let requestTimestamp = preparedInput.requestedAt
         let savedImageFileNames = preparedInput.imageFileNames
@@ -193,87 +230,6 @@ extension ChatService {
             ))
         }
 
-        if messageAuthorKind == .user,
-           let waitingRun = Persistence.loadLatestConversationRun(sessionID: currentSession.id),
-           waitingRun.status == .waitingConversation,
-           !hasActiveRequestContext(for: currentSession.id) {
-            for var wait in Persistence.loadConversationWaits(waitingRunID: waitingRun.id)
-                where wait.status == .pending {
-                wait.status = .cancelled
-                _ = Persistence.saveConversationWait(wait)
-            }
-            _ = Persistence.updateConversationRunStatus(id: waitingRun.id, status: .cancelled)
-        }
-
-        // 供应商请求已经发出时，用户输入先作为 steering 原子落库；协调器会在
-        // 当前请求结束的安全边界启动新 Run，绝不覆盖正在执行的请求上下文。
-        if existingInputMessageID == nil,
-           messageAuthorKind == .user,
-           hasActiveRequestContext(for: currentSession.id) {
-            let eventID = UUID()
-            var storedMessages: [ChatMessage] = []
-            for var message in userMessages {
-                message.conversationEventID = eventID
-                if let stored = try? await appendConversationMessage(message, to: currentSession.id) {
-                    storedMessages.append(stored)
-                }
-            }
-            guard let triggerMessage = storedMessages.last else {
-                addErrorMessage(
-                    NSLocalizedString("错误: 无法保存等待处理的用户消息。", comment: "Unable to persist steering input"),
-                    sessionID: currentSession.id
-                )
-                return
-            }
-            let steeringCapabilities = AgentToolCapabilityPolicy.resolve(
-                mode: effectiveLocalAgentMode,
-                isToolContextIsolated: currentSession.isToolContextIsolationActive,
-                localLinuxEnabled: AppConfigStore.boolValue(for: .localLinuxEnabled)
-            )
-            let steeringMCPServerIDs = steeringCapabilities.preparesAgentRun
-                ? MCPServerStore.loadServers().filter(\.isSelectedForChat).map(\.id)
-                : []
-            let steeringConfiguration = ConversationRunRequestConfiguration(
-                modelIdentifier: selectedModel?.id,
-                temperature: aiTemperature,
-                topP: aiTopP,
-                maxChatHistory: maxChatHistory,
-                enableStreaming: enableStreaming,
-                includeSystemTime: includeSystemTime,
-                systemTimeInjectionPosition: systemTimeInjectionPosition,
-                enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
-                periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
-                enableResponseSpeedMetrics: enableResponseSpeedMetrics,
-                browserDataProfile: Persistence.browserAgentDataProfile(sessionID: currentSession.id),
-                agentToolsEnabled: steeringCapabilities.preparesAgentRun,
-                localLinuxToolsEnabled: steeringCapabilities.includesLocalLinuxTools,
-                selectedAgentMCPServerIDs: steeringMCPServerIDs
-            )
-            let steeringRun = ConversationRun(
-                sessionID: currentSession.id,
-                triggerEventID: eventID,
-                status: .queued,
-                requestConfiguration: steeringConfiguration
-            )
-            _ = Persistence.saveConversationRun(steeringRun)
-            _ = Persistence.saveConversationEvent(
-                ConversationEvent(
-                    id: eventID,
-                    destinationSessionID: currentSession.id,
-                    messageID: triggerMessage.id,
-                    kind: .incomingMessage,
-                    deliveryPolicy: .respondWhenIdle,
-                    payloadJSON: encodeConversationToolResult(["source": "user_steering"])
-                )
-            )
-            publishParticipantActivityIfNeeded(
-                sessionID: currentSession.id,
-                messageID: triggerMessage.id
-            )
-            await ConversationRunCoordinator.shared.signal()
-            return
-        }
-
         let responseAttempt = ResponseAttemptMetadata(
             groupID: userMessages[userMessages.index(before: userMessages.endIndex)].id,
             attemptID: UUID(),
@@ -298,34 +254,27 @@ extension ChatService {
         var wasTemporarySession = false
 
         do {
-            if existingInputMessageID == nil {
-                for message in userMessages + [loadingMessage] {
-                    _ = try await appendConversationMessage(message, to: currentSession.id)
-                }
-            } else {
-                _ = try await appendConversationMessage(loadingMessage, to: currentSession.id)
-            }
-        } catch {
-            addErrorMessage(
-                NSLocalizedString("错误: 无法保存会话消息。", comment: "Unable to persist conversation messages"),
-                sessionID: currentSession.id
+            try appendConversationMessagesAtomically(
+                existingInputMessageID == nil ? userMessages + [loadingMessage] : [loadingMessage],
+                to: currentSession.id, requestToken: lease.token
             )
+        } catch is CancellationError {
+            return
+        } catch {
+            addErrorMessage(error.localizedDescription, sessionID: currentSession.id)
             requestStatusSubject.send(.error)
             return
         }
-        let messages = messagesSnapshot(for: currentSession.id)
-        storeRuntimeMessagesSnapshot(messages, for: currentSession.id)
-        publishMessagesIfCurrentSession(messages, for: currentSession.id)
-        await consumePendingUserSteeringEvents(
-            in: currentSession.id,
-            includedMessageIDs: Set(messages.map(\.id))
-        )
-        if messageAuthorKind == .user, let primaryUserMessage {
-            publishParticipantActivityIfNeeded(
-                sessionID: currentSession.id,
-                messageID: primaryUserMessage.id
-            )
+        acceptedGroup = existingInputMessageID == nil ? userMessages + [loadingMessage] : [loadingMessage]
+        lease.setInputAccepted(true)
+        if let onInputAccepted, existingInputMessageID == nil, let responseMessage = userMessages.last {
+            let cancelled = Task.isCancelled || !ownsRequestReservation(sessionID: currentSession.id, token: lease.token)
+            inputStillRetained = await onInputAccepted(ChatSendPresentation(sessionID: currentSession.id,
+                messageIDsBySource: messageIDsBySource, responseGroupID: responseMessage.id), cancelled)
         }
+        guard !Task.isCancelled,
+              ownsRequestReservation(sessionID: currentSession.id, token: lease.token) else { return }
+        let messages = messagesSnapshot(for: currentSession.id)
         scheduleUserMessageAchievementDetectionIfNeeded(
             content: messageContent,
             userMessageCount: messages.filter { $0.role == .user }.count,
@@ -392,9 +341,6 @@ extension ChatService {
         )
         let shouldPrepareAgentRun = agentCapabilities.preparesAgentRun
         let includeLocalLinuxCapability = agentCapabilities.includesLocalLinuxTools
-        let selectedMCPServerIDs = shouldPrepareAgentRun
-            ? MCPServerStore.loadServers().filter(\.isSelectedForChat).map(\.id)
-            : []
         let requestConfiguration = ConversationRunRequestConfiguration(
             modelIdentifier: selectedModel?.id,
             temperature: aiTemperature,
@@ -408,10 +354,8 @@ extension ChatService {
             enableResponseSpeedMetrics: enableResponseSpeedMetrics,
             browserDataProfile: Persistence.browserAgentDataProfile(sessionID: currentSession.id),
             agentToolsEnabled: shouldPrepareAgentRun,
-            localLinuxToolsEnabled: includeLocalLinuxCapability,
-            selectedAgentMCPServerIDs: selectedMCPServerIDs
+            localLinuxToolsEnabled: includeLocalLinuxCapability
         )
-        let isNewRootRun = conversationRun == nil
         var runtimeRun = conversationRun ?? ConversationRun(
             sessionID: currentSession.id,
             requestConfiguration: requestConfiguration
@@ -420,104 +364,93 @@ extension ChatService {
         runtimeRun.startedAt = runtimeRun.startedAt ?? Date()
         runtimeRun.requestConfiguration = requestConfiguration
         runtimeRun.loadingMessageID = loadingMessage.id
-        _ = Persistence.saveConversationRun(runtimeRun)
-        if isNewRootRun {
-            _ = Persistence.saveConversationExecutionBudget(
-                ConversationExecutionBudget(
-                    rootRunID: runtimeRun.rootRunID,
-                    maximumExecutions: ConversationExecutionBudgetPolicy.configuredMaximumExecutions(),
-                    usedExecutions: 1
-                )
-            )
-        }
-
         let runtimeRunID = runtimeRun.id
         let rootRuntimeRunID = runtimeRun.rootRunID
         let parentRuntimeRunID = runtimeRun.parentRunID
 
-        let requestToken = UUID()
-        setRequestContext(
+        let requestToken = lease.token
+        guard updateReservedRequestContext(
             RequestExecutionContext(
                 token: requestToken,
                 task: nil,
                 loadingMessageID: loadingMessage.id,
                 imageGenerationContext: nil,
                 conversationRunID: runtimeRun.id,
-                rootConversationRunID: runtimeRun.rootRunID
+                rootConversationRunID: runtimeRun.rootRunID,
+                requestConfiguration: requestConfiguration,
+                taskRegistrationPending: true
             ),
             for: currentSession.id
-        )
+        ) else { return }
 
+        let startGate = ChatRequestStartGate()
         let requestTask = Task<Void, Error> { [weak self] in
+            try await startGate.waitUntilRegistered()
             guard let self else { return }
-            var localAgentContext: AgentRuntimeContext?
-            if includeLocalLinuxCapability {
-                do {
-                    let prepared = try await LocalAgentRuntimeContextManager.shared.beginRun(
-                        sessionID: currentSession.id,
-                        triggeringMessageID: responseAttempt.groupID,
-                        runID: runtimeRunID,
-                        rootRunID: rootRuntimeRunID,
-                        parentRunID: parentRuntimeRunID,
-                        selectedMCPServerIDs: selectedMCPServerIDs,
-                        browserSessionID: currentSession.id
-                    )
-                    localAgentContext = prepared.context
-                    _ = try await LocalLinuxRuntimeController.shared.ensureReady(trigger: .agentRequest)
-                    try Task.checkCancellation()
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    await LocalAgentRuntimeContextManager.shared.finishRun(
-                        id: runtimeRunID,
-                        state: .failed
-                    )
-                    _ = Persistence.updateConversationRunStatus(
-                        id: runtimeRunID,
-                        status: .failed,
-                        errorMessage: error.localizedDescription
-                    )
-                    self.addErrorMessage(
-                        String(
-                            format: NSLocalizedString("错误: 无法准备 Agent Run：%@", comment: "Prepare local Agent run failure"),
-                            error.localizedDescription
-                        ),
-                        sessionID: currentSession.id
-                    )
-                    self.emitSessionRequestStatus(.error, sessionID: currentSession.id)
-                    return
+            try await ChatRequestTaskIdentity.$current.withValue(.init(sessionID: currentSession.id, token: requestToken)) {
+                var localAgentContext: AgentRuntimeContext?
+                if includeLocalLinuxCapability {
+                    do {
+                        let prepared = try await LocalAgentRuntimeContextManager.shared.beginRun(
+                            sessionID: currentSession.id,
+                            triggeringMessageID: responseAttempt.groupID,
+                            runID: runtimeRunID,
+                            rootRunID: rootRuntimeRunID,
+                            parentRunID: parentRuntimeRunID,
+                            browserSessionID: currentSession.id,
+                            requestedMode: effectiveLocalAgentMode
+                        )
+                        localAgentContext = prepared.context
+                        _ = try await LocalLinuxRuntimeController.shared.ensureReady(trigger: .agentRequest)
+                        try Task.checkCancellation()
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        await LocalAgentRuntimeContextManager.shared.finishRun(
+                            id: runtimeRunID,
+                            state: .failed
+                        )
+                        self.addErrorMessage(
+                            String(
+                                format: NSLocalizedString("错误: 无法准备 Agent Run：%@", comment: "Prepare local Agent run failure"),
+                                error.localizedDescription
+                            ),
+                            sessionID: currentSession.id
+                        )
+                        self.emitSessionRequestStatus(.error, sessionID: currentSession.id)
+                        return
+                    }
                 }
+                let requestTooling = await self.resolveRequestTooling(
+                    for: currentSession,
+                    localAgentContext: localAgentContext
+                )
+                await self.executeMessageRequest(
+                    messages: messages,
+                    loadingMessageID: loadingMessage.id,
+                    currentSessionID: currentSession.id,
+                    userMessage: primaryUserMessage,
+                    wasTemporarySession: wasTemporarySession,
+                    aiTemperature: aiTemperature,
+                    aiTopP: aiTopP,
+                    maxChatHistory: maxChatHistory,
+                    enableStreaming: enableStreaming,
+                    tools: requestTooling.tools,
+                    includeSystemTime: includeSystemTime,
+                    systemTimeInjectionPosition: systemTimeInjectionPosition,
+                    enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
+                    periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
+                    enableResponseSpeedMetrics: enableResponseSpeedMetrics,
+                    currentAudioAttachment: audioAttachment,
+                    currentImageAttachments: imageAttachments.filter {
+                        savedImageFileNames.contains($0.fileName)
+                    },
+                    currentFileAttachments: fileAttachments
+                )
             }
-            let requestTooling = await self.resolveRequestTooling(
-                for: currentSession,
-                localAgentContext: localAgentContext,
-                agentCapabilities: agentCapabilities,
-                selectedAgentMCPServerIDs: Set(selectedMCPServerIDs)
-            )
-            await self.executeMessageRequest(
-                messages: messages,
-                loadingMessageID: loadingMessage.id,
-                currentSessionID: currentSession.id,
-                userMessage: primaryUserMessage,
-                wasTemporarySession: wasTemporarySession,
-                aiTemperature: aiTemperature,
-                aiTopP: aiTopP,
-                maxChatHistory: maxChatHistory,
-                enableStreaming: enableStreaming,
-                tools: requestTooling.tools,
-                includeSystemTime: includeSystemTime,
-                systemTimeInjectionPosition: systemTimeInjectionPosition,
-                enablePeriodicTimeLandmark: enablePeriodicTimeLandmark,
-                periodicTimeLandmarkIntervalMinutes: periodicTimeLandmarkIntervalMinutes,
-                enableResponseSpeedMetrics: enableResponseSpeedMetrics,
-                currentAudioAttachment: audioAttachment,
-                currentImageAttachments: imageAttachments.filter {
-                    savedImageFileNames.contains($0.fileName)
-                },
-                currentFileAttachments: fileAttachments
-            )
         }
-        updateRequestTask(requestTask, for: currentSession.id, token: requestToken)
+        updateRequestTask(requestTask, for: currentSession.id, token: requestToken, startGate: startGate)
+        requestTaskRegistered = true
 
         defer {
             clearRequestContextIfNeeded(for: currentSession.id, token: requestToken)
@@ -537,23 +470,12 @@ extension ChatService {
         }
     }
 
-    private func publishParticipantActivityIfNeeded(sessionID: UUID, messageID: UUID) {
-        guard let origin = Persistence.loadConversationOrigin(childSessionID: sessionID),
-              let parentSessionID = origin.parentSessionID else {
-            return
+    private func encodeConversationToolResult<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value), let result = String(data: data, encoding: .utf8) else {
+            return "{}"
         }
-        _ = Persistence.saveConversationEvent(
-            ConversationEvent(
-                destinationSessionID: parentSessionID,
-                sourceSessionID: sessionID,
-                messageID: messageID,
-                kind: .participantActivity,
-                deliveryPolicy: .deliverOnly,
-                payloadJSON: encodeConversationToolResult([
-                    "conversation_id": sessionID.uuidString,
-                    "activity": "user_message"
-                ])
-            )
-        )
+        return result
     }
 }

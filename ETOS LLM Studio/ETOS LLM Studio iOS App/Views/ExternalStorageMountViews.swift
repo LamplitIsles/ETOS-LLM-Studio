@@ -1,7 +1,7 @@
 // ============================================================================
 // ExternalStorageMountViews.swift
 // ============================================================================
-// 存储管理与本地 Linux 共用外部目录授权；文件浏览期间持续持有安全作用域。
+// 存储管理与文件工具共用外部目录授权；文件浏览期间持续持有安全作用域。
 // ============================================================================
 
 import ETOSCore
@@ -21,7 +21,7 @@ struct ExternalStorageMountSection: View {
             SettingsHelpCard(
                 title: NSLocalizedString("外部文件夹", comment: ""),
                 summary: NSLocalizedString("让 App 和 AI 访问你选择的文件夹。", comment: "外部文件夹简介"),
-                details: NSLocalizedString("挂载记录与本地 Linux 共用；AI 无需启动 Linux 即可通过 app://ETOSMounts/<挂载 ID> 访问。选择只读时，存储管理、AI 文件工具和 Linux 都不会提供删除或写入操作。", comment: "外部文件夹访问说明")
+                details: NSLocalizedString("存储管理和 AI 文件工具可访问已授权的外部文件夹。选择只读时，不提供删除或写入操作。", comment: "外部文件夹访问说明")
             )
             if mounts.isEmpty {
                 Text(NSLocalizedString("还没有外部挂载。", comment: "No external storage mounts"))
@@ -102,7 +102,7 @@ struct ExternalStorageMountSection: View {
                 pendingRemoval = nil
             }
         } message: {
-            Text(NSLocalizedString("移除只会撤销 ETOS 对此文件夹的入口，不会删除文件夹中的内容。正在使用它的 Linux 任务需要先停止。", comment: "External storage mount removal explanation"))
+            Text(NSLocalizedString("移除会删除 ETOS 中的文件夹入口，不会删除文件夹中的内容。已开始的访问可能持续到操作结束。", comment: "External storage mount removal explanation"))
         }
         .alert(
             NSLocalizedString("挂载失败", comment: "External storage mount error title"),
@@ -145,7 +145,7 @@ struct ExternalStorageMountSection: View {
         pendingRemoval = nil
         Task {
             do {
-                try await LocalLinuxMountManager.shared.delete(id: mount.id, force: false)
+                try await LocalLinuxMountManager.shared.delete(id: mount.id, expected: mount)
                 await reload()
             } catch {
                 errorMessage = error.localizedDescription

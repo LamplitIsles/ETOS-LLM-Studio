@@ -117,7 +117,7 @@ extension ToolCenterView {
     var builtInSection: some View {
         Section(
             header: Text(NSLocalizedString("内置工具", comment: "Built-in tools section title")),
-            footer: Text(NSLocalizedString("内置工具会直接影响聊天时是否向模型暴露记忆能力、网页卡片渲染能力与结构化问答能力。", comment: "Built-in tools footer"))
+            footer: Text(NSLocalizedString("内置工具控制网页卡片和系统时间等功能是否可用于聊天。", comment: "Built-in tools footer"))
                 .etFont(.footnote)
                 .foregroundStyle(.secondary)
         ) {
@@ -177,42 +177,6 @@ extension ToolCenterView {
             }
         }
         .navigationTitle(NSLocalizedString("内置工具", comment: "Built-in tools section title"))
-    }
-
-    var mcpSection: some View {
-        Section(
-            header: Text(NSLocalizedString("MCP 工具", comment: "MCP tools section title")),
-            footer: Text(NSLocalizedString("统一查看各个 MCP Server 公布的聊天工具，并集中调整启用状态与审批策略。", comment: "MCP tools footer"))
-                .etFont(.footnote)
-                .foregroundStyle(.secondary)
-        ) {
-            Toggle(
-                NSLocalizedString("向模型暴露 MCP 工具", comment: "Expose MCP tools to model"),
-                isOn: Binding(
-                    get: { mcpManager.chatToolsEnabled },
-                    set: { mcpManager.setChatToolsEnabled($0) }
-                )
-            )
-
-            NavigationLink {
-                MCPToolCategoryDetailView(
-                    currentSessionIsolationActive: currentSessionIsolationActive,
-                    searchText: searchText,
-                    showEnabledOnly: showEnabledOnly
-                )
-            } label: {
-                ToolCenterStatusRow(
-                    title: NSLocalizedString("MCP 工具", comment: "MCP tools section title"),
-                    subtitle: String(
-                        format: NSLocalizedString("配置已启用 %d / %d", comment: "Configured enabled count"),
-                        configuredMCPCount,
-                        mcpCatalogTools.count
-                    ),
-                    detail: mcpCategoryStatusText,
-                    color: mcpCategoryStatusColor
-                )
-            }
-        }
     }
 
     var shortcutSection: some View {
@@ -302,8 +266,6 @@ extension ToolCenterView {
         switch kind {
         case .widgetCard:
             return NSLocalizedString("显示网页卡片", comment: "Built-in widget tool title")
-        case .askUserInput:
-            return NSLocalizedString("询问用户选项", comment: "Built-in ask user input tool title")
         case .getSystemTime:
             return NSLocalizedString("获取系统时间", comment: "Get system time tool title")
         @unknown default:
@@ -315,8 +277,6 @@ extension ToolCenterView {
         switch kind {
         case .widgetCard:
             return NSLocalizedString("允许模型调用 show_widget，在对话中渲染 HTML 网页卡片。", comment: "Built-in widget tool subtitle")
-        case .askUserInput:
-            return NSLocalizedString("允许模型调用 ask_user_input，在回答前向用户发起结构化问答。", comment: "Built-in ask user input tool subtitle")
         case .getSystemTime:
             return NSLocalizedString("允许模型调用 get_system_time，免审批获取当前设备时间，解决 KV 缓存时间感知问题。", comment: "Get system time tool subtitle")
         @unknown default:
@@ -335,21 +295,10 @@ extension ToolCenterView {
                 return NSLocalizedString("已启用网页卡片渲染能力。", comment: "Built-in widget enabled status")
             case .widgetDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget disabled status")
-            case .isolatedBySession, .askUserInputDisabled, .getSystemTimeDisabled:
+            case .isolatedBySession, .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget unknown status fallback")
-            }
-        case .askUserInput:
-            switch state.statusReason {
-            case .enabled:
-                return NSLocalizedString("已启用结构化问答能力。", comment: "Built-in ask user input enabled status")
-            case .askUserInputDisabled:
-                return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input disabled status")
-            case .isolatedBySession, .widgetDisabled, .getSystemTimeDisabled:
-                return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input disabled status fallback")
-            @unknown default:
-                return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input unknown status fallback")
             }
         case .getSystemTime:
             switch state.statusReason {
@@ -357,7 +306,7 @@ extension ToolCenterView {
                 return NSLocalizedString("已启用系统时间获取能力。", comment: "Get system time enabled status")
             case .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status")
-            case .isolatedBySession, .widgetDisabled, .askUserInputDisabled:
+            case .isolatedBySession, .widgetDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time unknown status fallback")
@@ -384,27 +333,6 @@ extension ToolCenterView {
 
     var builtInCategoryStatusColor: Color {
         if currentSessionIsolationActive || availableBuiltInCount == 0 {
-            return .secondary
-        }
-        return .green
-    }
-
-    var mcpCategoryStatusText: String {
-        if currentSessionIsolationActive {
-            return NSLocalizedString("当前会话已屏蔽相关上下文，因此不会实际启用该工具。", comment: "Tool unavailable due to session isolation")
-        }
-        if !mcpManager.chatToolsEnabled {
-            return NSLocalizedString("总开关关闭后，下面的单项配置会保留，但聊天时不会实际暴露这些工具。", comment: "Global switch off explanation")
-        }
-        return String(
-            format: NSLocalizedString("当前会话实际可用 %d / %d", comment: "Currently available count"),
-            availableMCPCount,
-            mcpCatalogTools.count
-        )
-    }
-
-    var mcpCategoryStatusColor: Color {
-        if currentSessionIsolationActive || !mcpManager.chatToolsEnabled || availableMCPCount == 0 {
             return .secondary
         }
         return .green
@@ -506,7 +434,6 @@ struct BuiltInToolDetailView: View {
     private var state: ToolCatalogBuiltInToolState {
         ToolCatalogSupport.builtInToolStates(
             enableWidgetTool: appToolManager.isToolEnabled(.showWidget),
-            enableAskUserInputTool: appToolManager.isToolEnabled(.askUserInput),
             enableGetSystemTimeTool: appToolManager.isToolEnabled(.getSystemTime),
             isToolIsolated: currentSessionIsolationActive
         ).first(where: { $0.kind == kind }) ?? ToolCatalogBuiltInToolState(
@@ -543,16 +470,6 @@ struct BuiltInToolDetailView: View {
                         )
                     )
                 }
-            case .askUserInput:
-                Section(NSLocalizedString("启用状态", comment: "Enable status")) {
-                    Toggle(
-                        NSLocalizedString("启用询问用户选项工具", comment: "Enable ask user input built-in tool"),
-                        isOn: Binding(
-                            get: { appToolManager.isToolEnabled(.askUserInput) },
-                            set: { appToolManager.setToolEnabled(kind: .askUserInput, isEnabled: $0) }
-                        )
-                    )
-                }
             case .getSystemTime:
                 Section(NSLocalizedString("启用状态", comment: "Enable status")) {
                     Toggle(
@@ -577,8 +494,6 @@ struct BuiltInToolDetailView: View {
         switch kind {
         case .widgetCard:
             return NSLocalizedString("显示网页卡片", comment: "Built-in widget tool title")
-        case .askUserInput:
-            return NSLocalizedString("询问用户选项", comment: "Built-in ask user input tool title")
         case .getSystemTime:
             return NSLocalizedString("获取系统时间", comment: "Get system time tool title")
         @unknown default:
@@ -590,8 +505,6 @@ struct BuiltInToolDetailView: View {
         switch kind {
         case .widgetCard:
             return NSLocalizedString("允许模型调用 show_widget，在对话中渲染 HTML 网页卡片。", comment: "Built-in widget tool subtitle")
-        case .askUserInput:
-            return NSLocalizedString("允许模型调用 ask_user_input，在回答前向用户发起结构化问答。", comment: "Built-in ask user input tool subtitle")
         case .getSystemTime:
             return NSLocalizedString("允许模型调用 get_system_time，免审批获取当前设备时间，解决 KV 缓存时间感知问题。", comment: "Get system time tool subtitle")
         @unknown default:
@@ -603,8 +516,6 @@ struct BuiltInToolDetailView: View {
         switch kind {
         case .widgetCard:
             return .widgetDisabled
-        case .askUserInput:
-            return .askUserInputDisabled
         case .getSystemTime:
             return .getSystemTimeDisabled
         @unknown default:
@@ -623,21 +534,10 @@ struct BuiltInToolDetailView: View {
                 return NSLocalizedString("已启用网页卡片渲染能力。", comment: "Built-in widget enabled status")
             case .widgetDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget disabled status")
-            case .isolatedBySession, .askUserInputDisabled, .getSystemTimeDisabled:
+            case .isolatedBySession, .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用网页卡片渲染能力。", comment: "Built-in widget unknown status fallback")
-            }
-        case .askUserInput:
-            switch state.statusReason {
-            case .enabled:
-                return NSLocalizedString("已启用结构化问答能力。", comment: "Built-in ask user input enabled status")
-            case .askUserInputDisabled:
-                return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input disabled status")
-            case .isolatedBySession, .widgetDisabled, .getSystemTimeDisabled:
-                return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input fallback")
-            @unknown default:
-                return NSLocalizedString("当前未启用结构化问答能力。", comment: "Built-in ask user input unknown status fallback")
             }
         case .getSystemTime:
             switch state.statusReason {
@@ -645,7 +545,7 @@ struct BuiltInToolDetailView: View {
                 return NSLocalizedString("已启用系统时间获取能力。", comment: "Get system time enabled status")
             case .getSystemTimeDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status")
-            case .isolatedBySession, .widgetDisabled, .askUserInputDisabled:
+            case .isolatedBySession, .widgetDisabled:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time disabled status fallback")
             @unknown default:
                 return NSLocalizedString("当前未启用获取系统时间工具。", comment: "Get system time unknown status fallback")

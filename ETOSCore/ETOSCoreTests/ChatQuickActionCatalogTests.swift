@@ -5,10 +5,14 @@ import Testing
 struct ChatQuickActionCatalogTests {
     @Test("共享目录保持当前快捷功能的标识及顺序")
     func preservesStoredIdentifiers() {
-        #expect(ChatQuickAction.allCases.map(\.rawValue) == [
-            "temporaryChat", "settings", "toolCenter", "dailyPulse", "usageAnalytics", "mcp",
-            "agentSkills", "shortcuts", "roleplay", "extendedFeatures", "browser", "localTerminal"
-        ])
+        var expected = [
+            "temporaryChat", "settings", "toolCenter", "dailyPulse", "usageAnalytics",
+            "agentSkills", "shortcuts", "roleplay", "extendedFeatures", "browser"
+        ]
+        #if os(macOS)
+        expected.append("localTerminal")
+        #endif
+        #expect(ChatQuickAction.allCases.map(\.rawValue) == expected)
         guard case .text(let raw) = AppConfigKey.chatQuickActionIDs.defaultValue else {
             Issue.record("默认快捷功能配置应为文本"); return
         }
@@ -18,15 +22,15 @@ struct ChatQuickActionCatalogTests {
 
     @Test("混合未知标识时保留有效选择并规范顺序，不扩展成全部")
     func mixedUnknownValuesKeepValidSubset() {
-        #expect(ChatQuickActionSelection.decode("browser,unknown,mcp,browser") == [.mcp, .browser])
-        #expect(ChatQuickActionSelection.encode([.browser, .mcp, .browser]) == "mcp,browser")
+        #expect(ChatQuickActionSelection.decode("browser,unknown,settings,browser") == [.settings, .browser])
+        #expect(ChatQuickActionSelection.encode([.browser, .settings, .browser]) == "settings,browser")
         #expect(ChatQuickActionSelection.decode("unknown,,") == ChatQuickAction.allCases)
     }
 
     @Test("临时聊天三种状态共享隐私图标，其他功能不受状态影响")
     func temporaryModeSymbolsRemainCompatible() {
         #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: false) == "eye")
-        #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: true) == "eye.slash")
+        #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: true) == "eye.slash.fill")
         #expect(ChatQuickAction.browser.systemImage(isTemporaryChatEnabled: true) == "safari")
     }
 }

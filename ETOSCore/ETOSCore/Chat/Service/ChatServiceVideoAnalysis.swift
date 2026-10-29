@@ -112,14 +112,12 @@ extension ChatService {
         messageID: UUID,
         sessionID: UUID
     ) async {
-        guard var message = messagesSnapshot(for: sessionID).first(where: { $0.id == messageID }) else { return }
-        message.replaceVideoAnalysisResult(result)
-        do {
-            _ = try await upsertConversationMessage(message, to: sessionID)
-        } catch {
-            logger.error("原子保存视频解析结果失败：\(error.localizedDescription)")
-            return
+        let updated = await updateExistingConversationMessage(id: messageID, in: sessionID) { message in
+            guard message.fileFileNames?.contains(result.fileName) == true else { return false }
+            message.replaceVideoAnalysisResult(result)
+            return true
         }
+        guard updated else { return }
         logger.info("已保存视频解析结果: \(result.fileName)")
     }
 

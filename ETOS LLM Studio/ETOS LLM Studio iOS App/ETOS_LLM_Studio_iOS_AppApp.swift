@@ -51,7 +51,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
 #endif
     @StateObject private var launchStateMachine = AppLaunchStateMachine()
     @StateObject private var cloudSyncManager = CloudSyncManager.shared
-    @StateObject private var mcpManager = MCPManager.shared
     @StateObject private var dailyPulseManager = DailyPulseManager.shared
     @StateObject private var dailyPulseDeliveryCoordinator = DailyPulseDeliveryCoordinator.shared
     @StateObject private var updateTimelineManager = UpdateTimelineManager.shared
@@ -121,8 +120,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
                 .onAppear {
                     PerformanceTelemetryCenter.shared.markFirstInterfaceReady()
                     appLockWindowPresenter.install()
-                    // 启动时自动重连已加入聊天路由的 MCP 服务器
-                    mcpManager.connectSelectedServersIfNeeded()
                     dailyPulseDeliveryCoordinator.activate()
                     DailyPulseBackgroundDeliveryScheduler.shared.activate()
                     updateTimelineManager.activateOnLaunchIfNeeded()

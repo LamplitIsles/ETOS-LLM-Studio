@@ -24,8 +24,7 @@ struct DailyPulseContextAndDeliveryTests {
             activeTasks: [],
             preferenceProfile: .empty,
             externalContext: DailyPulseExternalContext(
-                mcpSourceLines: ["- GitHub：已选中用于聊天；工具 2 个（search_code、list_pull_requests）"],
-                shortcutSourceLines: [],
+                shortcutSourceLines: ["- 今日摘要"],
                 recentSnapshotLines: [],
                 trendSourceLines: [],
                 signalHistoryLines: []
@@ -33,55 +32,7 @@ struct DailyPulseContextAndDeliveryTests {
         )
 
         #expect(input.hasUsableContext)
-        #expect(input.sourceDigest.contains("GitHub"))
-    }
-
-    @Test("MCP 外部上下文会优先保留选中的服务器与能力摘要")
-    func makeMCPContextEntriesPrioritizesSelectedServers() {
-        let selectedServer = MCPServerConfiguration(
-            id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
-            displayName: "GitHub",
-            notes: "用于代码与 PR 资料",
-            transport: .http(endpoint: URL(string: "https://example.com/github")!, apiKey: nil, additionalHeaders: [:]),
-            isSelectedForChat: true,
-            disabledToolIds: ["issues.list"]
-        )
-        let passiveServer = MCPServerConfiguration(
-            id: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!,
-            displayName: "Calendar",
-            transport: .http(endpoint: URL(string: "https://example.com/calendar")!, apiKey: nil, additionalHeaders: [:]),
-            isSelectedForChat: false
-        )
-
-        let entries = DailyPulseManager.makeMCPContextEntries(
-            servers: [passiveServer, selectedServer],
-            metadataByServerID: [
-                selectedServer.id: MCPServerMetadataCache(
-                    info: nil,
-                    tools: [
-                        MCPToolDescription(toolId: "search_code", description: nil, inputSchema: nil, examples: nil),
-                        MCPToolDescription(toolId: "list_pull_requests", description: nil, inputSchema: nil, examples: nil),
-                        MCPToolDescription(toolId: "issues.list", description: nil, inputSchema: nil, examples: nil)
-                    ],
-                    resources: [
-                        MCPResourceDescription(resourceId: "repo://open-prs", description: nil, outputSchema: nil, querySchema: nil)
-                    ],
-                    resourceTemplates: [],
-                    prompts: [
-                        MCPPromptDescription(name: "review_pr", description: nil, arguments: nil)
-                    ],
-                    roots: []
-                ),
-                passiveServer.id: nil
-            ],
-            limit: 2
-        )
-
-        #expect(entries.count == 1)
-        #expect(entries.first?.contains("GitHub") == true)
-        #expect(entries.first?.contains("已选中用于聊天") == true)
-        #expect(entries.first?.contains("search_code") == true)
-        #expect(entries.first?.contains("issues.list") == false)
+        #expect(input.sourceDigest.contains("今日摘要"))
     }
 
     @Test("快捷指令外部上下文仅纳入已启用工具")
@@ -115,7 +66,7 @@ struct DailyPulseContextAndDeliveryTests {
         #expect(entries.first?.contains("禁用工具") == false)
     }
 
-    @Test("最近外部结果摘要会优先纳入快捷指令结果与 MCP 输出")
+    @Test("最近外部结果摘要会纳入快捷指令结果")
     func makeRecentExternalSnapshotEntriesIncludesRealResults() {
         let entries = DailyPulseManager.makeRecentExternalSnapshotEntries(
             shortcutResult: ShortcutToolExecutionResult(
@@ -128,16 +79,12 @@ struct DailyPulseContextAndDeliveryTests {
                 startedAt: Date(timeIntervalSince1970: 100),
                 finishedAt: Date(timeIntervalSince1970: 120)
             ),
-            mcpOperationOutput: "{ \"headline\": \"最新 issues 共有 5 条\" }",
-            mcpOperationError: nil,
             limit: 3
         )
 
-        #expect(entries.count == 2)
+        #expect(entries.count == 1)
         #expect(entries.first?.contains("最近快捷指令结果") == true)
         #expect(entries.first?.contains("今日摘要") == true)
-        #expect(entries.last?.contains("最近 MCP 输出") == true)
-        #expect(entries.last?.contains("latest") == false)
     }
 
     @Test("仅最近外部结果快照时也可视为可生成每日脉冲")
@@ -151,7 +98,6 @@ struct DailyPulseContextAndDeliveryTests {
             activeTasks: [],
             preferenceProfile: .empty,
             externalContext: DailyPulseExternalContext(
-                mcpSourceLines: [],
                 shortcutSourceLines: [],
                 recentSnapshotLines: ["- 最近快捷指令结果（今日摘要，3/22 10:00）：今天有 3 个重要提醒。"],
                 trendSourceLines: [],

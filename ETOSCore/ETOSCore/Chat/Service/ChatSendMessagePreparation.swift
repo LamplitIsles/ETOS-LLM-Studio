@@ -3,6 +3,7 @@ import os.log
 
 /// 后台准备仅接收值，不接触 ChatService 的会话状态、发布器或 UI 回执。
 struct ChatSendMessagePreparation: Sendable {
+    let failures: [ChatAttachmentPreparation.Failure]
     let content: String
     let requestedAt: Date
     let messages: [ChatMessage]
@@ -27,40 +28,27 @@ struct ChatSendMessagePreparation: Sendable {
             trimmedContent, rules: MessageRegexRuleStore.currentRules(), scope: .user, mode: .persist
         )
         let requestTimestamp = Date()
-        var savedAudioFileName: String?
-        var savedImages: [(fileName: String, source: ChatSendPresentationSource)] = []
-        var savedFiles: [(fileName: String, isVideo: Bool, source: ChatSendPresentationSource)] = []
         var messages: [ChatMessage] = []
         var primaryMessage: ChatMessage?
         var messageIDsBySource: [ChatSendPresentationSource: UUID] = [:]
-
-        if let audioAttachment {
+        let audioFileName: String? = audioAttachment.map { attachment in
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-            let timestamp = dateFormatter.string(from: Date())
-            let audioFileName = String(
-                format: NSLocalizedString("语音_%@.%@", comment: "Generated audio attachment file name"),
-                timestamp,
-                audioAttachment.format
-            )
-            if Persistence.saveAudio(audioAttachment.data, fileName: audioFileName) != nil {
-                savedAudioFileName = audioFileName
-                logger.info("音频文件已保存: \(audioFileName)")
-            }
+            return String(format: NSLocalizedString("语音_%@.%@", comment: "Generated audio attachment file name"),
+                          dateFormatter.string(from: Date()), attachment.format)
         }
-        for image in imageAttachments {
-            if Persistence.saveImage(image.data, fileName: image.fileName) != nil {
-                savedImages.append((image.fileName, .image(image.id)))
-                logger.info("图片文件已保存: \(image.fileName)")
-            }
+        let saved = ChatAttachmentPreparation.prepare(
+            audio: audioAttachment, audioFileName: audioFileName, images: imageAttachments, files: fileAttachments,
+            saveAudio: { Persistence.saveAudio($0, fileName: $1) != nil },
+            saveImage: { Persistence.saveImage($0, fileName: $1) != nil },
+            saveFile: { Persistence.saveFileDeduplicatingByName($0, preferredFileName: $1) }
+        )
+        let savedAudioFileName = saved.audioFileName
+        let savedImages = saved.images
+        let savedFiles = saved.files.map { file in
+            (fileName: file.fileName, isVideo: VideoAttachmentSupport.isVideo(file.attachment), source: ChatSendPresentationSource.file(file.attachment.id))
         }
-        for file in fileAttachments {
-            let originalName = (file.fileName as NSString).lastPathComponent
-            if let targetName = Persistence.saveFileDeduplicatingByName(file.data, preferredFileName: originalName) {
-                savedFiles.append((targetName, VideoAttachmentSupport.isVideo(file), .file(file.id)))
-                logger.info("文件附件已保存或复用: \(targetName)")
-            }
-        }
+        if !saved.failures.isEmpty { logger.error("保存一个或多个输入附件失败。") }
 
         // 保存与消息发布的分组顺序保持一致；同名复用仍按每个来源身份分别建消息。
         if let savedAudioFileName, let audioAttachment {
@@ -114,7 +102,7 @@ struct ChatSendMessagePreparation: Sendable {
             messageIDsBySource[.text] = message.id
         }
         return Self(
-            content: messageContent, requestedAt: requestTimestamp,
+            failures: saved.failures, content: messageContent, requestedAt: requestTimestamp,
             messages: messages, primaryMessage: primaryMessage,
             imageFileNames: savedImages.map(\.fileName), messageIDsBySource: messageIDsBySource
         )

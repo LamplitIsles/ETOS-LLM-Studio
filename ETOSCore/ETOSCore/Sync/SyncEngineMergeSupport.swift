@@ -136,63 +136,6 @@ extension SyncEngine {
         }
     }
 
-    static func computeMCPServerContentHash(_ server: MCPServerConfiguration) -> String {
-        var hasher = Hasher()
-        hasher.combine(server.baseNameWithoutSyncSuffix)
-        hasher.combine(server.notes ?? "")
-        hasher.combine(server.isSelectedForChat)
-        for toolId in Set(server.disabledToolIds).sorted() {
-            hasher.combine(toolId)
-        }
-        for (toolId, policy) in server.toolApprovalPolicies.sorted(by: { $0.key < $1.key }) {
-            hasher.combine(toolId)
-            hasher.combine(policy.rawValue)
-        }
-        switch server.transport {
-        case .http(let endpoint, let apiKey, let headers):
-            hasher.combine("http")
-            hasher.combine(endpoint.absoluteString)
-            hasher.combine(apiKey ?? "")
-            for (key, value) in headers.sorted(by: { $0.key < $1.key }) {
-                hasher.combine(key)
-                hasher.combine(value)
-            }
-        case .httpSSE(let messageEndpoint, let sseEndpoint, let apiKey, let headers):
-            hasher.combine("httpSSE")
-            hasher.combine(messageEndpoint.absoluteString)
-            hasher.combine(sseEndpoint.absoluteString)
-            hasher.combine(apiKey ?? "")
-            for (key, value) in headers.sorted(by: { $0.key < $1.key }) {
-                hasher.combine(key)
-                hasher.combine(value)
-            }
-        case .localStdio(let configuration):
-            hasher.combine("localStdio")
-            hasher.combine(configuration)
-        case .builtInSearch:
-            hasher.combine("builtInSearch")
-            hasher.combine(MCPBuiltInSearchServer.endpoint)
-        case .builtInAppTool(let category):
-            hasher.combine("builtInAppTool")
-            hasher.combine(category.rawValue)
-            hasher.combine(MCPBuiltInAppToolServer.endpoint(for: category))
-        case .builtInPersonalData:
-            hasher.combine("builtInPersonalData")
-            hasher.combine(MCPBuiltInPersonalDataServer.endpoint)
-        case .oauth(let endpoint, let tokenEndpoint, let clientID, _, let scope, let grantType, let authorizationCode, let redirectURI, let codeVerifier):
-            hasher.combine("oauth")
-            hasher.combine(endpoint.absoluteString)
-            hasher.combine(tokenEndpoint.absoluteString)
-            hasher.combine(clientID)
-            hasher.combine(scope ?? "")
-            hasher.combine(grantType.rawValue)
-            hasher.combine(authorizationCode ?? "")
-            hasher.combine(redirectURI ?? "")
-            hasher.combine(codeVerifier ?? "")
-        }
-        return String(hasher.finalize())
-    }
-
     static func providerMergeIdentity(_ provider: Provider) -> String {
         let canonicalAPIFormat = canonicalProviderAPIFormat(provider.apiFormat)
         return [

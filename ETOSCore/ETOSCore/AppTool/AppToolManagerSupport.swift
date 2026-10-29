@@ -43,27 +43,6 @@ extension AppToolManager {
         objectWillChange.send()
     }
 
-    static func runSandboxFileOperationOffMainThread<T>(
-        _ operation: @escaping () throws -> T
-    ) async throws -> T {
-        let undoContext = SandboxFileToolSupport.undoContext
-        let fileSpace = SandboxFileToolSupport.fileSpace
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    let result = try SandboxFileToolSupport.$fileSpace.withValue(fileSpace) {
-                        try SandboxFileToolSupport.$undoContext.withValue(undoContext) {
-                            try operation()
-                        }
-                    }
-                    continuation.resume(returning: result)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
     static func runSQLiteOperationOffMainThread<T>(
         _ operation: @escaping () throws -> T
     ) async throws -> T {
@@ -87,33 +66,6 @@ extension AppToolManager {
         let rawPolicyValues = toolApprovalPolicies.mapValues(\.rawValue)
         AppConfigStore.persistStringDictionary(rawPolicyValues, for: .appToolsToolApprovalPolicies)
         objectWillChange.send()
-    }
-
-    static func normalizedRequestID(_ rawValue: String?) -> String {
-        if let normalized = normalizedOptionalText(rawValue) {
-            return normalized
-        }
-        return UUID().uuidString
-    }
-
-    static func normalizedQuestionID(_ rawValue: String?, fallbackIndex: Int) -> String {
-        normalizedOptionalText(rawValue) ?? "question_\(fallbackIndex + 1)"
-    }
-
-    static func uniqueIdentifier(from candidate: String, seen: inout Set<String>) -> String {
-        if !seen.contains(candidate) {
-            seen.insert(candidate)
-            return candidate
-        }
-        var suffix = 2
-        while true {
-            let next = "\(candidate)_\(suffix)"
-            if !seen.contains(next) {
-                seen.insert(next)
-                return next
-            }
-            suffix += 1
-        }
     }
 
     static func normalizedOptionalText(_ rawValue: String?) -> String? {

@@ -249,8 +249,6 @@ extension ChatView {
             DailyPulseView().environmentObject(viewModel)
         case .usageAnalytics:
             UsageAnalyticsView()
-        case .mcp:
-            MCPIntegrationView()
         case .agentSkills:
             AgentSkillsView()
         case .shortcuts:

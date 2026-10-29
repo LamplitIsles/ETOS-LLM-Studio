@@ -355,7 +355,8 @@ extension SessionFolderBrowserView {
             return
         }
 
-        if !Persistence.sessionDataExists(sessionID: session.id) {
+        if viewModel.currentSession?.id != session.id
+            && !viewModel.chatSessions.contains(where: { $0.id == session.id }) {
             ghostSession = session
             showGhostSessionAlert = true
         } else {

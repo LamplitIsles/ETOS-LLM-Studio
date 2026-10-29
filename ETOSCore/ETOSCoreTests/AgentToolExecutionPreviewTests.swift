@@ -142,37 +142,4 @@ struct AgentToolExecutionPreviewTests {
         #expect(preview.resultWasTruncated)
     }
 
-    @Test("MCP 工具标题用于缩略图且不会混入展示参数")
-    func usesMCPToolDisplayTitle() throws {
-        let snapshot = AgentToolExecutionPreviewSnapshot(
-            messageID: UUID(),
-            toolCall: InternalToolCall(
-                id: "mcp-running",
-                toolName: "mcp_search_issues",
-                arguments: #"{"__etos_tool_title":"搜索相关问题","query":"Linux"}"#
-            )
-        )
-
-        #expect(snapshot.displayTitle == "搜索相关问题")
-        #expect(snapshot.arguments.contains(#""query":"Linux""#))
-        #expect(!snapshot.arguments.contains(MCPToolCallTitleMetadata.argumentKey))
-    }
-
-    @Test("旧 MCP 历史缺少标题时继续使用原参数预览")
-    func preservesLegacyMCPPreviewWithoutTitle() {
-        let legacyArguments = #"{"query":"历史记录"}"#
-        let snapshot = AgentToolExecutionPreviewSnapshot(
-            messageID: UUID(),
-            toolCall: InternalToolCall(
-                id: "legacy-mcp-call",
-                toolName: "mcp_search_issues",
-                arguments: legacyArguments,
-                result: "完成"
-            )
-        )
-
-        #expect(snapshot.displayTitle == nil)
-        #expect(snapshot.arguments == legacyArguments)
-        #expect(snapshot.previewText == "完成")
-    }
 }

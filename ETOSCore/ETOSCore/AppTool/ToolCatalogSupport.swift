@@ -4,14 +4,12 @@
 // 统一工具中心所需的共享辅助逻辑。
 // - 汇总内置工具状态
 // - 生成工具参数 Schema 摘要
-// - 统一 MCP 工具目录排序
 // ============================================================================
 
 import Foundation
 
 public enum ToolCatalogBuiltInToolKind: String, CaseIterable, Identifiable, Sendable {
     case widgetCard
-    case askUserInput
     case getSystemTime
 
     public var id: String { rawValue }
@@ -21,7 +19,6 @@ public enum ToolCatalogBuiltInToolStatusReason: String, Equatable, Sendable {
     case enabled
     case isolatedBySession
     case widgetDisabled
-    case askUserInputDisabled
     case getSystemTimeDisabled
 }
 
@@ -63,16 +60,12 @@ public enum AppToolCatalogCategory: String, Hashable, Codable, Sendable {
 public enum ToolCatalogSupport {
     public static func builtInToolStates(
         enableWidgetTool: Bool,
-        enableAskUserInputTool: Bool,
         enableGetSystemTimeTool: Bool,
         isToolIsolated: Bool
     ) -> [ToolCatalogBuiltInToolState] {
         let widgetReason: ToolCatalogBuiltInToolStatusReason = isToolIsolated && enableWidgetTool
             ? .isolatedBySession
             : (enableWidgetTool ? .enabled : .widgetDisabled)
-        let askUserInputReason: ToolCatalogBuiltInToolStatusReason = isToolIsolated && enableAskUserInputTool
-            ? .isolatedBySession
-            : (enableAskUserInputTool ? .enabled : .askUserInputDisabled)
         let getSystemTimeReason: ToolCatalogBuiltInToolStatusReason = isToolIsolated && enableGetSystemTimeTool
             ? .isolatedBySession
             : (enableGetSystemTimeTool ? .enabled : .getSystemTimeDisabled)
@@ -83,12 +76,6 @@ public enum ToolCatalogSupport {
                 isConfiguredEnabled: enableWidgetTool,
                 isAvailableInCurrentSession: enableWidgetTool && !isToolIsolated,
                 statusReason: widgetReason
-            ),
-            ToolCatalogBuiltInToolState(
-                kind: .askUserInput,
-                isConfiguredEnabled: enableAskUserInputTool,
-                isAvailableInCurrentSession: enableAskUserInputTool && !isToolIsolated,
-                statusReason: askUserInputReason
             ),
             ToolCatalogBuiltInToolState(
                 kind: .getSystemTime,
@@ -120,35 +107,8 @@ public enum ToolCatalogSupport {
             return .database
         case .executeJSCJavaScript, .createCustomJSCJSTool:
             return .custom
-        case .showWidget, .askUserInput, .getSystemTime:
+        case .showWidget, .getSystemTime:
             return .interaction
-        }
-    }
-
-    public static func mcpCatalogTools(
-        servers: [MCPServerConfiguration],
-        statuses: [UUID: MCPServerStatus]
-    ) -> [MCPAvailableTool] {
-        servers
-            .filter(\.isSelectedForChat)
-            .flatMap { server in
-                let tools = statuses[server.id]?.tools ?? []
-                return tools.enumerated().map { index, tool in
-                    MCPAvailableTool(
-                        server: server,
-                        tool: tool,
-                        internalName: "mcp://catalog/\(server.id.uuidString)/\(tool.toolId)/\(index)"
-                    )
-                }
-            }
-    }
-
-    public static func sortedMCPCatalogTools(_ tools: [MCPAvailableTool]) -> [MCPAvailableTool] {
-        tools.sorted {
-            if $0.server.displayName == $1.server.displayName {
-                return $0.tool.toolId.localizedCaseInsensitiveCompare($1.tool.toolId) == .orderedAscending
-            }
-            return $0.server.displayName.localizedCaseInsensitiveCompare($1.server.displayName) == .orderedAscending
         }
     }
 

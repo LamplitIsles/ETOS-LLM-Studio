@@ -23,15 +23,13 @@ extension ChatService {
         sessionSelectionLock.withLock {
             guard sessionSelectionToken == token,
                   currentSessionSubject.value?.id == sourceSessionID else { return }
-            // 后台会话可能在读盘期间继续输出，激活时采用最新运行期快照。
-            let latestMessages: [ChatMessage]
-            if let session, hasActiveRequestContext(for: session.id),
-               let snapshot = runtimeMessagesSnapshot(for: session.id) {
-                latestMessages = snapshot
-            } else {
-                latestMessages = messages
+            let currentTarget = session.flatMap { requested in
+                chatSessionsSubject.value.first(where: { $0.id == requested.id })
             }
-            applyCurrentSession(session, preparedMessages: latestMessages)
+            guard session == nil || currentTarget != nil else { return }
+            // 用户等待选择时，任意输入或流式更新都可能修改该会话。
+            let latestMessages = currentTarget.flatMap { runtimeMessagesSnapshot(for: $0.id) } ?? messages
+            applyCurrentSession(currentTarget, preparedMessages: latestMessages)
         }
     }
 }

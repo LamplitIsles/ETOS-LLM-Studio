@@ -244,7 +244,7 @@ private struct MacProviderEditor: View {
                 try await Task.detached {
                     if let proxy = saved.proxyConfiguration { try NetworkProxyConfigurationLibrary.validate(proxy) }
                     guard service.providersSubject.value.first(where: { $0.id == saved.id }) == original else {
-                        throw MCPConfigurationWriteError.changedExternally
+                        throw MacWorkspaceWriteError.changedExternally
                     }
                     service.saveProviderFromManagement(saved)
                 }.value

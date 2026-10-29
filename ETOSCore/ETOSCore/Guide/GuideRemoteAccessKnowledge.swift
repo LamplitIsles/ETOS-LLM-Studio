@@ -12,7 +12,7 @@ public enum GuideRemoteAccessKnowledge {
 
             日志页显示本机内存中的连接记录，清空只清除这些日志。API 流量分析显示待处理捕获请求的模型、消息数量和时间；保存与忽略分别打开原生确认页。保存把捕获内容归档为聊天会话，不调用模型；忽略从队列移除该记录。确认绑定当时的请求标识和页面代次，断开或请求变化后不能作用于另一条记录。日志和捕获内容可能包含隐私，不属于向导可读数据。
 
-            Mac 根页、日志页、捕获确认和独立介绍页分别声明向导。根页只暴露连接/处理状态与日志、队列数量；地址为不可读的连接草稿，协议开关可通过原生确认的提案修改。提案不会保存地址、连接服务器或执行远端命令，最终仍需用户点击连接；连接期间不提供草稿修改字段。向导不能扫描网络、连接、断开、读取日志、保存或忽略捕获，也不会获得普通聊天 MCP、快捷指令或远端文件操作能力。离页、切换模式、锁定和恢复使旧提案失效。
+            Mac 根页、日志页、捕获确认和独立介绍页分别声明向导。根页只暴露连接/处理状态与日志、队列数量；地址为不可读的连接草稿，协议开关可通过原生确认的提案修改。提案不会保存地址、连接服务器或执行远端命令，最终仍需用户点击连接；连接期间不提供草稿修改字段。向导不能扫描网络、连接、断开、读取日志、保存或忽略捕获，也不会获得普通聊天快捷指令或远端文件操作能力。离页、切换模式、锁定和恢复使旧提案失效。
 
 
             """ : """
@@ -22,7 +22,7 @@ public enum GuideRemoteAccessKnowledge {
 
             The log page shows this client's in-memory connection records; clearing removes only those logs. API capture shows the model, message count and time of a pending request. Save and Ignore each open a native confirmation. Saving archives the captured content as a chat session without calling a model; ignoring removes it from the queue. Confirmation is bound to the request ID and page revision, so disconnecting or a changed request cannot affect another capture. Logs and captures may contain private content and are not readable by the guide.
 
-            The Mac root, log, capture confirmation and introduction pages each declare guide context. The root exposes connection/processing status and log/queue counts. Its address draft is write-only and its protocol switch can be changed by a natively confirmed proposal. Proposals do not save the address, connect or execute remote commands: the user must still click Connect. Draft fields are unavailable while a connection is requested. The guide cannot scan, connect, disconnect, read logs, save or ignore captures, or gain ordinary chat MCP, Shortcut or remote file tools. Leaving, changing mode, locking and restoring invalidate stale proposals.
+            The Mac root, log, capture confirmation and introduction pages each declare guide context. The root exposes connection/processing status and log/queue counts. Its address draft is write-only and its protocol switch can be changed by a natively confirmed proposal. Proposals do not save the address, connect or execute remote commands: the user must still click Connect. Draft fields are unavailable while a connection is requested. The guide cannot scan, connect, disconnect, read logs, save or ignore captures, or gain ordinary chat Shortcut or remote file tools. Leaving, changing mode, locking and restoring invalidate stale proposals.
 
             Ordinary upload, delete and directory creation cannot modify the chat, configuration, memory or vector databases or their WAL/SHM/journal files, and cannot delete parent folders containing them. Use SQLite debugging tools to change database records and a full restore to replace databases; do not clear the directory and then upload databases individually. Downloading a managed database first creates an independent copy in the background, preserving its encryption format and committed WAL data. Direct sidecar downloads are rejected and full download lists skip them. Each database is exported separately, so a directory download does not provide one shared point in time across databases and attachments.
 

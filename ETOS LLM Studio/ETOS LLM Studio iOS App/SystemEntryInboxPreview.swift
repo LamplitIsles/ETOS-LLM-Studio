@@ -4,6 +4,7 @@
 // ============================================================================
 
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
 import ETOSCore
 
@@ -107,10 +108,7 @@ struct SystemEntryInboxPreviewView: View {
                 let coordinator = SystemEntryCoordinator.shared
                 let result: ETOSSystemEntryTaskResult
                 let preferredSessionID = payload.request.preferredSessionID
-                let preferredSessionExists = await Task.detached(priority: .userInitiated) {
-                    preferredSessionID.flatMap(Persistence.loadChatSession(id:)) != nil
-                }.value
-                if let sessionID = preferredSessionID, preferredSessionExists {
+                if let sessionID = preferredSessionID {
                     result = try await coordinator.continueTask(
                         sessionID: sessionID,
                         prompt: prepared.text,
@@ -129,13 +127,18 @@ struct SystemEntryInboxPreviewView: View {
                         imageAttachments: prepared.images
                     )
                 }
-                let directory = payload.directory
-                try? await Task.detached(priority: .utility) {
-                    try FileManager.default.removeItem(at: directory)
-                }.value
-                onComplete(result.sessionID)
-            } catch {
+                switch result.outcome {
+                case .locallyAccepted:
+                    onComplete(result.sessionID)
+                case .alreadyRecorded:
+                    errorMessage = NSLocalizedString("该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。", comment: "Previously recorded share request")
+                    isSending = false
+                }
+            } catch let error as ETOSSystemEntryError {
                 errorMessage = error.localizedDescription
+                isSending = false
+            } catch {
+                errorMessage = NSLocalizedString("内容准备失败，请检查附件后重试。", comment: "System-entry preparation failed")
                 isSending = false
             }
         }
@@ -206,9 +209,9 @@ enum SystemEntryURLRouter {
             guard let destination = components.first else { return false }
             if destination == "session", components.count > 1,
                let sessionID = UUID(uuidString: components[1]) {
-                let session = await Task.detached(priority: .userInitiated) {
-                    Persistence.loadChatSession(id: sessionID)
-                }.value
+                let chatService = ChatService.shared
+                let session = chatService.currentSessionSubject.value.flatMap { $0.id == sessionID ? $0 : nil }
+                    ?? chatService.chatSessionsSubject.value.first { $0.id == sessionID }
                 if let session {
                     await ChatService.shared.selectSession(session)
                     NotificationCenter.default.post(name: .requestSwitchToChatTab, object: nil)

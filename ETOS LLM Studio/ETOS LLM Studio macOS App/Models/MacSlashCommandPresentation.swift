@@ -91,7 +91,6 @@ enum MacSlashCommandRoute: Hashable {
         case .clear: self = .clear
         case .tools: self = .page(.toolCenter)
         case .usage: self = .page(.usageAnalytics)
-        case .mcp: self = .page(.mcp)
         case .skills: self = .page(.agentSkills)
         case .shortcuts: self = .page(.shortcuts)
         case .roleplay: self = .page(.roleplay)

@@ -264,12 +264,6 @@ public enum SyncDeltaEngine {
                     summary.importedBackgrounds += 1
                     backgroundDeleted = true
                 }
-            case .mcpServer:
-                guard let id = UUID(uuidString: deletion.recordID) else { continue }
-                if let server = MCPServerStore.loadServers().first(where: { $0.id == id }) {
-                    MCPServerStore.delete(server)
-                    summary.importedMCPServers += 1
-                }
             case .audioFile:
                 let names = Set(Persistence.getAllAudioFileNames())
                 if names.contains(deletion.recordID) {

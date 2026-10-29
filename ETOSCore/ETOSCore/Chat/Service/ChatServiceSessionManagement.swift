@@ -14,6 +14,10 @@ public extension Notification.Name {
     static let temporaryChatStateDidChange = Notification.Name("com.ETOS.temporaryChat.stateDidChange")
 }
 
+public enum ChatSessionDeletionError: Error, Sendable {
+    case busy(sessionIDs: Set<UUID>)
+}
+
 public enum TemporaryChatToggleAvailability {
     /// 已开启的临时对话始终允许关闭；新的临时对话只能在对话开始前开启。
     public static func isAvailable(
@@ -50,6 +54,10 @@ extension ChatService {
     }
 
     public func createNewSession() {
+        sessionSelectionLock.withLock { createNewSessionWhileSelectionIsLocked() }
+    }
+
+    private func createNewSessionWhileSelectionIsLocked() {
         let sourceSessionID = currentSessionSubject.value?.id
         var updatedSessions = chatSessionsSubject.value
 
@@ -60,10 +68,13 @@ extension ChatService {
 
             // 若历史遗留了多个临时会话，清理多余项并删除其会话文件。
             if temporarySessions.count > 1 {
-                let removableIDs = Set(temporarySessions.dropFirst().map(\.id))
-                updatedSessions.removeAll { removableIDs.contains($0.id) }
-                didMutateList = true
-                logger.info("检测到多个临时会话，已清理多余会话: \(removableIDs.count) 个。")
+                let candidates = Set(temporarySessions.dropFirst().map(\.id))
+                let removableIDs = candidates.subtracting(busySessionIDs(in: candidates))
+                if !removableIDs.isEmpty {
+                    updatedSessions.removeAll { removableIDs.contains($0.id) }
+                    didMutateList = true
+                    logger.info("检测到多个临时会话，已清理多余会话: \(removableIDs.count) 个。")
+                }
             }
 
             // 将唯一临时会话放到顶部，保证列表行为一致。
@@ -82,7 +93,6 @@ extension ChatService {
                 inheritLocalAgentMode(from: sourceSessionID, to: target.id)
                 if currentSessionSubject.value?.id == target.id {
                     let messages = messagesForSessionActivation(target.id)
-                    storeRuntimeMessagesSnapshot(messages, for: target.id)
                     publishMessages(messages)
                 } else {
                     setCurrentSession(target)
@@ -97,11 +107,11 @@ extension ChatService {
             name: NSLocalizedString("新的对话", comment: "Default new chat session name"),
             isTemporary: true
         )
+        storeRuntimeMessagesSnapshot([], for: newSession.id)
         updatedSessions.insert(newSession, at: 0)
         chatSessionsSubject.send(updatedSessions)
         inheritLocalAgentMode(from: sourceSessionID, to: newSession.id)
         currentSessionSubject.send(newSession)
-        storeRuntimeMessagesSnapshot([], for: newSession.id)
         publishMessages([])
         logger.info("创建了新的临时会话。")
     }
@@ -116,6 +126,22 @@ extension ChatService {
         folderID: UUID? = nil,
         activate: Bool = true
     ) -> ChatSession {
+        sessionSelectionLock.withLock {
+            createSavedSessionWhileSelectionIsLocked(
+                name: name, initialMessages: initialMessages, preferredModelIdentifier: preferredModelIdentifier,
+                toolContextIsolationEnabled: toolContextIsolationEnabled, folderID: folderID, activate: activate
+            )
+        }
+    }
+
+    private func createSavedSessionWhileSelectionIsLocked(
+        name: String,
+        initialMessages: [ChatMessage],
+        preferredModelIdentifier: String?,
+        toolContextIsolationEnabled: Bool,
+        folderID: UUID?,
+        activate: Bool
+    ) -> ChatSession {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let sessionName = trimmedName.isEmpty
             ? NSLocalizedString("新的对话", comment: "Default new chat session name")
@@ -129,10 +155,10 @@ extension ChatService {
             isTemporary: false
         )
 
+        storeRuntimeMessagesSnapshot(initialMessages, for: newSession.id)
         var updatedSessions = chatSessionsSubject.value
         updatedSessions.insert(newSession, at: 0)
         chatSessionsSubject.send(updatedSessions)
-        storeRuntimeMessagesSnapshot(initialMessages, for: newSession.id)
         if activate {
             currentSessionSubject.send(newSession)
             publishMessages(initialMessages)
@@ -141,7 +167,16 @@ extension ChatService {
         return newSession
     }
 
-    public func deleteSessions(_ sessionsToDelete: [ChatSession]) {
+    public func deleteSessions(_ sessionsToDelete: [ChatSession]) -> Result<Void, ChatSessionDeletionError> {
+        sessionSelectionLock.withLock {
+            let busy = busySessionIDs(in: Set(sessionsToDelete.map(\.id)))
+            guard busy.isEmpty else { return .failure(.busy(sessionIDs: busy)) }
+            deleteSessionsWhileSelectionIsLocked(sessionsToDelete)
+            return .success(())
+        }
+    }
+
+    private func deleteSessionsWhileSelectionIsLocked(_ sessionsToDelete: [ChatSession]) {
         var currentSessions = chatSessionsSubject.value
         let currentModeBeforeDeletion = currentSessionSubject.value.map {
             Persistence.localAgentMode(sessionID: $0.id)
@@ -150,17 +185,19 @@ extension ChatService {
         let deletingSessionIDs = Set(sessionsToDelete.map(\.id))
         let isClearingAllConversationRecords = !existingPermanentSessionIDs.isEmpty
             && existingPermanentSessionIDs.isSubset(of: deletingSessionIDs)
+        // Make the entire batch unavailable to reentrant request admission
+        // before publishing notifications for any individual deletion.
+        for session in sessionsToDelete {
+            clearRuntimeMessagesSnapshot(for: session.id)
+        }
         for session in sessionsToDelete {
             cancelRequestForSessionDeletion(session.id)
-            prepareConversationRuntimeForSessionDeletion(session.id)
             ephemeralSessionLock.lock()
             let removedTemporaryState = ephemeralSessionIDs.remove(session.id)
             ephemeralSessionLock.unlock()
             if removedTemporaryState != nil {
                 notifyTemporaryChatStateDidChange(sessionID: session.id)
             }
-            clearRuntimeMessagesSnapshot(for: session.id)
-
             periodicTimeLandmarkLastInjectedAtBySessionID.removeValue(forKey: session.id)
         }
         currentSessions.removeAll { session in sessionsToDelete.contains { $0.id == session.id } }
@@ -174,6 +211,7 @@ extension ChatService {
                     name: NSLocalizedString("新的对话", comment: "Default new chat session name"),
                     isTemporary: true
                 )
+                storeRuntimeMessagesSnapshot([], for: newSession.id)
                 currentSessions.append(newSession)
                 newCurrentSession = newSession
                 if let currentModeBeforeDeletion {
@@ -215,6 +253,7 @@ extension ChatService {
             folderID: sourceSession.folderID,
             isTemporary: false
         )
+        storeRuntimeMessagesSnapshot([], for: newSession.id)
         logger.info("创建了分支会话: \(newSession.name)")
         if copyMessages {
             var sourceMessages = messagesSnapshot(for: sourceSession.id)
@@ -265,6 +304,7 @@ extension ChatService {
             folderID: sourceSession.folderID,
             isTemporary: false
         )
+        storeRuntimeMessagesSnapshot([], for: newSession.id)
         logger.info("从消息处创建分支会话: \(newSession.name)")
 
         let sourceMessages = ChatResponseAttemptSupport.visibleMessages(from: messagesSnapshot(for: sourceSession.id))
@@ -334,113 +374,99 @@ extension ChatService {
     }
 
     public func deleteLastMessage(for session: ChatSession) {
-        var messages = messagesSnapshot(for: session.id)
-        if !messages.isEmpty {
-            let lastMessage = messages.removeLast()
-            invalidateAttachmentCache(for: lastMessage)
-            storeRuntimeMessagesSnapshot(messages, for: session.id)
-            logger.info("删除了会话的最后一条消息: \(session.name)")
-            if session.id == currentSessionSubject.value?.id {
-                publishMessages(messages)
-            }
-        }
+        var removed: ChatMessage?
+        guard let messages = mutateRuntimeMessages(for: session.id, { messages in
+            guard !messages.isEmpty else { return false }
+            removed = messages.removeLast()
+            return true
+        }) else { return }
+        if let removed { invalidateAttachmentCache(for: removed) }
+        publishMessagesIfCurrentSession(messages, for: session.id)
+        logger.info("删除了会话的最后一条消息: \(session.name)")
     }
 
     public func deleteMessage(_ message: ChatMessage, targetSessionID: UUID? = nil) {
         guard let sessionID = targetSessionID ?? currentSessionSubject.value?.id else { return }
-        var messages = messagesSnapshot(for: sessionID)
-        guard let messageIndex = messages.firstIndex(where: { $0.id == message.id }) else { return }
-        let targetMessage = messages[messageIndex]
-        let deletedMessages = [targetMessage]
-        for deletedMessage in deletedMessages {
-            invalidateAttachmentCache(for: deletedMessage)
-        }
-        reanchorResponseGroupsAfterDeletingUsers(
-            in: &messages,
-            deletingMessageIDs: [targetMessage.id]
-        )
-        messages.remove(at: messageIndex)
-        repairSelectedResponseAttempts(in: &messages, affectedBy: deletedMessages)
-
-        persistAndPublishMessages(messages, for: sessionID)
-        logger.info("已删除消息: \(targetMessage.id.uuidString)")
+        var deleted: ChatMessage?
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
+            let target = messages[index]
+            deleted = target
+            reanchorResponseGroupsAfterDeletingUsers(in: &messages, deletingMessageIDs: [target.id])
+            messages.remove(at: index)
+            repairSelectedResponseAttempts(in: &messages, affectedBy: [target])
+            return true
+        }) else { return }
+        if let deleted { invalidateAttachmentCache(for: deleted) }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
+        logger.info("已删除消息: \(message.id.uuidString)")
     }
 
     /// 删除明确选中的消息，并清理已经合并进所选气泡的隐藏工具结果记录。
     public func deleteMessages(withIDs messageIDs: Set<UUID>) {
         guard !messageIDs.isEmpty,
               let currentSession = currentSessionSubject.value else { return }
-        var messages = messagesForSessionSubject.value
-        let resolvedMessageIDs = BatchSelectionSupport.deletionIDs(
-            selectedIDs: messageIDs,
-            in: messages
-        )
-        let deletedMessages = messages.filter { resolvedMessageIDs.contains($0.id) }
-        guard !deletedMessages.isEmpty else { return }
-
-        for deletedMessage in deletedMessages {
-            invalidateAttachmentCache(for: deletedMessage)
-        }
-        reanchorResponseGroupsAfterDeletingUsers(
-            in: &messages,
-            deletingMessageIDs: resolvedMessageIDs
-        )
-        messages.removeAll { resolvedMessageIDs.contains($0.id) }
-        repairSelectedResponseAttempts(in: &messages, affectedBy: deletedMessages)
-
-        publishMessages(messages)
-        storeRuntimeMessagesSnapshot(messages, for: currentSession.id)
+        var deletedMessages: [ChatMessage] = []
+        guard let messages = mutateRuntimeMessages(for: currentSession.id, { messages in
+            let resolvedIDs = BatchSelectionSupport.deletionIDs(selectedIDs: messageIDs, in: messages)
+            deletedMessages = messages.filter { resolvedIDs.contains($0.id) }
+            guard !deletedMessages.isEmpty else { return false }
+            reanchorResponseGroupsAfterDeletingUsers(in: &messages, deletingMessageIDs: resolvedIDs)
+            messages.removeAll { resolvedIDs.contains($0.id) }
+            repairSelectedResponseAttempts(in: &messages, affectedBy: deletedMessages)
+            return true
+        }) else { return }
+        deletedMessages.forEach { invalidateAttachmentCache(for: $0) }
+        publishMessagesIfCurrentSession(messages, for: currentSession.id)
         logger.info("已批量删除选中消息: \(deletedMessages.count) 条。")
     }
 
     public func deleteAllVersions(of message: ChatMessage, targetSessionID: UUID? = nil) {
         guard let sessionID = targetSessionID ?? currentSessionSubject.value?.id else { return }
-        var messages = messagesSnapshot(for: sessionID)
-        guard let messageIndex = messages.firstIndex(where: { $0.id == message.id }) else { return }
-        let targetMessage = messages[messageIndex]
-
-        // 确认期间其他版本可能已删除；最后一轮也要连同工具结果一起移除。
-        if let groupID = targetMessage.responseGroupID
-            ?? (messages.contains(where: { $0.responseGroupID == targetMessage.id }) ? targetMessage.id : nil) {
-            let deletedMessages = messages.filter { $0.responseGroupID == groupID }
-            guard !deletedMessages.isEmpty else { return }
-            for deletedMessage in deletedMessages {
-                invalidateAttachmentCache(for: deletedMessage)
+        var deleted: [ChatMessage] = []
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
+            let target = messages[index]
+            if let groupID = target.responseGroupID
+                ?? (messages.contains(where: { $0.responseGroupID == target.id }) ? target.id : nil) {
+                deleted = messages.filter { $0.responseGroupID == groupID }
+                guard !deleted.isEmpty else { return false }
+                messages.removeAll { $0.responseGroupID == groupID }
+                if let anchor = messages.firstIndex(where: { $0.id == groupID && $0.role == .user }) {
+                    messages[anchor].selectedResponseAttemptID = nil
+                }
+            } else {
+                deleted = [target]
+                reanchorResponseGroupsAfterDeletingUsers(in: &messages, deletingMessageIDs: [target.id])
+                messages.remove(at: index)
+                repairSelectedResponseAttempts(in: &messages, affectedBy: deleted)
             }
-            messages.removeAll { $0.responseGroupID == groupID }
-            if let anchorIndex = messages.firstIndex(where: { $0.id == groupID && $0.role == .user }) {
-                messages[anchorIndex].selectedResponseAttemptID = nil
-            }
-
-            persistAndPublishMessages(messages, for: sessionID)
-            logger.info("已删除回复组的所有版本: \(groupID.uuidString)")
-            return
-        }
-
-        deleteMessage(targetMessage, targetSessionID: sessionID)
+            return true
+        }) else { return }
+        deleted.forEach { invalidateAttachmentCache(for: $0) }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
     }
 
     public func updateMessageContent(_ message: ChatMessage, with newContent: String) {
         guard let currentSession = currentSessionSubject.value else { return }
-        var messages = messagesForSessionSubject.value
-        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return }
-        messages[index].content = newContent
-        publishMessages(messages)
-        storeRuntimeMessagesSnapshot(messages, for: currentSession.id)
+        guard let messages = mutateRuntimeMessages(for: currentSession.id, { messages in
+            guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
+            messages[index].content = newContent
+            return true
+        }) else { return }
+        publishMessagesIfCurrentSession(messages, for: currentSession.id)
         logger.info("已更新消息内容: \(message.id.uuidString)")
     }
 
     /// 更新单条消息（包括内容和思考过程）
     public func updateMessage(_ updatedMessage: ChatMessage) {
         guard let currentSession = currentSessionSubject.value else { return }
-        var messages = messagesForSessionSubject.value
-        guard let index = messages.firstIndex(where: { $0.id == updatedMessage.id }) else { return }
-        messages.replaceSubrange(
-            index...index,
-            with: ChatMessageAtomicContentSupport.atomized(updatedMessage)
-        )
-        publishMessages(messages)
-        storeRuntimeMessagesSnapshot(messages, for: currentSession.id)
+        guard let messages = mutateRuntimeMessages(for: currentSession.id, { messages in
+            guard let index = messages.firstIndex(where: { $0.id == updatedMessage.id }) else { return false }
+            messages.replaceSubrange(index...index, with: ChatMessageAtomicContentSupport.atomized(updatedMessage))
+            return true
+        }) else { return }
+        publishMessagesIfCurrentSession(messages, for: currentSession.id)
         logger.info("已更新消息: \(updatedMessage.id.uuidString)")
     }
 
@@ -450,24 +476,88 @@ extension ChatService {
         logger.info("已更新会话消息列表: \(sessionID.uuidString)")
     }
 
-    /// 桌面历史操作显式指定来源；回复尝试切换整条工具链，旧格式仍切换正文版本。
+    /// 期望值比较所有消息字段，唯独忽略临时速度采样；失效时不写入。
     @discardableResult
-    public func selectMessageVersion(at index: Int, of original: ChatMessage, sessionID: UUID) -> Bool {
-        guard !hasActiveRequestContext(for: sessionID), conversationSession(withID: sessionID) != nil else { return false }
-        let source = messagesSnapshot(for: sessionID)
-        guard let position = source.firstIndex(where: { $0.id == original.id }), source[position] == original else { return false }
-        let updated: [ChatMessage]
-        if let info = ChatResponseAttemptSupport.versionInfo(for: original, in: source) {
-            let attempts = ChatResponseAttemptSupport.orderedAttemptIDs(for: info.responseGroupID, in: source)
-            guard attempts.indices.contains(index) else { return false }
-            updated = ChatResponseAttemptSupport.selectAttempt(attemptID: attempts[index], groupID: info.responseGroupID, in: source)
-        } else {
-            guard original.getAllVersions().indices.contains(index) else { return false }
-            var messages = source
-            messages[position].switchToVersion(index)
-            updated = messages
-        }
-        updateMessages(updated, for: sessionID)
+    public func selectMessageVersion(at index: Int, of expected: ChatMessage, sessionID: UUID) -> Bool {
+        guard let messages = mutateRuntimeMessages(for: sessionID, requireIdle: true, { messages in
+            ChatMessageEdits.selectVersion(index, expected: expected, messages: &messages)
+        }) else { return false }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
+        return true
+    }
+
+    @discardableResult
+    public func deleteMessageVersion(at index: Int, of expected: ChatMessage, sessionID: UUID) -> Bool {
+        var deleted: [ChatMessage] = []
+        guard let messages = mutateRuntimeMessages(for: sessionID, requireIdle: true, { messages in
+            let previous = messages
+            guard ChatMessageEdits.deleteVersion(index, expected: expected, messages: &messages, deleteMessage: { candidate, target in
+                reanchorResponseGroupsAfterDeletingUsers(in: &candidate, deletingMessageIDs: [target.id])
+                candidate.removeAll { $0.id == target.id }
+                repairSelectedResponseAttempts(in: &candidate, affectedBy: [target])
+            }) else { return false }
+            let remainingIDs = Set(messages.map(\.id))
+            deleted = previous.filter { !remainingIDs.contains($0.id) }
+            return true
+        }) else { return false }
+        deleted.forEach { invalidateAttachmentCache(for: $0) }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
+        return true
+    }
+
+    @discardableResult
+    public func addMessageVersion(content: String, to expected: ChatMessage, sessionID: UUID) -> Bool {
+        guard let messages = mutateRuntimeMessages(for: sessionID, requireIdle: true, { messages in
+            ChatMessageEdits.edit(&messages, expected: expected) { candidate, index in
+                candidate[index].addVersion(content)
+                return true
+            }
+        }) else { return false }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
+        return true
+    }
+
+    @discardableResult
+    public func replaceMessage(_ updated: ChatMessage, expected: ChatMessage, sessionID: UUID) -> Bool {
+        guard updated.id == expected.id else { return false }
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            ChatMessageEdits.edit(&messages, expected: expected) { candidate, index in
+                let preserved = ChatMessageEdits.preservingSpeedSamples(in: updated, from: candidate[index])
+                candidate.replaceSubrange(index...index, with: ChatMessageAtomicContentSupport.atomized(preserved))
+                return true
+            }
+        }) else { return false }
+        if updated.imageFileNames != expected.imageFileNames { invalidateAttachmentCache(for: expected) }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
+        return true
+    }
+
+    /// 只移除引用：文件可能被其他会话或新输入引用，不能在此删除。
+    @discardableResult
+    public func removeImageAttachment(fileName: String, from expected: ChatMessage, sessionID: UUID) -> Bool {
+        var original: ChatMessage?
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            guard let index = messages.firstIndex(where: { $0.id == expected.id }),
+                  ChatMessageEdits.matches(messages[index], expected: expected) else { return false }
+            let target = messages[index]
+            var updated = target
+            guard ChatMessageEdits.removeImage(fileName, from: &updated) else { return false }
+            original = target
+            let hasPayload = (!updated.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !ChatMessageAtomicContentSupport.isAttachmentPlaceholder(updated.content))
+                || !(updated.reasoningContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !(updated.toolCalls ?? []).isEmpty || !(updated.imageFileNames ?? []).isEmpty
+                || updated.audioFileName != nil || !(updated.fileFileNames ?? []).isEmpty
+            if hasPayload { messages[index] = updated }
+            else {
+                reanchorResponseGroupsAfterDeletingUsers(in: &messages, deletingMessageIDs: [target.id])
+                messages.remove(at: index)
+                repairSelectedResponseAttempts(in: &messages, affectedBy: [target])
+            }
+            return true
+        }) else { return false }
+        if let original { invalidateAttachmentCache(for: original) }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
         return true
     }
 
@@ -494,7 +584,7 @@ extension ChatService {
         }
     }
 
-    private func reanchorResponseGroupsAfterDeletingUsers(
+    func reanchorResponseGroupsAfterDeletingUsers(
         in messages: inout [ChatMessage],
         deletingMessageIDs: Set<UUID>
     ) {
@@ -525,7 +615,7 @@ extension ChatService {
         }
     }
 
-    private func repairSelectedResponseAttempts(in messages: inout [ChatMessage], affectedBy deletedMessages: [ChatMessage]) {
+    func repairSelectedResponseAttempts(in messages: inout [ChatMessage], affectedBy deletedMessages: [ChatMessage]) {
         let affectedGroupIDs = Set(deletedMessages.compactMap(\.responseGroupID))
         guard !affectedGroupIDs.isEmpty else { return }
 

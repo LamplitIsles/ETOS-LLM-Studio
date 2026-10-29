@@ -29,7 +29,6 @@ public actor LocalAgentFileToolExecutor {
         let runID: UUID
         let triggeringMessageID: UUID?
         let toolCallID: String
-        let selectedMCPServerIDs: [UUID]
     }
 
     private enum MutationPayload: Sendable {
@@ -44,6 +43,7 @@ public actor LocalAgentFileToolExecutor {
 
     private let mountManager: LocalLinuxMountManager
     private let trustedRunValidator: @Sendable (UUID, UUID) throws -> Void
+    private let trustedRunAdmissionValidator: @Sendable (UUID, UUID, ChatRequestTaskIdentity.Value?) throws -> Void
     private var mutationsByRunID: [UUID: [MutationEntry]] = [:]
     private var runActivities: [UUID: LocalLinuxActivityLease] = [:]
     private var activeRunOperations = Set<UUID>()
@@ -53,9 +53,19 @@ public actor LocalAgentFileToolExecutor {
     public init(mountManager: LocalLinuxMountManager = .shared) {
         self.mountManager = mountManager
         self.trustedRunValidator = { runID, sessionID in
-            try Self.validateTrustedConversationRun(
-                Persistence.loadConversationRun(id: runID), sessionID: sessionID
-            )
+            guard ChatService.shared.containsActiveToolRun(sessionID: sessionID, runID: runID) else {
+                throw LocalLinuxRuntimeError.runtimeUnavailable(
+                    NSLocalizedString("工具调用不属于当前活动请求。", comment: "Inactive or mismatched tool request")
+                )
+            }
+        }
+        self.trustedRunAdmissionValidator = { runID, sessionID, identity in
+            guard let identity, identity.sessionID == sessionID,
+                  ChatService.shared.containsActiveToolRun(sessionID: sessionID, runID: runID, token: identity.token) else {
+                throw LocalLinuxRuntimeError.runtimeUnavailable(
+                    NSLocalizedString("工具调用不属于当前活动请求。", comment: "Inactive or mismatched tool request")
+                )
+            }
         }
     }
 
@@ -65,6 +75,7 @@ public actor LocalAgentFileToolExecutor {
     ) {
         self.mountManager = mountManager
         self.trustedRunValidator = trustedRunValidator
+        self.trustedRunAdmissionValidator = { runID, sessionID, _ in try trustedRunValidator(runID, sessionID) }
     }
 
     public func execute(toolName: String, argumentsJSON: String) async throws -> String {
@@ -131,7 +142,7 @@ public actor LocalAgentFileToolExecutor {
         let result = try await executeAppTool(
             toolName: toolName,
             arguments: arguments,
-            undoContext: .init(runID: trustedContext.runID, mutationID: mutationID)
+            undoContext: mutationContext(trustedContext, mutationID: mutationID)
         )
         if SandboxFileToolSupport.hasUndoMutation(id: mutationID, runID: trustedContext.runID) {
             await commitMutation(
@@ -197,7 +208,7 @@ public actor LocalAgentFileToolExecutor {
             let result = try await executeAppTool(
                 toolName: toolName,
                 arguments: rewrittenArguments,
-                undoContext: .init(runID: trustedContext.runID, mutationID: mutationID)
+                undoContext: mutationContext(trustedContext, mutationID: mutationID)
             )
             if SandboxFileToolSupport.hasUndoMutation(id: mutationID, runID: trustedContext.runID) {
                 await commitMutation(
@@ -288,6 +299,7 @@ public actor LocalAgentFileToolExecutor {
     }
 
     private func executeUndo(context: TrustedContext) async throws -> String {
+        try trustedRunValidator(context.runID, context.sessionID)
         guard var entries = mutationsByRunID[context.runID], let entry = entries.popLast() else {
             throw LocalLinuxRuntimeError.runtimeUnavailable(
                 NSLocalizedString("当前 Agent Run 没有可撤销的文件修改。", comment: "Agent file undo history empty")
@@ -307,6 +319,7 @@ public actor LocalAgentFileToolExecutor {
                     shouldRestoreHistory = false
                     throw SandboxFileToolError.noUndoHistory
                 }
+                try trustedRunValidator(context.runID, context.sessionID)
                 let result = try SandboxFileToolSupport.undoMutation(
                     id: mutationID,
                     runID: context.runID,
@@ -365,19 +378,6 @@ public actor LocalAgentFileToolExecutor {
         for id in Array(runActivities.keys) { await finishRun(id: id) }
     }
 
-    static func validateTrustedConversationRun(_ run: ConversationRun?, sessionID: UUID) throws {
-        guard let run, !run.status.isTerminal else {
-            throw LocalLinuxRuntimeError.runtimeUnavailable(
-                NSLocalizedString("Agent Run 已经结束，不能再次执行迟到的工具调用。", comment: "Terminal Agent run cannot be resumed")
-            )
-        }
-        guard run.sessionID == sessionID else {
-            throw LocalLinuxRuntimeError.runtimeUnavailable(
-                NSLocalizedString("Agent Run 标识不属于当前会话。", comment: "Agent run session mismatch")
-            )
-        }
-    }
-
     private func acquireRunOperation(_ runID: UUID) async {
         guard activeRunOperations.contains(runID) else {
             activeRunOperations.insert(runID)
@@ -426,6 +426,16 @@ public actor LocalAgentFileToolExecutor {
                 argumentsJSON: argumentsJSON
             )
         }
+    }
+
+    private func mutationContext(_ context: TrustedContext, mutationID: UUID) -> SandboxFileToolSupport.SandboxUndoContext {
+        let validator = trustedRunAdmissionValidator
+        let identity = ChatRequestTaskIdentity.current
+        let runID = context.runID
+        let sessionID = context.sessionID
+        return .init(runID: runID, mutationID: mutationID, validateAdmission: {
+            try validator(runID, sessionID, identity)
+        })
     }
 
     private func route(_ rawPath: String) throws -> RoutedPath {
@@ -484,15 +494,13 @@ public actor LocalAgentFileToolExecutor {
         let triggeringMessageID = (arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentTriggeringMessageIDArgument) as? String)
             .flatMap(UUID.init(uuidString:))
         let toolCallID = arguments.removeValue(forKey: MCPBuiltInAppToolServer.conversationToolCallIDArgument) as? String
-        let selectedIDs = (arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentSelectedMCPServerIDsArgument) as? [String] ?? [])
-            .compactMap(UUID.init(uuidString:))
+        arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentSelectedMCPServerIDsArgument)
         guard let sessionID, let runID, let toolCallID, !toolCallID.isEmpty else { return nil }
         return TrustedContext(
             sessionID: sessionID,
             runID: runID,
             triggeringMessageID: triggeringMessageID,
-            toolCallID: toolCallID,
-            selectedMCPServerIDs: selectedIDs
+            toolCallID: toolCallID
         )
     }
 

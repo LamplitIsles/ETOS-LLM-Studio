@@ -25,3 +25,7 @@ public struct ChatSendPresentation: Sendable {
 }
 
 public typealias ChatSendPresentationHandler = @MainActor @Sendable (ChatSendPresentation) -> Void
+
+/// Returns true only if the original captured input remains intact in its session.
+/// The second argument reports cancellation observed before entering the callback.
+public typealias ChatInputAcceptanceHandler = @MainActor @Sendable (ChatSendPresentation, Bool) -> Bool

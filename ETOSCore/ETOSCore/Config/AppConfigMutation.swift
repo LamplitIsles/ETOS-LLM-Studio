@@ -30,7 +30,6 @@ extension AppConfigStore {
         switch key {
         case .syncProviders: syncProviders = value
         case .syncBackgrounds: syncBackgrounds = value
-        case .syncMCPServers: syncMCPServers = value
         case .syncAudioFiles: syncAudioFiles = value
         case .syncImageFiles: syncImageFiles = value
         case .syncSkills: syncSkills = value
@@ -46,8 +45,6 @@ extension AppConfigStore {
         case .syncBackupS3Enabled: syncBackupS3Enabled = value
         case .syncBackupCreateOnLaunch: syncBackupCreateOnLaunch = value
         case .appToolsChatToolsEnabled,
-             .mcpChatToolsEnabled,
-             .mcpToolCallTitleEnabled,
              .skillsChatToolsEnabled,
              .shortcutChatToolsEnabled,
              .browserAgentDelegateToIPhone:
@@ -58,7 +55,6 @@ extension AppConfigStore {
         case .localLinuxEnabled: localLinuxEnabled = value
         case .localLinuxEnvironmentPrivacyEnabled: localLinuxEnvironmentPrivacyEnabled = value
         case .localLinuxCommandSafetyEnabled: localLinuxCommandSafetyEnabled = value
-        case .localLinuxLocalMCPOnDemand: localLinuxLocalMCPOnDemand = value
         case .aiTemperatureEnabled: aiTemperatureEnabled = value
         case .aiTopPEnabled: aiTopPEnabled = value
         case .enableStreaming: enableStreaming = value
@@ -188,7 +184,6 @@ extension AppConfigStore {
              .appToolsEnabledToolIDs,
              .appToolsKnownDefaultToolIDs,
              .appToolsToolApprovalPolicies,
-             .mcpDeletedBuiltInServerIDs,
              .skillsEnabledNames,
              .messageRegexRules,
              .customChatSlashCommands,
@@ -232,7 +227,6 @@ extension AppConfigStore {
         case .messageActionBarConfiguration: messageActionBarConfiguration = value
         case .fontFallbackScope: fontFallbackScope = value
         case .appLanguage: appLanguage = value
-        case .watchInputQuickActionConfiguration: watchInputQuickActionConfiguration = value
         case .watchAttachmentLastSource: watchAttachmentLastSource = value
         case .watchAttachmentSourceHistory: watchAttachmentSourceHistory = value
         case .watchBackgroundLastSource: watchBackgroundLastSource = value

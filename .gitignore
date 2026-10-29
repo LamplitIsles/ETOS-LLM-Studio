@@ -24,6 +24,7 @@ xcuserdata/
 # Swift Package Manager
 .swiftpm
 .build/
+/xtool/
 
 # CocoaPods
 Pods/

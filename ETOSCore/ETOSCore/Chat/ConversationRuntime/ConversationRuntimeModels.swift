@@ -146,7 +146,6 @@ public struct ConversationRunRequestConfiguration: Codable, Hashable, Sendable {
     /// Linux Agent 能力随 Run 冻结，确保续写期间不会因设置变化而改变执行边界。
     public var agentToolsEnabled: Bool?
     public var localLinuxToolsEnabled: Bool?
-    public var selectedAgentMCPServerIDs: [UUID]?
 
     public init(
         modelIdentifier: String? = nil,
@@ -161,8 +160,7 @@ public struct ConversationRunRequestConfiguration: Codable, Hashable, Sendable {
         enableResponseSpeedMetrics: Bool = true,
         browserDataProfile: BrowserAgentDataProfile? = nil,
         agentToolsEnabled: Bool? = nil,
-        localLinuxToolsEnabled: Bool? = nil,
-        selectedAgentMCPServerIDs: [UUID]? = nil
+        localLinuxToolsEnabled: Bool? = nil
     ) {
         self.modelIdentifier = modelIdentifier
         self.temperature = temperature
@@ -177,7 +175,6 @@ public struct ConversationRunRequestConfiguration: Codable, Hashable, Sendable {
         self.browserDataProfile = browserDataProfile
         self.agentToolsEnabled = agentToolsEnabled
         self.localLinuxToolsEnabled = localLinuxToolsEnabled
-        self.selectedAgentMCPServerIDs = selectedAgentMCPServerIDs
     }
 }
 

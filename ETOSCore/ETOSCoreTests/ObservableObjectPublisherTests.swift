@@ -65,7 +65,6 @@ struct ObservableObjectPublisherTests {
             ("AnnouncementManager", { AnnouncementManager.shared.objectWillChange }),
             ("CloudSyncManager", { CloudSyncManager.shared.objectWillChange }),
             ("FeedbackService", { FeedbackService.shared.objectWillChange }),
-            ("MCPManager", { MCPManager.shared.objectWillChange }),
             ("ToolPermissionCenter", { ToolPermissionCenter.shared.objectWillChange }),
             ("AppToolManager", { AppToolManager.shared.objectWillChange }),
             ("AppLogCenter", { AppLogCenter.shared.objectWillChange }),
@@ -77,24 +76,6 @@ struct ObservableObjectPublisherTests {
             let publisher = makePublisher()
             #expect(type(of: publisher) == ObservableObjectPublisher.self, "\(name) 的 objectWillChange 类型应为 ObservableObjectPublisher。")
         }
-    }
-
-    @Test("MCPManager 切换聊天工具总开关会触发 objectWillChange")
-    @MainActor
-    func mcpManagerPublishesWhenTogglingChatToolsEnabled() {
-        let manager = MCPManager.shared
-        let original = manager.chatToolsEnabled
-
-        var changeCount = 0
-        let cancellable = manager.objectWillChange.sink { _ in
-            changeCount += 1
-        }
-
-        manager.setChatToolsEnabled(!original)
-        manager.setChatToolsEnabled(original)
-
-        #expect(changeCount >= 1)
-        withExtendedLifetime(cancellable) {}
     }
 
     @Test("AnnouncementManager 切换公告提示会触发 objectWillChange")

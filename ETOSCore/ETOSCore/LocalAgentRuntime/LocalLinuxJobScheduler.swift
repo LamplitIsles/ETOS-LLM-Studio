@@ -233,6 +233,7 @@ public actor LocalLinuxJobScheduler {
         _ = try await runtime.ensureReady(trigger: .agentRequest)
     }
 
+    #if os(macOS)
     public func availableExecutablePath(
         _ command: String,
         environment: [String: String],
@@ -249,7 +250,7 @@ public actor LocalLinuxJobScheduler {
         #if os(macOS)
         let directory = workingDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser
-        return try? MCPMacStdioProcess.resolveExecutable(resolved, environment: environment, workingDirectory: directory).path
+        return try? MacNativeProcess.resolveExecutable(resolved, environment: environment, workingDirectory: directory).path
         #endif
     }
 
@@ -558,6 +559,8 @@ public actor LocalLinuxJobScheduler {
             throw error
         }
     }
+
+    #endif
 
     public func claimTerminalInput(jobID: UUID, owner: LocalLinuxTerminalInputOwner) async throws {
         try activeTerminals[jobID]?.activity.checkCancellation()
@@ -882,6 +885,7 @@ public actor LocalLinuxJobScheduler {
         return code
     }
 
+    #if os(macOS)
     /// 在创建任务记录前分别确认 Shell 与 cwd，避免把同一个 ENOENT 裸错误码
     /// 同时用于两种故障，也防止无效启动在任务列表里留下失败占位。
     private func validateTerminalLaunchPaths(
@@ -914,9 +918,11 @@ public actor LocalLinuxJobScheduler {
         #if os(macOS)
         let directory = workingDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser
-        return (try? MCPMacStdioProcess.resolveExecutable(command, environment: environment, workingDirectory: directory).path) ?? command
+        return (try? MacNativeProcess.resolveExecutable(command, environment: environment, workingDirectory: directory).path) ?? command
         #endif
     }
+
+    #endif
 
     static func executableSearchCandidates(
         command: String,

@@ -8498,3 +8498,33 @@
 "Gemini Interactions API 地址说明" = "Use a base URL such as https://generativelanguage.googleapis.com/v1. Requests use /interactions.";
 "Gemini Interactions 配置说明" = "Select Gemini Interactions and enter your Gemini API key and a base URL ending in /v1. Keep an explicitly configured API version when your gateway requires it. Fetch the model list or add a supported model, enable its capabilities, then save. Existing Gemini configurations continue to use generateContent.\n\nChat history is sent from this device with store=false by default. Text, images, audio, documents, video and local function tools use the Interactions step format. Enable reasoning to add thinking_level and thinking_summaries controls under generation_config. Global temperature, top_p and top_k are not sent because the current API schema does not accept them.\n\nCustom JSON uses Interactions field names; generateContent parameters cannot be copied unchanged. This adapter handles foreground model requests, not managed agents, background jobs or previous_interaction_id chains. Image models use Interactions; embedding models still use Gemini's embedding endpoint.";
 "Gemini Interactions 未返回完整的有效响应。" = "Gemini Interactions did not return a complete, valid response.";
+
+"消息操作未完成" = "Message action not completed";
+"消息已变化或正在生成，请刷新后重试。" = "The message changed or is still generating. Refresh and try again.";
+
+"当前会话正在处理，请稍后再发送。" = "This conversation is busy. Please try again later.";
+"会话已不存在，内容未发送。" = "The conversation no longer exists. Your message was not sent.";
+"会话已切换，请查看原会话后再继续。" = "The conversation changed. Check the original conversation before continuing.";
+"此功能暂不可用。" = "This feature is temporarily unavailable.";
+"该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。" = "This request is already recorded, but its result is unknown. Check the conversation before proceeding.";
+"内容已添加到当前会话，发送结果请在应用中查看。" = "Content was added to the current conversation. Check the app for the sending result.";
+"工具执行结果未知" = "Tool result unknown";
+"请先检查工具的实际状态，再决定下一步。" = "Check the tool’s actual state before deciding what to do next.";
+"可为每条 API Key 添加备注，方便区分来源。关闭多 Key 模式后只使用第一条，其余 Key 和备注仍会保留。" = "Add a note to each API key to identify it. When multiple keys are disabled, only the first is used; the other keys and notes are kept.";
+
+"内容准备失败，请检查附件后重试。" = "Could not prepare the content. Check the attachments and try again.";
+"请求已停止；请查看对话后再继续。" = "The request stopped. Check the conversation before continuing.";
+"快捷指令可能已启动，但执行结果未知。" = "The shortcut may have started, but its result is unknown.";
+"快捷指令可能已启动，但未收到回调，执行结果未知。" = "The shortcut may have started, but no callback was received; its result is unknown.";
+"快捷指令可能已启动，取消后执行结果未知。" = "The shortcut may have started; its result after cancellation is unknown.";
+"工具调用的执行结果未知，无法安全继续重试；请检查该工具的实际状态。" = "The tool result is unknown, so retrying cannot safely continue. Check the tool’s actual state.";
+
+"内置工具控制网页卡片和系统时间等功能是否可用于聊天。" = "Built-in tools control whether webpage cards and system time are available in chat.";
+"mac.builtin.tools.current.help" = "Configure the webpage card and system time tools. Enabling a tool does not run it. Session isolation can make an enabled tool unavailable.";
+
+"请先停止当前请求并等待结束，再删除会话。" = "Stop the current request and wait for it to finish before deleting the conversation.";
+"支持 OpenMinis Provider JSON 与 Skill ZIP。" = "Supports OpenMinis Provider JSON and Skill ZIP.";
+"外部上下文可包含快捷指令能力、最近结果和公告趋势。" = "External context can include Shortcuts, recent results, and announcement trends.";
+"还没有积累到可复用的外部信号历史。" = "No reusable external signal history has been collected yet.";
+"支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。" = "Supports OpenMinis iOS/Android session JSON/ZIP, Provider JSON and Skill ZIP. Select skills to import; scripts are not run and dependencies are not installed.";
+"自动删除只作用于以后删除的会话。" = "Automatic deletion applies only to conversations deleted from now on.";

@@ -6,7 +6,7 @@ extension MacWorkspaceModel {
         guard canModifyCurrentHistory, currentSession?.id == sessionID, let service else { throw MessageToolCallEditingError.messageChanged }
         // 下载和保存附件属于历史写入，恢复与退出必须等待完整操作及失败清理。
         isMutatingHistory = true
-        defer { isMutatingHistory = false; flushToolSupplements() }
+        defer { isMutatingHistory = false }
         let result = await Task.detached(priority: .userInitiated) {
             await service.extractInlineImagesFromMarkdown(original.content)
         }.value

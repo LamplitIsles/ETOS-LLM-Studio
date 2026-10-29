@@ -26,7 +26,8 @@ struct MacChatRequestConfiguration {
     }
 
     func send(_ content: String, attachments: [MacComposerAttachment] = [], audioAttachment: AudioAttachment? = nil,
-              through service: ChatService, sessionID: UUID, onMessagesPrepared: ChatSendPresentationHandler? = nil) async {
+              through service: ChatService, sessionID: UUID, onMessagesPrepared: ChatSendPresentationHandler? = nil,
+              requestLease: ChatRequestLease, onInputAccepted: ChatInputAcceptanceHandler? = nil) async {
         await service.sendAndProcessMessage(
             content: content, aiTemperature: temperature, aiTopP: topP,
             maxChatHistory: historyLimit,
@@ -34,7 +35,8 @@ struct MacChatRequestConfiguration {
             includeSystemTime: systemTime, systemTimeInjectionPosition: timePosition,
             enablePeriodicTimeLandmark: timeLandmark, periodicTimeLandmarkIntervalMinutes: timeLandmarkMinutes,
             enableResponseSpeedMetrics: speedMetrics, audioAttachment: audioAttachment, imageAttachments: attachments.compactMap(\.image),
-            fileAttachments: attachments.compactMap(\.file), targetSessionID: sessionID, onMessagesPrepared: onMessagesPrepared
+            fileAttachments: attachments.compactMap(\.file), targetSessionID: sessionID, onMessagesPrepared: onMessagesPrepared,
+            requestLease: requestLease, onInputAccepted: onInputAccepted
         )
     }
 

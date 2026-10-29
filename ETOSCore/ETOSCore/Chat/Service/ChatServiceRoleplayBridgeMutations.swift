@@ -11,50 +11,42 @@ import Foundation
 extension ChatService {
     func applyRoleplayMessageUpdates(_ value: JSONValue, sessionID: UUID) {
         guard case .array(let updates) = value else { return }
-        var messages = messagesSnapshot(for: sessionID)
         var variables = roleplayStore.variableSnapshot(sessionID: sessionID)
         var didChangeVariables = false
-
-        for update in updates {
-            guard case .dictionary(let fields) = update,
-                  let rawIndex = fields["message_id"]?.integerValue,
-                  let index = normalizedRoleplayIndex(rawIndex, count: messages.count) else { continue }
-            if let content = fields["message"]?.stringValue {
-                messages[index].content = content
-                variables.removeValue(
-                    scope: .message,
-                    path: RoleplayDisplayedMessageBridge.variableKey,
-                    messageID: messages[index].id,
-                    versionIndex: messages[index].getCurrentVersionIndex()
-                )
-                didChangeVariables = true
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            var changed = false
+            for update in updates {
+                guard case .dictionary(let fields) = update,
+                      let rawIndex = fields["message_id"]?.integerValue,
+                      let index = normalizedRoleplayIndex(rawIndex, count: messages.count) else { continue }
+                if let content = fields["message"]?.stringValue {
+                    messages[index].content = content
+                    variables.removeValue(scope: .message, path: RoleplayDisplayedMessageBridge.variableKey,
+                                          messageID: messages[index].id, versionIndex: messages[index].getCurrentVersionIndex())
+                    didChangeVariables = true
+                    changed = true
+                }
+                if let role = fields["role"]?.stringValue.flatMap(roleplayMessageRole) {
+                    messages[index].role = role
+                    changed = true
+                }
+                if case .dictionary(let data) = fields["data"] {
+                    variables.replaceMessageVariables(data, messageID: messages[index].id,
+                                                      versionIndex: messages[index].getCurrentVersionIndex())
+                    didChangeVariables = true
+                    changed = true
+                }
             }
-            if let role = fields["role"]?.stringValue.flatMap(roleplayMessageRole) {
-                messages[index].role = role
-            }
-            if case .dictionary(let data) = fields["data"] {
-                variables.replaceMessageVariables(
-                    data,
-                    messageID: messages[index].id,
-                    versionIndex: messages[index].getCurrentVersionIndex()
-                )
-                didChangeVariables = true
-            }
-        }
-
-        persistAndPublishMessages(messages, for: sessionID)
-        if didChangeVariables {
-            roleplayStore.saveVariableSnapshot(variables, sessionID: sessionID)
-        }
+            return changed
+        }) else { return }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
+        if didChangeVariables { roleplayStore.saveVariableSnapshot(variables, sessionID: sessionID) }
     }
 
     func createRoleplayMessages(_ value: JSONValue, insertBefore: Int?, sessionID: UUID) {
         guard case .array(let payloads) = value else { return }
-        var messages = messagesSnapshot(for: sessionID)
         var variables = roleplayStore.variableSnapshot(sessionID: sessionID)
-        let insertionIndex = normalizedRoleplayInsertionIndex(insertBefore, count: messages.count)
         var created: [ChatMessage] = []
-
         for payload in payloads {
             guard case .dictionary(let fields) = payload,
                   let content = fields["message"]?.stringValue else { continue }
@@ -65,40 +57,43 @@ extension ChatService {
             }
             created.append(message)
         }
-
-        guard !created.isEmpty else { return }
-        messages.insert(contentsOf: created, at: insertionIndex)
-        persistAndPublishMessages(messages, for: sessionID)
+        guard !created.isEmpty, let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            let insertionIndex = normalizedRoleplayInsertionIndex(insertBefore, count: messages.count)
+            messages.insert(contentsOf: created, at: insertionIndex)
+            return true
+        }) else { return }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
         roleplayStore.saveVariableSnapshot(variables, sessionID: sessionID)
     }
 
     func deleteRoleplayMessages(_ value: JSONValue, sessionID: UUID) {
         guard case .array(let values) = value else { return }
-        var messages = messagesSnapshot(for: sessionID)
-        let indices = Set(values.compactMap(\.integerValue).compactMap {
-            normalizedRoleplayIndex($0, count: messages.count)
-        })
-        guard !indices.isEmpty else { return }
-
         var variables = roleplayStore.variableSnapshot(sessionID: sessionID)
-        for index in indices {
-            variables.removeMessageVariables(messageID: messages[index].id)
-        }
-        messages = messages.enumerated().filter { !indices.contains($0.offset) }.map(\.element)
-        persistAndPublishMessages(messages, for: sessionID)
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            let indices = Set(values.compactMap(\.integerValue).compactMap {
+                normalizedRoleplayIndex($0, count: messages.count)
+            })
+            guard !indices.isEmpty else { return false }
+            for index in indices { variables.removeMessageVariables(messageID: messages[index].id) }
+            messages = messages.enumerated().filter { !indices.contains($0.offset) }.map(\.element)
+            return true
+        }) else { return }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
         roleplayStore.saveVariableSnapshot(variables, sessionID: sessionID)
     }
 
     func rotateRoleplayMessages(begin: Int, middle: Int, end: Int, sessionID: UUID) {
-        var messages = messagesSnapshot(for: sessionID)
-        let count = messages.count
-        let lower = max(0, min(count, begin < 0 ? count + begin : begin))
-        let upper = max(lower, min(count, end < 0 ? count + end : end))
-        let pivot = max(lower, min(upper, middle < 0 ? count + middle : middle))
-        guard lower < pivot, pivot < upper else { return }
-        let rotated = Array(messages[pivot..<upper]) + Array(messages[lower..<pivot])
-        messages.replaceSubrange(lower..<upper, with: rotated)
-        persistAndPublishMessages(messages, for: sessionID)
+        guard let messages = mutateRuntimeMessages(for: sessionID, { messages in
+            let count = messages.count
+            let lower = max(0, min(count, begin < 0 ? count + begin : begin))
+            let upper = max(lower, min(count, end < 0 ? count + end : end))
+            let pivot = max(lower, min(upper, middle < 0 ? count + middle : middle))
+            guard lower < pivot, pivot < upper else { return false }
+            let rotated = Array(messages[pivot..<upper]) + Array(messages[lower..<pivot])
+            messages.replaceSubrange(lower..<upper, with: rotated)
+            return true
+        }) else { return }
+        publishMessagesIfCurrentSession(messages, for: sessionID)
     }
 
     func replaceRoleplayRegexRules(_ value: JSONValue, sessionID: UUID) {

@@ -34,13 +34,6 @@ struct SpecializedModelSelectorView: View {
             ttsServiceSection
 
             modelPickerSection(
-                title: NSLocalizedString("嵌入模型", comment: "Embedding model specialized selector title"),
-                options: viewModel.embeddingModelOptions,
-                selectionID: embeddingModelIdentifierBinding,
-                footer: NSLocalizedString("用于记忆向量化与检索；也可在“记忆库管理”中修改。", comment: "Embedding model specialized selector footer")
-            )
-
-            modelPickerSection(
                 title: NSLocalizedString("标题生成模型", comment: "Title generation model specialized selector title"),
                 options: viewModel.titleGenerationModelOptions,
                 selectionID: titleModelIdentifierBinding,
@@ -131,7 +124,6 @@ struct SpecializedModelSelectorView: View {
                 }
             ),
             guideModelSetting("speech_model_id", label: NSLocalizedString("语音模型", comment: "专用模型向导字段"), options: viewModel.speechModels, binding: speechModelIdentifierBinding),
-            guideModelSetting("embedding_model_id", label: NSLocalizedString("嵌入模型", comment: "专用模型向导字段"), options: viewModel.embeddingModelOptions, binding: embeddingModelIdentifierBinding),
             guideModelSetting("title_model_id", label: NSLocalizedString("标题生成模型", comment: "专用模型向导字段"), options: viewModel.titleGenerationModelOptions, binding: titleModelIdentifierBinding),
             guideModelSetting("daily_pulse_model_id", label: NSLocalizedString("每日脉冲模型", comment: "专用模型向导字段"), options: viewModel.dailyPulseModelOptions, binding: dailyPulseModelIdentifierBinding),
             guideModelSetting("reasoning_summary_model_id", label: NSLocalizedString("思考摘要模型", comment: "专用模型向导字段"), options: viewModel.reasoningSummaryModelOptions, binding: reasoningSummaryModelIdentifierBinding),
@@ -220,20 +212,6 @@ struct SpecializedModelSelectorView: View {
                 }
                 let selected = viewModel.speechModels.first(where: { $0.id == newIdentifier })
                 viewModel.setSelectedSpeechModel(selected)
-            }
-        )
-    }
-
-    private var embeddingModelIdentifierBinding: Binding<String> {
-        Binding(
-            get: { viewModel.selectedEmbeddingModel?.id ?? "" },
-            set: { newIdentifier in
-                guard !newIdentifier.isEmpty else {
-                    viewModel.setSelectedEmbeddingModel(nil)
-                    return
-                }
-                let selected = viewModel.embeddingModelOptions.first(where: { $0.id == newIdentifier })
-                viewModel.setSelectedEmbeddingModel(selected)
             }
         )
     }

@@ -21,12 +21,6 @@ extension AppToolManager {
             return try current.executeShowWidget(argumentsJSON: argumentsJSON)
         case .getSystemTime:
             return SystemTimeContextFormatter.description()
-        case .askUserInput:
-            return try current.executeAskUserInput(
-                argumentsJSON: argumentsJSON,
-                sourceSessionID: sourceSessionID,
-                sourceMessageID: sourceMessageID
-            )
         case .echoText:
             return try current.executeEchoText(argumentsJSON: argumentsJSON)
         case .fillUserInput:

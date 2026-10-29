@@ -64,24 +64,6 @@ extension Model {
     }
 }
 
-extension MCPServerConfiguration {
-    /// 判断两个 MCP 服务器配置是否逻辑等价（忽略 ID）
-    func isEquivalent(to other: MCPServerConfiguration) -> Bool {
-        displayName == other.displayName &&
-        notes == other.notes &&
-        transport == other.transport &&
-        isSelectedForChat == other.isSelectedForChat &&
-        sortIndex == other.sortIndex &&
-        Set(disabledToolIds) == Set(other.disabledToolIds) &&
-        toolApprovalPolicies == other.toolApprovalPolicies
-    }
-    
-    /// 去除所有同步后缀的基础名称
-    var baseNameWithoutSyncSuffix: String {
-        removeSyncSuffixes(from: displayName)
-    }
-}
-
 extension ShortcutToolDefinition {
     /// 判断两个快捷指令工具配置是否逻辑等价（忽略 ID）
     func isEquivalent(to other: ShortcutToolDefinition) -> Bool {

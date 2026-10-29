@@ -77,7 +77,6 @@ final class MacApplicationDelegate: NSObject, NSApplicationDelegate, ObservableO
         // terminateLater 保持事件循环运转，不能在主线程同步等待管道或子进程退出。
         terminationTask = Task {
             await workspace?.prepareForTermination()
-            await MCPMacStdioTransport.prepareForApplicationTermination()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

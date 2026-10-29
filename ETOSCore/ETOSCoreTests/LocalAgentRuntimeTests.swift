@@ -58,10 +58,15 @@ struct LocalAgentRuntimeTests {
             isToolContextIsolated: false,
             localLinuxEnabled: true
         )
-        #expect(agent.preparesAgentRun)
         #expect(agent.includesConversationTools)
         #expect(agent.includesBrowserTools)
+        #if os(macOS)
+        #expect(agent.preparesAgentRun)
         #expect(agent.includesLocalLinuxTools)
+        #else
+        #expect(!agent.preparesAgentRun)
+        #expect(!agent.includesLocalLinuxTools)
+        #endif
 
         let isolated = AgentToolCapabilityPolicy.resolve(
             mode: .agent,
@@ -568,8 +573,7 @@ struct LocalAgentRuntimeTests {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let recorder = LocalLinuxDiagnosticsRecorder(
-            storage: LocalLinuxStorageManager(documentsDirectory: directory, appGroupLayout: nil),
-            feedbackBuffer: LocalLinuxDiagnosticFeedbackBuffer { _ in }
+            storage: LocalLinuxStorageManager(documentsDirectory: directory, appGroupLayout: nil)
         )
         let olderJobID = UUID()
         let newerJobID = UUID()
@@ -684,78 +688,6 @@ struct LocalAgentRuntimeTests {
         #expect(feedbackSchema.contains("linux_runtime_diagnostic_id"))
     }
 
-    @Test("MCP JSON 导入 stdio 并在无敏感导出时移除凭据")
-    func mcpConfigurationTransfer() throws {
-        let imported = try MCPServerConfigurationTransferService.importConfigurations(
-            from: Data(#"{"mcpServers":{"git":{"type":"stdio","command":"uvx","args":["mcp-server-git"],"env":{"TOKEN":"secret"}}}}"#.utf8)
-        )
-        let server = try #require(imported.servers.first)
-        #expect(imported.sensitiveServerNames == ["git"])
-        if case .localStdio(let configuration) = server.transport {
-            #expect(configuration.command == "uvx")
-            #expect(configuration.arguments == ["mcp-server-git"])
-            #expect(configuration.environment["TOKEN"] == "secret")
-        } else {
-            Issue.record("stdio 配置未转换为本地 Linux transport")
-        }
-
-        let remote = MCPServerConfiguration(
-            displayName: "remote",
-            transport: .http(
-                endpoint: URL(string: "https://example.com/mcp")!,
-                apiKey: "api-secret",
-                additionalHeaders: ["Authorization": "Bearer secret", "X-Client": "ETOS"]
-            )
-        )
-        let exported = try MCPServerConfigurationTransferService.exportConfigurations(
-            [remote],
-            includeSecrets: false
-        )
-        let exportedText = try #require(String(data: exported, encoding: .utf8))
-        #expect(!exportedText.contains("Bearer secret"))
-        #expect(!exportedText.contains("api-secret"))
-        #expect(exportedText.contains("X-Client"))
-    }
-
-    @Test("同步合并会把 stdio 字面环境变量转换为 GRDB 引用")
-    func mcpSyncMergeMaterializesEnvironmentReferences() throws {
-        let suffix = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let variableName = "ETOS_TEST_\(suffix)"
-        let server = MCPServerConfiguration(
-            displayName: "stdio-\(suffix)",
-            transport: .localStdio(
-                configuration: MCPLocalStdioConfiguration(
-                    command: "env",
-                    environment: [variableName: "secret-\(suffix)"]
-                )
-            )
-        )
-
-        let result = SyncEngine.mergeMCPServers([server])
-        let stored = try #require(MCPServerStore.loadServers().first(where: { $0.id == server.id }))
-        defer {
-            MCPServerStore.delete(stored)
-            for variable in Persistence.loadLocalLinuxEnvironmentVariables()
-            where variable.name == variableName {
-                _ = Persistence.deleteLocalLinuxEnvironmentVariable(id: variable.id)
-            }
-        }
-
-        #expect(result.imported == 1)
-        if case .localStdio(let configuration) = stored.transport {
-            #expect(configuration.environment.isEmpty)
-            #expect(configuration.environmentVariableIDs.count == 1)
-            let referenced = Persistence.loadLocalLinuxEnvironmentVariables().filter {
-                configuration.environmentVariableIDs.contains($0.id)
-            }
-            #expect(referenced.count == 1)
-            #expect(referenced.first?.name == variableName)
-            #expect(referenced.first?.value == "secret-\(suffix)")
-        } else {
-            Issue.record("同步合并后的 MCP 不是本地 stdio transport")
-        }
-    }
-
     @Test("Browser 数据 profile 与快照可以稳定编码")
     func browserModelsCodableRoundTrip() throws {
         let snapshot = BrowserAgentSnapshot(
@@ -840,8 +772,6 @@ struct LocalAgentRuntimeTests {
             environmentRedactionValues: ["secret"],
             environmentReferenceSnapshots: [],
             mountIDs: [],
-            selectedMCPServerIDs: [],
-            selectedMCPServerConfigurations: [],
             browserSessionID: sessionID,
             browserDataProfile: .sessionIsolated,
             promptProfileID: promptID,
@@ -929,97 +859,6 @@ struct LocalAgentRuntimeTests {
                 arguments: [UUID().uuidString, Data("{}".utf8)]
             )
             #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM local_linux_jobs") == 2)
-        }
-    }
-
-    @Test("本地 stdio MCP 迁移保留服务器与工具并扩展 transport 约束")
-    func mcpLocalStdioTransportMigration() throws {
-        let queue = try DatabaseQueue()
-        try queue.write { db in
-            try db.execute(sql: """
-                CREATE TABLE mcp_servers (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    display_name TEXT NOT NULL,
-                    notes TEXT,
-                    is_selected_for_chat INTEGER NOT NULL DEFAULT 0,
-                    sort_index INTEGER NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'ready')),
-                    transport_kind TEXT NOT NULL CHECK(transport_kind IN (
-                        'http', 'sse', 'oauth',
-                        'built_in_search', 'built_in_app_tool', 'built_in_personal_data'
-                    )),
-                    endpoint_url TEXT,
-                    message_endpoint_url TEXT,
-                    sse_endpoint_url TEXT,
-                    metadata_cached_at REAL,
-                    updated_at REAL NOT NULL,
-                    api_key TEXT,
-                    additional_headers_json TEXT,
-                    disabled_tool_ids_json TEXT,
-                    tool_approval_policies_json TEXT,
-                    oauth_payload_json TEXT,
-                    stream_resumption_token TEXT,
-                    info_json TEXT,
-                    resources_json TEXT,
-                    resource_templates_json TEXT,
-                    prompts_json TEXT,
-                    roots_json TEXT
-                )
-            """)
-            try db.execute(sql: """
-                CREATE TABLE mcp_tools (
-                    server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
-                    tool_name TEXT NOT NULL,
-                    description TEXT,
-                    sort_index INTEGER NOT NULL DEFAULT 0,
-                    updated_at REAL NOT NULL,
-                    input_schema_json TEXT,
-                    examples_json TEXT,
-                    PRIMARY KEY(server_id, tool_name)
-                )
-            """)
-            let serverID = UUID().uuidString
-            try db.execute(
-                sql: """
-                    INSERT INTO mcp_servers (
-                        id, display_name, status, transport_kind, updated_at
-                    ) VALUES (?, '现有服务器', 'ready', 'http', 1)
-                """,
-                arguments: [serverID]
-            )
-            try db.execute(
-                sql: """
-                    INSERT INTO mcp_tools (
-                        server_id, tool_name, description, updated_at
-                    ) VALUES (?, 'existing_tool', '保留的工具', 1)
-                """,
-                arguments: [serverID]
-            )
-
-            try PersistenceAuxiliaryGRDBStore.migrateMCPServerLocalStdioTransport(db)
-
-            let tableSQL = try String.fetchOne(
-                db,
-                sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'mcp_servers'"
-            )
-            #expect(tableSQL?.contains("'local_stdio'") == true)
-            #expect(try String.fetchOne(
-                db,
-                sql: "SELECT tool_name FROM mcp_tools WHERE server_id = ?",
-                arguments: [serverID]
-            ) == "existing_tool")
-            try db.execute(
-                sql: """
-                    INSERT INTO mcp_servers (
-                        id, display_name, status, transport_kind, updated_at
-                    ) VALUES (?, '本地服务器', 'idle', 'local_stdio', 2)
-                """,
-                arguments: [UUID().uuidString]
-            )
-            #expect(try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM mcp_servers WHERE transport_kind = 'local_stdio'"
-            ) == 1)
         }
     }
 

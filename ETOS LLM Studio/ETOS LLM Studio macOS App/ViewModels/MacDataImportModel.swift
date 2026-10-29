@@ -185,7 +185,7 @@ final class MacDataImportModel: ObservableObject {
         case .kelivo: NSLocalizedString("支持 Kelivo 的 settings.json + chats.json（建议选择解压后的目录一次导入）。", comment: "")
         case .chatgpt: NSLocalizedString("支持 ChatGPT 官方 conversations.json（可直接选文件或包含该文件的目录）。", comment: "")
         case .chatbox: NSLocalizedString("支持 ChatBox 导出的 chatbox-exported-data JSON，可导入提供商配置与会话记录。", comment: "")
-        case .openMinis: NSLocalizedString("支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON、MCP JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。", comment: "")
+        case .openMinis: NSLocalizedString("支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。", comment: "")
         }
     }
 }

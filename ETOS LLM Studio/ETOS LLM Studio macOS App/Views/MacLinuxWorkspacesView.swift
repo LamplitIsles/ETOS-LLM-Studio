@@ -21,7 +21,7 @@ struct MacLinuxWorkspacesView: View {
                     Text(NSLocalizedString("随会话自动删除", comment: "")).tag("automatic")
                 }
             } footer: {
-                Text(NSLocalizedString("自动删除只作用于以后删除的会话；本地 MCP 的独立工作区仍需手动处理。", comment: "")).font(.footnote).foregroundStyle(.secondary)
+                Text(NSLocalizedString("自动删除只作用于以后删除的会话。", comment: "")).font(.footnote).foregroundStyle(.secondary)
             }
             Section {
                 Button(NSLocalizedString("刷新", comment: "")) { model.error = nil; model.reload() }.disabled(model.isLoading || model.isWorking)

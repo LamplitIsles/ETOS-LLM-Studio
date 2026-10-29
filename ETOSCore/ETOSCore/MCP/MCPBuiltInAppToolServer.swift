@@ -8,251 +8,14 @@
 // ============================================================================
 
 import Foundation
-import Logging
-import MCP
 
 public enum MCPBuiltInAppToolServer {
-    public static let endpointPrefix = "builtin://app-tools/"
     static let conversationSourceSessionIDArgument = "_etos_source_session_id"
     static let conversationToolCallIDArgument = "_etos_tool_call_id"
     static let localAgentRunIDArgument = "_etos_agent_run_id"
     static let localAgentTriggeringMessageIDArgument = "_etos_triggering_message_id"
     static let localAgentSelectedMCPServerIDsArgument = "_etos_selected_mcp_server_ids"
     static let localAgentApprovedCommandRuleIDsArgument = "_etos_approved_command_rule_ids"
-
-    private static let serverIDs: [AppToolCatalogCategory: UUID] = [
-        .interaction: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0001")!,
-        .file: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0003")!,
-        .database: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0004")!,
-        .custom: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0005")!,
-        .feedback: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0006")!,
-        .conversation: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0007")!,
-        .linux: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0008")!,
-        .browser: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0009")!,
-        .deviceOperations: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0010")!,
-        .mediaEnvironment: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0011")!,
-        .visionLanguage: UUID(uuidString: "45544F53-0000-0000-0000-4150544C0012")!
-    ]
-
-    public static var categories: [AppToolCatalogCategory] {
-        [.interaction, .conversation, .file, .database, .custom, .linux, .browser, .deviceOperations, .mediaEnvironment, .visionLanguage]
-    }
-
-    public static func serverID(for category: AppToolCatalogCategory) -> UUID {
-        serverIDs[category]!
-    }
-
-    static func defaultSortIndex(for category: AppToolCatalogCategory) -> Int {
-        (categories.firstIndex(of: category) ?? categories.count) + 1
-    }
-
-    public static func category(for serverID: UUID) -> AppToolCatalogCategory? {
-        serverIDs.first(where: { $0.value == serverID })?.key
-    }
-
-    public static func endpoint(for category: AppToolCatalogCategory) -> String {
-        endpointPrefix + category.rawValue
-    }
-
-    public static func category(forEndpoint endpoint: String?) -> AppToolCatalogCategory? {
-        guard let endpoint,
-              endpoint.hasPrefix(endpointPrefix) else { return nil }
-        let rawValue = String(endpoint.dropFirst(endpointPrefix.count))
-        return AppToolCatalogCategory(rawValue: rawValue)
-    }
-
-    public static func isBuiltInAppToolServer(_ server: MCPServerConfiguration) -> Bool {
-        if case .builtInAppTool(let category) = server.transport {
-            return categories.contains(category)
-        }
-        guard let category = category(for: server.id) else { return false }
-        return categories.contains(category)
-    }
-
-    static func isObsoleteBuiltInAppToolServer(_ server: MCPServerConfiguration) -> Bool {
-        if case .builtInAppTool(let category) = server.transport {
-            return !categories.contains(category)
-        }
-        guard let category = category(for: server.id) else { return false }
-        return !categories.contains(category)
-    }
-
-    public static func isBuiltInServer(_ server: MCPServerConfiguration) -> Bool {
-        MCPBuiltInSearchServer.isBuiltInSearchServer(server) ||
-        isBuiltInAppToolServer(server) ||
-        MCPBuiltInPersonalDataServer.isBuiltInPersonalDataServer(server)
-    }
-
-    @MainActor
-    static func defaultConfiguration(for category: AppToolCatalogCategory) -> MCPServerConfiguration {
-        defaultConfiguration(for: category, appToolManager: AppToolManager.shared)
-    }
-
-    @MainActor
-    static func defaultConfiguration(for category: AppToolCatalogCategory, appToolManager: AppToolManager) -> MCPServerConfiguration {
-        let tools = appToolDescriptions(
-            for: category,
-            appToolManager: appToolManager,
-            includeUnavailablePlatformTools: true
-        )
-        let disabledToolIds: [String]
-        let approvalPolicies: [String: MCPToolApprovalPolicy]
-        if category == .conversation || category == .linux || category == .browser || category == .deviceOperations || category == .mediaEnvironment || category == .visionLanguage {
-            disabledToolIds = []
-            approvalPolicies = category == .conversation
-                ? Dictionary(uniqueKeysWithValues: tools.map { ($0.toolId, .alwaysAllow) })
-                : [:]
-        } else {
-            disabledToolIds = tools
-                .filter { !isMigratedEnabled($0, appToolManager: appToolManager) }
-                .map(\.toolId)
-            approvalPolicies = tools.reduce(into: [String: MCPToolApprovalPolicy]()) { result, tool in
-                guard let policy = migratedApprovalPolicy(for: tool.toolId, appToolManager: appToolManager),
-                      policy != .askEveryTime else { return }
-                result[tool.toolId] = policy
-            }
-        }
-
-        return MCPServerConfiguration(
-            id: serverID(for: category),
-            displayName: displayName(for: category),
-            notes: notes(for: category),
-            transport: .builtInAppTool(category: category),
-            isSelectedForChat: category == .conversation || category == .linux || category == .browser
-                ? true
-                : category == .deviceOperations
-                ? false
-                : category == .mediaEnvironment
-                ? false
-                : category == .visionLanguage
-                ? false
-                : appToolManager.chatToolsEnabled,
-            disabledToolIds: disabledToolIds,
-            toolApprovalPolicies: approvalPolicies,
-            sortIndex: defaultSortIndex(for: category)
-        )
-    }
-
-    @MainActor
-    static func prepareServersForManager(
-        _ storedServers: [MCPServerConfiguration],
-        deletedBuiltInServerIDs: Set<UUID> = []
-    ) -> (
-        servers: [MCPServerConfiguration],
-        serversToPersist: [MCPServerConfiguration],
-        serversToDelete: [MCPServerConfiguration]
-    ) {
-        prepareServersForManager(
-            storedServers,
-            deletedBuiltInServerIDs: deletedBuiltInServerIDs,
-            defaults: categories.map { defaultConfiguration(for: $0) }
-        )
-    }
-
-    /// 默认权限在主执行器从工具目录取快照，数据库合并只依赖值类型，可在后台运行。
-    static func prepareServersForManager(
-        _ storedServers: [MCPServerConfiguration],
-        deletedBuiltInServerIDs: Set<UUID>,
-        defaults: [MCPServerConfiguration]
-    ) -> (
-        servers: [MCPServerConfiguration],
-        serversToPersist: [MCPServerConfiguration],
-        serversToDelete: [MCPServerConfiguration]
-    ) {
-        let serversToDelete = storedServers.filter(isObsoleteBuiltInAppToolServer)
-        var servers = storedServers.filter { !isObsoleteBuiltInAppToolServer($0) }
-        var serversToPersist: [MCPServerConfiguration] = []
-
-        for defaultServer in defaults {
-            if let index = servers.firstIndex(where: { $0.id == defaultServer.id }) {
-                var server = servers[index]
-                var shouldPersist = false
-                if server.transport != defaultServer.transport {
-                    server.transport = defaultServer.transport
-                    shouldPersist = true
-                }
-                if server.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    server.displayName = defaultServer.displayName
-                    shouldPersist = true
-                }
-                if shouldPersist {
-                    serversToPersist.append(server)
-                }
-                servers[index] = server
-            } else if !deletedBuiltInServerIDs.contains(defaultServer.id) {
-                servers.append(defaultServer)
-                serversToPersist.append(defaultServer)
-            }
-        }
-
-        return (servers, serversToPersist, serversToDelete)
-    }
-
-    static func displayName(for category: AppToolCatalogCategory) -> String {
-        switch category {
-        case .interaction:
-            return NSLocalizedString("内建交互工具", comment: "Built-in app tool interaction MCP server name")
-        case .conversation:
-            return NSLocalizedString("内建会话协作", comment: "Built-in conversation MCP server name")
-        case .file:
-            return NSLocalizedString("内建文件操作", comment: "Built-in app tool file MCP server name")
-        case .database:
-            return NSLocalizedString("内建数据库操作", comment: "Built-in app tool database MCP server name")
-        case .custom:
-            return NSLocalizedString("内建自定义工具", comment: "Built-in app tool custom MCP server name")
-        case .linux:
-            #if os(macOS)
-            return NSLocalizedString("mac.shell.title", value: "Local Shell", comment: "")
-            #else
-            return NSLocalizedString("内建本地 Linux", comment: "Built-in local Linux MCP server name")
-            #endif
-        case .browser:
-            return NSLocalizedString("内建 Browser Agent", comment: "Built-in Browser Agent MCP server name")
-        case .deviceOperations:
-            return NSLocalizedString("内建设备操作", comment: "Built-in device operations MCP server name")
-        case .mediaEnvironment:
-            return NSLocalizedString("内建媒体与环境", comment: "Built-in media and environment MCP server name")
-        case .visionLanguage:
-            return NSLocalizedString("内建视觉与语言", comment: "Built-in vision and language MCP server name")
-        case .feedback:
-            return displayName(for: .interaction)
-        }
-    }
-
-    static func notes(for category: AppToolCatalogCategory) -> String {
-        switch category {
-        case .interaction:
-            return NSLocalizedString("提供文本回显、输入草稿填充与反馈工单提交等本地交互工具。", comment: "Built-in app tool interaction MCP server notes")
-        case .conversation:
-            return NSLocalizedString("提供创建、联系、读取、等待和停止长期协作会话，以及按需查询可用模型的工具。", comment: "Built-in conversation MCP server notes")
-        case .file:
-            #if os(macOS)
-            return NSLocalizedString("mac.shell.files.help", value: "Relative paths and app:// access the app's Documents. Native Shell commands use macOS paths and permissions.", comment: "")
-            #else
-            return NSLocalizedString("提供统一文件工具：相对路径和 app:// 访问 Documents；Agent 模式还可通过 linux:// 与 mount:// 访问 Linux 和授权挂载。", comment: "Built-in app tool file MCP server notes")
-            #endif
-        case .database:
-            return NSLocalizedString("提供聊天、配置与记忆数据库的表结构查看、只读查询和受限写入工具。", comment: "Built-in app tool database MCP server notes")
-        case .custom:
-            return NSLocalizedString("提供 JavaScript 执行器以及由 AI 创建的可复用脚本工具。", comment: "Built-in app tool custom MCP server notes")
-        case .linux:
-            #if os(macOS)
-            return NSLocalizedString("mac.shell.tool.process", value: "Manage this conversation's native macOS tasks and PTYs: list, start, read, write, resize, interrupt, cancel or finish input.", comment: "")
-            #else
-            return NSLocalizedString("在 Agent 模式中提供 Linux 命令、Shell 与交互式进程管理；不会自动安装软件。", comment: "Built-in local Linux MCP server notes")
-            #endif
-        case .browser:
-            return NSLocalizedString("提供按会话隔离的网页导航、读取和交互；用户可接管同一标签页。", comment: "Built-in Browser Agent MCP server notes")
-        case .deviceOperations:
-            return NSLocalizedString("提供剪贴板、通知、AlarmKit、地图、URL 与只读设备状态工具。该服务器默认不加入聊天。", comment: "Built-in device operations MCP server notes")
-        case .mediaEnvironment:
-            return NSLocalizedString("提供语音、ETOS 内媒体播放、WeatherKit、HomeKit、蓝牙与 NFC 工具。该服务器默认不加入聊天。", comment: "Built-in media and environment MCP server notes")
-        case .visionLanguage:
-            return NSLocalizedString("提供 Vision 与 NaturalLanguage 的确定性端侧分析工具，不会启动大模型。该服务器默认不加入聊天。", comment: "Built-in vision and language MCP server notes")
-        case .feedback:
-            return notes(for: .interaction)
-        }
-    }
 
     @MainActor
     static func appToolDescriptions(
@@ -272,17 +35,7 @@ public enum MCPBuiltInAppToolServer {
         appToolManager: AppToolManager,
         includeUnavailablePlatformTools: Bool = false
     ) -> [MCPToolDescription] {
-        if category == .conversation {
-            return ConversationToolDefinitions.all.map { tool in
-                MCPToolDescription(
-                    toolId: tool.name,
-                    description: tool.description,
-                    inputSchema: tool.parameters,
-                    examples: nil
-                )
-            }
-        }
-
+        #if os(macOS)
         if category == .linux {
             return LocalLinuxToolDefinitions.all.map { tool in
                 MCPToolDescription(
@@ -293,6 +46,10 @@ public enum MCPBuiltInAppToolServer {
                 )
             }
         }
+
+        #else
+        if category == .linux { return [] }
+        #endif
 
         if category == .browser {
             return BrowserAgentToolDefinitions.all.map { tool in
@@ -349,16 +106,15 @@ public enum MCPBuiltInAppToolServer {
                 )
             }
 
-        return staticTools + customTools + [MCPServerManagementTool.definition]
+        return staticTools + customTools
     }
 
     static func category(for toolName: String) -> AppToolCatalogCategory? {
-        if ConversationToolDefinitions.contains(toolName) {
-            return .conversation
-        }
+        #if os(macOS)
         if LocalLinuxToolDefinitions.contains(toolName) {
             return .linux
         }
+        #endif
         if BrowserAgentToolDefinitions.contains(toolName) {
             return .browser
         }
@@ -370,9 +126,6 @@ public enum MCPBuiltInAppToolServer {
         }
         if MCPNativeVisionLanguageToolDefinitions.contains(toolName) {
             return .visionLanguage
-        }
-        if toolName == MCPServerManagementTool.name {
-            return .custom
         }
         if let kind = AppToolKind.resolve(from: toolName),
            !AppToolManager.builtInToolKinds.contains(kind) {
@@ -386,32 +139,13 @@ public enum MCPBuiltInAppToolServer {
 
     @MainActor
     static func executeTool(toolName: String, argumentsJSON: String) async throws -> String {
-        if toolName == MCPServerManagementTool.name {
-            return try MCPServerManagementTool.execute(argumentsJSON: argumentsJSON)
-        }
         return try await AppToolManager.shared.executeToolForBuiltInMCP(
             toolName: toolName,
             argumentsJSON: argumentsJSON
         )
     }
 
-    static func executeConversationTool(
-        toolName: String,
-        argumentsJSON: String,
-        sourceSessionID: UUID,
-        toolCallID: String
-    ) async throws -> String {
-        let result = try await ChatService.shared.executeConversationTool(
-            InternalToolCall(
-                id: toolCallID,
-                toolName: toolName,
-                arguments: argumentsJSON
-            ),
-            sourceSessionID: sourceSessionID
-        )
-        return result.content
-    }
-
+    #if os(macOS)
     static func executeLinuxTool(
         toolName: String,
         argumentsJSON: String,
@@ -419,7 +153,6 @@ public enum MCPBuiltInAppToolServer {
         sourceRunID: UUID,
         triggeringMessageID: UUID?,
         toolCallID: String,
-        selectedMCPServerIDs: [UUID],
         approvedCommandRuleIDs: Set<UUID>
     ) async throws -> String {
         try await LocalLinuxToolExecutor.shared.execute(
@@ -429,10 +162,11 @@ public enum MCPBuiltInAppToolServer {
             runID: sourceRunID,
             triggeringMessageID: triggeringMessageID,
             toolCallID: toolCallID,
-            selectedMCPServerIDs: selectedMCPServerIDs,
             approvedCommandRuleIDs: approvedCommandRuleIDs
         )
     }
+
+    #endif
 
     static func executeFileTool(toolName: String, argumentsJSON: String) async throws -> String {
         try await LocalAgentFileToolExecutor.shared.execute(
@@ -447,8 +181,7 @@ public enum MCPBuiltInAppToolServer {
         sourceSessionID: UUID,
         sourceRunID: UUID,
         triggeringMessageID: UUID?,
-        toolCallID: String,
-        selectedMCPServerIDs: [UUID]
+        toolCallID: String
     ) async throws -> String {
         try await BrowserAgentToolExecutor.shared.execute(
             toolName: toolName,
@@ -456,8 +189,7 @@ public enum MCPBuiltInAppToolServer {
             sessionID: sourceSessionID,
             runID: sourceRunID,
             triggeringMessageID: triggeringMessageID,
-            toolCallID: toolCallID,
-            selectedMCPServerIDs: selectedMCPServerIDs
+            toolCallID: toolCallID
         )
     }
 
@@ -485,32 +217,6 @@ public enum MCPBuiltInAppToolServer {
         return try MCPNativeJSON.text(result)
     }
 
-    @MainActor
-    private static func isMigratedEnabled(
-        _ tool: MCPToolDescription,
-        appToolManager: AppToolManager
-    ) -> Bool {
-        if let kind = AppToolKind.resolve(from: tool.toolId) {
-            return appToolManager.isToolEnabled(kind)
-        }
-        return appToolManager.customJSTool(withToolName: tool.toolId)?.isEnabled ?? true
-    }
-
-    @MainActor
-    private static func migratedApprovalPolicy(
-        for toolName: String,
-        appToolManager: AppToolManager
-    ) -> MCPToolApprovalPolicy? {
-        let appPolicy: AppToolApprovalPolicy?
-        if let kind = AppToolKind.resolve(from: toolName) {
-            appPolicy = appToolManager.approvalPolicy(for: kind)
-        } else {
-            appPolicy = appToolManager.customJSTool(withToolName: toolName)?.approvalPolicy
-        }
-        guard let appPolicy else { return nil }
-        return MCPToolApprovalPolicy(rawValue: appPolicy.rawValue)
-    }
-
     private static func customJSToolDescription(for tool: AppToolCustomJSTool) -> String {
         String(
             format: NSLocalizedString(
@@ -520,94 +226,6 @@ public enum MCPBuiltInAppToolServer {
             tool.engine.displayName,
             tool.toolDescription
         )
-    }
-}
-
-public actor MCPBuiltInAppToolTransport: Transport, MCPSDKTransportControl {
-    private let engine: MCPBuiltInAppToolServerEngine
-    private let loggerInstance = Logger(
-        label: "etos.mcp.transport.builtin-app-tool",
-        factory: { _ in SwiftLogNoOpLogHandler() }
-    )
-    private let stream: AsyncThrowingStream<Data, Error>
-    private let continuation: AsyncThrowingStream<Data, Error>.Continuation
-    private var connected = false
-    private var protocolVersion: String?
-
-    public nonisolated var logger: Logger { loggerInstance }
-
-    public init(category: AppToolCatalogCategory) {
-        self.engine = MCPBuiltInAppToolServerEngine(category: category)
-        var continuation: AsyncThrowingStream<Data, Error>.Continuation!
-        self.stream = AsyncThrowingStream { continuation = $0 }
-        self.continuation = continuation
-    }
-
-    public func connect() async throws {
-        connected = true
-    }
-
-    public func disconnect() async {
-        guard connected else { return }
-        connected = false
-        continuation.finish()
-    }
-
-    public nonisolated func disconnect() {
-        Task {
-            await self.disconnect()
-        }
-    }
-
-    public func send(_ data: Data) async throws {
-        guard connected else {
-            throw MCPClientError.notConnected
-        }
-        if isJSONRPCMessageWithoutExpectedResponse(data) {
-            try await engine.handleNotification(data)
-            return
-        }
-        let response = try await engine.handleMessage(data)
-        continuation.yield(response)
-    }
-
-    public func receive() -> AsyncThrowingStream<Data, Error> {
-        stream
-    }
-
-    public func currentResumptionToken() async -> String? {
-        nil
-    }
-
-    public func updateResumptionToken(_ token: String?) async {}
-
-    public func updateProtocolVersion(_ protocolVersion: String?) async {
-        self.protocolVersion = protocolVersion
-    }
-
-    public func terminateSession() async {
-        await disconnect()
-    }
-}
-
-public final class MCPBuiltInAppToolLegacyTransport: MCPTransport, MCPProtocolVersionConfigurableTransport, @unchecked Sendable {
-    private let engine: MCPBuiltInAppToolServerEngine
-    private var protocolVersion: String?
-
-    public init(category: AppToolCatalogCategory) {
-        self.engine = MCPBuiltInAppToolServerEngine(category: category)
-    }
-
-    public func sendMessage(_ payload: Data) async throws -> Data {
-        try await engine.handleMessage(payload)
-    }
-
-    public func sendNotification(_ payload: Data) async throws {
-        try await engine.handleNotification(payload)
-    }
-
-    public func updateProtocolVersion(_ protocolVersion: String?) async {
-        self.protocolVersion = protocolVersion
     }
 }
 
@@ -706,27 +324,7 @@ actor MCPBuiltInAppToolServerEngine {
                     throw MCPNativeCapabilityError.unsupportedTool(name)
                 }
             }
-            if category == .conversation {
-                guard let rawSourceSessionID = arguments.removeValue(
-                    forKey: MCPBuiltInAppToolServer.conversationSourceSessionIDArgument
-                ) as? String,
-                      let sourceSessionID = UUID(uuidString: rawSourceSessionID),
-                      let toolCallID = arguments.removeValue(
-                        forKey: MCPBuiltInAppToolServer.conversationToolCallIDArgument
-                      ) as? String,
-                      !toolCallID.isEmpty else {
-                    throw ConversationRuntimeError.sessionNotFound
-                }
-                argumentsJSON = try prettyPrintedJSON(arguments, prettyPrinted: false)
-                let result = try await MCPBuiltInAppToolServer.executeConversationTool(
-                    toolName: name,
-                    argumentsJSON: argumentsJSON,
-                    sourceSessionID: sourceSessionID,
-                    toolCallID: toolCallID
-                )
-                return successToolResult(toolName: name, result: result)
-            }
-
+            #if os(macOS)
             if category == .linux {
                 guard let rawSourceSessionID = arguments.removeValue(
                     forKey: MCPBuiltInAppToolServer.conversationSourceSessionIDArgument
@@ -747,9 +345,9 @@ actor MCPBuiltInAppToolServerEngine {
                 let triggeringMessageID = (arguments.removeValue(
                     forKey: MCPBuiltInAppToolServer.localAgentTriggeringMessageIDArgument
                 ) as? String).flatMap(UUID.init(uuidString:))
-                let selectedMCPServerIDs = (arguments.removeValue(
+                arguments.removeValue(
                     forKey: MCPBuiltInAppToolServer.localAgentSelectedMCPServerIDsArgument
-                ) as? [String] ?? []).compactMap(UUID.init(uuidString:))
+                )
                 let approvedCommandRuleIDs = Set((arguments.removeValue(
                     forKey: MCPBuiltInAppToolServer.localAgentApprovedCommandRuleIDsArgument
                 ) as? [String] ?? []).compactMap(UUID.init(uuidString:)))
@@ -761,11 +359,12 @@ actor MCPBuiltInAppToolServerEngine {
                     sourceRunID: sourceRunID,
                     triggeringMessageID: triggeringMessageID,
                     toolCallID: toolCallID,
-                    selectedMCPServerIDs: selectedMCPServerIDs,
                     approvedCommandRuleIDs: approvedCommandRuleIDs
                 )
                 return successToolResult(toolName: name, result: result)
             }
+
+            #endif
 
             if category == .browser {
                 guard let rawSourceSessionID = arguments.removeValue(
@@ -787,9 +386,7 @@ actor MCPBuiltInAppToolServerEngine {
                 let triggeringMessageID = (arguments.removeValue(
                     forKey: MCPBuiltInAppToolServer.localAgentTriggeringMessageIDArgument
                 ) as? String).flatMap(UUID.init(uuidString:))
-                let selectedMCPServerIDs = (arguments.removeValue(
-                    forKey: MCPBuiltInAppToolServer.localAgentSelectedMCPServerIDsArgument
-                ) as? [String] ?? []).compactMap(UUID.init(uuidString:))
+                arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentSelectedMCPServerIDsArgument)
                 arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentApprovedCommandRuleIDsArgument)
                 argumentsJSON = try prettyPrintedJSON(arguments, prettyPrinted: false)
                 let result = try await MCPBuiltInAppToolServer.executeBrowserTool(
@@ -798,8 +395,7 @@ actor MCPBuiltInAppToolServerEngine {
                     sourceSessionID: sourceSessionID,
                     sourceRunID: sourceRunID,
                     triggeringMessageID: triggeringMessageID,
-                    toolCallID: toolCallID,
-                    selectedMCPServerIDs: selectedMCPServerIDs
+                    toolCallID: toolCallID
                 )
                 return successToolResult(toolName: name, result: result)
             }

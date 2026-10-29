@@ -6,10 +6,10 @@ import Testing
 struct ToolConfigurationPersistenceTests {
     @Test("默认工具迁移只启用首次出现的项目，尊重已知关闭状态")
     func defaultMigrationRespectsDisabledTools() {
-        let defaults: Set<String> = ["show_widget", "ask_user_input", "get_system_time"]
-        let ids = AppToolInitialState.migratedEnabledIDs(stored: ["ask_user_input", "unknown"],
-                                                        knownDefaults: ["show_widget", "ask_user_input"], defaults: defaults)
-        #expect(ids == ["ask_user_input", "get_system_time"])
+        let defaults: Set<String> = ["show_widget", "get_system_time"]
+        let ids = AppToolInitialState.migratedEnabledIDs(stored: ["show_widget", "unknown"],
+                                                        knownDefaults: ["show_widget"], defaults: defaults)
+        #expect(ids == ["show_widget", "get_system_time"])
         #expect(AppToolInitialState.migratedEnabledIDs(stored: nil, knownDefaults: defaults, defaults: defaults) == defaults)
         #expect(AppToolInitialState.migratedEnabledIDs(stored: [], knownDefaults: defaults, defaults: defaults).isEmpty)
     }
@@ -21,9 +21,8 @@ struct ToolConfigurationPersistenceTests {
             try put("appTools.enabledToolIDs", text: "[\"future_tool\",\"show_widget\",\"ask_user_input\",\"echo_text\"]", in: database)
             try put("appTools.toolApprovalPolicies", text: "{\"future_tool\":\"deny\"}", in: database)
             _ = try AppToolSettingsWorker.setEnabled(false, kind: .showWidget, in: database)
-            _ = try AppToolSettingsWorker.setEnabled(false, kind: .askUserInput, in: database)
             let ids = try AppToolSettingsWorker.setEnabled(true, kind: .getSystemTime, in: database)
-            #expect(ids == ["future_tool", "echo_text", "get_system_time"])
+            #expect(ids == ["future_tool", "ask_user_input", "echo_text", "get_system_time"])
             #expect(try String.fetchOne(database, sql: "SELECT value_text FROM app_config WHERE key = 'appTools.toolApprovalPolicies'") == "{\"future_tool\":\"deny\"}")
         }
     }

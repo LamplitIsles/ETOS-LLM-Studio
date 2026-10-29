@@ -418,74 +418,6 @@ extension DailyPulseManager {
         return chatCapableModels.first
     }
 
-    internal nonisolated static func makeMCPContextEntries(
-        servers: [MCPServerConfiguration],
-        metadataByServerID: [UUID: MCPServerMetadataCache?],
-        limit: Int
-    ) -> [String] {
-        let prioritizedServers = servers.sorted { lhs, rhs in
-            if lhs.isSelectedForChat != rhs.isSelectedForChat {
-                return lhs.isSelectedForChat && !rhs.isSelectedForChat
-            }
-
-            let lhsMetadata = metadataByServerID[lhs.id] ?? nil
-            let rhsMetadata = metadataByServerID[rhs.id] ?? nil
-            let lhsCapabilityCount = (lhsMetadata?.tools.count ?? 0) + (lhsMetadata?.prompts.count ?? 0) + (lhsMetadata?.resources.count ?? 0)
-            let rhsCapabilityCount = (rhsMetadata?.tools.count ?? 0) + (rhsMetadata?.prompts.count ?? 0) + (rhsMetadata?.resources.count ?? 0)
-            if lhsCapabilityCount != rhsCapabilityCount {
-                return lhsCapabilityCount > rhsCapabilityCount
-            }
-            return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
-        }
-
-        var entries: [String] = []
-        for server in prioritizedServers {
-            var parts: [String] = []
-
-            if server.isSelectedForChat {
-                parts.append(NSLocalizedString("已选中用于聊天", comment: "Daily Pulse MCP context selected flag"))
-            }
-
-            if let notes = normalizedOptionalText(server.notes, fallback: nil) {
-                parts.append(String(format: NSLocalizedString("备注：%@", comment: "Daily Pulse MCP context notes"), truncated(notes, limit: 36)))
-            }
-
-            if let metadata = metadataByServerID[server.id] ?? nil {
-                let enabledToolIDs = metadata.tools
-                    .filter { server.isToolEnabled($0.toolId) }
-                    .map(\.toolId)
-                if !enabledToolIDs.isEmpty {
-                    let sample = enabledToolIDs.prefix(3).joined(separator: NSLocalizedString("、", comment: "Daily Pulse compact list separator"))
-                    parts.append(String(format: NSLocalizedString("工具 %d 个（%@）", comment: "Daily Pulse MCP context tool count"), enabledToolIDs.count, sample))
-                }
-
-                let promptNames = metadata.prompts.map(\.name)
-                if !promptNames.isEmpty {
-                    let sample = promptNames.prefix(2).joined(separator: NSLocalizedString("、", comment: "Daily Pulse compact list separator"))
-                    parts.append(String(format: NSLocalizedString("提示词：%@", comment: "Daily Pulse MCP context prompts"), sample))
-                }
-
-                let resourceIDs = metadata.resources.map(\.resourceId)
-                if !resourceIDs.isEmpty {
-                    let sample = resourceIDs.prefix(2).joined(separator: NSLocalizedString("、", comment: "Daily Pulse compact list separator"))
-                    parts.append(String(format: NSLocalizedString("资源：%@", comment: "Daily Pulse MCP context resources"), sample))
-                }
-            }
-
-            guard !parts.isEmpty else { continue }
-            entries.append(String(
-                format: NSLocalizedString("- %@：%@", comment: "Daily Pulse MCP context server entry"),
-                server.displayName,
-                parts.joined(separator: NSLocalizedString("；", comment: "Daily Pulse digest separator"))
-            ))
-            if entries.count >= max(1, limit) {
-                break
-            }
-        }
-
-        return entries
-    }
-
     internal nonisolated static func makeShortcutContextEntries(
         tools: [ShortcutToolDefinition],
         limit: Int
@@ -522,8 +454,6 @@ extension DailyPulseManager {
 
     internal nonisolated static func makeRecentExternalSnapshotEntries(
         shortcutResult: ShortcutToolExecutionResult?,
-        mcpOperationOutput: String?,
-        mcpOperationError: String?,
         limit: Int
     ) -> [String] {
         var entries: [String] = []
@@ -543,12 +473,6 @@ extension DailyPulseManager {
                 )
                 entries.append(String(format: NSLocalizedString("- 最近快捷指令失败（%@，%@）：%@", comment: "Daily Pulse recent shortcut failure entry"), shortcutResult.toolName, timeText, preview))
             }
-        }
-
-        if let output = normalizedOptionalText(mcpOperationOutput, fallback: nil) {
-            entries.append(String(format: NSLocalizedString("- 最近 MCP 输出：%@", comment: "Daily Pulse recent MCP output entry"), resultPreviewText(output, fallback: NSLocalizedString("暂无输出", comment: "Daily Pulse empty MCP output"))))
-        } else if let error = normalizedOptionalText(mcpOperationError, fallback: nil) {
-            entries.append(String(format: NSLocalizedString("- 最近 MCP 错误：%@", comment: "Daily Pulse recent MCP error entry"), resultPreviewText(error, fallback: NSLocalizedString("暂无错误详情", comment: "Daily Pulse empty MCP error"))))
         }
 
         return Array(entries.prefix(max(1, limit)))

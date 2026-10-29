@@ -101,7 +101,6 @@ struct MacChatQuickActionSheet: View {
         switch target.page {
         case .toolCenter: MacToolCenterView(isActive: available)
         case .usageAnalytics: MacUsageAnalyticsView(isActive: available)
-        case .mcp: MacMCPListView(isActive: available)
         case .agentSkills: MacSkillsView(isActive: available, model: workspace.skills)
         case .shortcuts: MacShortcutToolsView(isActive: available, model: workspace.shortcutTools)
         case .roleplay: MacRoleplayLibraryView(model: workspace.roleplayModel)

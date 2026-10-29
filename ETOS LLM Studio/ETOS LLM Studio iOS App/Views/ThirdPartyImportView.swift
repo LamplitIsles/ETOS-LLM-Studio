@@ -19,7 +19,6 @@ struct ThirdPartyImportView: View {
     @State private var preparedResult: ThirdPartyImportPreparedResult?
     @State private var conflictPreview: ConflictPreview = .empty
     @State private var includeProviders: Bool = true
-    @State private var includeMCPServers: Bool = true
     @State private var includeSkills: Bool = true
     @State private var sensitiveCredentialsAcknowledged: Bool = false
     @State private var importReport: ThirdPartyImportReport?
@@ -87,10 +86,6 @@ struct ThirdPartyImportView: View {
                     )
                     if preparedResult.source == .openMinis {
                         row(
-                            title: NSLocalizedString("识别到 MCP Server", comment: "Parsed MCP servers row"),
-                            value: "\(preparedResult.parsedMCPServersCount)"
-                        )
-                        row(
                             title: NSLocalizedString("识别到 Skill", comment: "Recognized Skills row"),
                             value: "\(preparedResult.parsedSkillsCount)"
                         )
@@ -120,13 +115,6 @@ struct ThirdPartyImportView: View {
                             )
                         }
 
-                        if preparedResult.parsedMCPServersCount > 0 {
-                            Toggle(
-                                NSLocalizedString("导入 MCP 配置", comment: "Import MCP configurations toggle"),
-                                isOn: $includeMCPServers
-                            )
-                        }
-
                         if preparedResult.parsedSkillsCount > 0 {
                             Toggle(
                                 NSLocalizedString("导入 Agent Skills", comment: "Import OpenMinis Skills toggle"),
@@ -135,7 +123,7 @@ struct ThirdPartyImportView: View {
                         }
 
                         if preparedResult.containsSensitiveCredentials,
-                           (includeProviders || includeMCPServers) {
+                           includeProviders {
                             Toggle(
                                 NSLocalizedString("我确认导入其中的敏感凭据", comment: "Confirm importing sensitive credentials toggle"),
                                 isOn: $sensitiveCredentialsAcknowledged
@@ -242,11 +230,10 @@ struct ThirdPartyImportView: View {
             return !preparedResult.package.options.isEmpty
         }
         let hasProviderSelection = includeProviders && preparedResult.parsedProvidersCount > 0
-        let hasMCPSelection = includeMCPServers && preparedResult.parsedMCPServersCount > 0
         let hasSkillSelection = includeSkills && preparedResult.parsedSkillsCount > 0
-        let hasSelection = hasProviderSelection || hasMCPSelection || hasSkillSelection
+        let hasSelection = hasProviderSelection || hasSkillSelection
         let needsSensitiveConfirmation = preparedResult.containsSensitiveCredentials
-            && (hasProviderSelection || hasMCPSelection)
+            && hasProviderSelection
         return hasSelection && (!needsSensitiveConfirmation || sensitiveCredentialsAcknowledged)
     }
 
@@ -294,7 +281,7 @@ struct ThirdPartyImportView: View {
         case .chatbox:
             return NSLocalizedString("支持 ChatBox 导出的 chatbox-exported-data JSON，可导入提供商配置。", comment: "ChatBox source hint")
         case .openMinis:
-            return NSLocalizedString("支持 OpenMinis Provider JSON、MCP JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。", comment: "OpenMinis source hint")
+            return NSLocalizedString("支持 OpenMinis Provider JSON 与 Skill ZIP。", comment: "OpenMinis source hint")
         }
     }
 
@@ -334,7 +321,6 @@ struct ThirdPartyImportView: View {
                     guard preparationRequestID == requestID else { return }
                     preparedResult = prepared
                     includeProviders = prepared.package.options.contains(.providers)
-                    includeMCPServers = prepared.package.options.contains(.mcpServers)
                     includeSkills = prepared.package.options.contains(.skills)
                     sensitiveCredentialsAcknowledged = false
                     conflictPreview = preview
@@ -391,7 +377,6 @@ struct ThirdPartyImportView: View {
 
         var options: SyncOptions = []
         let providers: [Provider]
-        let mcpServers: [MCPServerConfiguration]
         let skills: [SyncedSkillBundle]
 
         if includeProviders, preparedResult.parsedProvidersCount > 0 {
@@ -399,13 +384,6 @@ struct ThirdPartyImportView: View {
             providers = preparedResult.package.providers
         } else {
             providers = []
-        }
-
-        if includeMCPServers, preparedResult.parsedMCPServersCount > 0 {
-            options.insert(.mcpServers)
-            mcpServers = preparedResult.package.mcpServers
-        } else {
-            mcpServers = []
         }
 
         if includeSkills, preparedResult.parsedSkillsCount > 0 {
@@ -429,7 +407,6 @@ struct ThirdPartyImportView: View {
             let scopedPackage = SyncPackage(
                 options: options,
                 providers: providers,
-                mcpServers: mcpServers,
                 skills: skills
             )
 
@@ -458,7 +435,6 @@ struct ThirdPartyImportView: View {
         importError = nil
         conflictPreview = .empty
         includeProviders = true
-        includeMCPServers = true
         includeSkills = true
         sensitiveCredentialsAcknowledged = false
     }
@@ -467,7 +443,6 @@ struct ThirdPartyImportView: View {
         var items: [String] = []
         if options.contains(.providers) { items.append(NSLocalizedString("提供商配置", comment: "")) }
         if options.contains(.backgrounds) { items.append(NSLocalizedString("背景图片", comment: "")) }
-        if options.contains(.mcpServers) { items.append(NSLocalizedString("MCP 服务器", comment: "")) }
         if options.contains(.audioFiles) { items.append(NSLocalizedString("音频文件", comment: "")) }
         if options.contains(.imageFiles) { items.append(NSLocalizedString("图片文件", comment: "")) }
         if options.contains(.skills) { items.append(NSLocalizedString("Agent Skills", comment: "Agent Skills sync option")) }

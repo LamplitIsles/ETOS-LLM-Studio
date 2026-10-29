@@ -341,9 +341,9 @@ struct ChatView: View {
             || exportErrorMessage != nil
             || isMessageSelectionMode
             || viewModel.messageRewriteErrorMessage != nil
+            || viewModel.messageEditErrorMessage != nil
+            || viewModel.unknownToolOutcome != nil
             || imageDownloadAlertMessage != nil
-            || viewModel.showMemoryEmbeddingErrorAlert
-            || viewModel.activeAskUserInputRequest != nil
     }
 
     func setChatToolPermissionAutoPresentationBlocked(_ blocked: Bool) {

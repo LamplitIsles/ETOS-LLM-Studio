@@ -10,11 +10,9 @@ import Foundation
 
 public extension Notification.Name {
     static let appToolFillUserInputRequested = Notification.Name("com.ETOS.LLM.Studio.appTool.fillUserInput")
-    static let appToolAskUserInputRequested = Notification.Name("com.ETOS.LLM.Studio.appTool.askUserInput")
 }
 
 public enum AppToolUIRequestDelivery: String, Sendable {
-    case displayed
     case queued
     case applied
 }

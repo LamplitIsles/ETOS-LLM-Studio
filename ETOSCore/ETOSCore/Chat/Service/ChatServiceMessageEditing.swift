@@ -10,18 +10,28 @@ extension ChatService {
               messagesForSessionSubject.value.first(where: { $0.id == original.id }) == original else {
             throw MessageToolCallEditingError.messageChanged
         }
-        let messages = messagesForSessionSubject.value
+        let messages = messagesSnapshot(for: session.id)
+        guard normalizedMessagesForRuntime(messages).first(where: { $0.id == original.id }) == original else {
+            throw MessageToolCallEditingError.messageChanged
+        }
         let updated = try await Task.detached(priority: .userInitiated) {
             let revised = try MessageToolCallEditingSupport.applying(edited, to: messages)
             return revised.flatMap { message in
                 message.id == edited.id ? ChatMessageAtomicContentSupport.atomized(message) : [message]
             }
         }.value
-        guard currentSessionSubject.value?.id == session.id, messagesForSessionSubject.value == messages else {
+        let committed = sessionSelectionLock.withLock {
+            guard currentSessionSubject.value?.id == session.id else { return false }
+            return mutateRuntimeMessages(for: session.id) { current in
+                guard current == messages else { return false }
+                current = updated
+                return true
+            } != nil
+        }
+        guard committed else {
             throw MessageToolCallEditingError.messageChanged
         }
-        publishMessages(updated)
-        storeRuntimeMessagesSnapshot(updated, for: session.id)
+        publishMessagesIfCurrentSession(updated, for: session.id)
         if original.imageFileNames != edited.imageFileNames {
             invalidateAttachmentCache(for: original)
         }

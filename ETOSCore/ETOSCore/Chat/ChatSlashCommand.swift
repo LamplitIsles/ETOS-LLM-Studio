@@ -17,7 +17,6 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
     case tools
     case daily
     case usage
-    case mcp
     case skills
     case shortcuts
     case roleplay
@@ -70,8 +69,6 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "每日脉冲"
         case .usage:
             return "用量统计"
-        case .mcp:
-            return "MCP 工具集成"
         case .skills:
             return "Agent Skills"
         case .shortcuts:
@@ -107,8 +104,6 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "sparkles"
         case .usage:
             return "chart.bar"
-        case .mcp:
-            return "network"
         case .skills:
             return "star"
         case .shortcuts:

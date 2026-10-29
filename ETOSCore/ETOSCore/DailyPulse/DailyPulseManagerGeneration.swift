@@ -401,21 +401,6 @@ extension DailyPulseManager {
     }
 
     private func buildExternalContext() -> DailyPulseExternalContext {
-        let mcpLines: [String]
-        if includeMCPContext {
-            let servers = MCPServerStore.loadServers()
-            let metadataByServerID = Dictionary(uniqueKeysWithValues: servers.map { server in
-                (server.id, MCPServerStore.loadMetadata(for: server.id))
-            })
-            mcpLines = Self.makeMCPContextEntries(
-                servers: servers,
-                metadataByServerID: metadataByServerID,
-                limit: 3
-            )
-        } else {
-            mcpLines = []
-        }
-
         let shortcutLines = includeShortcutContext
             ? Self.makeShortcutContextEntries(
                 tools: ShortcutToolStore.loadTools(),
@@ -425,8 +410,6 @@ extension DailyPulseManager {
         let recentSnapshotLines = includeRecentExternalResults
             ? Self.makeRecentExternalSnapshotEntries(
                 shortcutResult: ShortcutToolManager.shared.lastExecutionResult,
-                mcpOperationOutput: MCPManager.shared.lastOperationOutput,
-                mcpOperationError: MCPManager.shared.lastOperationError,
                 limit: 3
             )
             : []
@@ -444,7 +427,6 @@ extension DailyPulseManager {
         )
 
         return DailyPulseExternalContext(
-            mcpSourceLines: mcpLines,
             shortcutSourceLines: shortcutLines,
             recentSnapshotLines: recentSnapshotLines,
             trendSourceLines: trendLines,

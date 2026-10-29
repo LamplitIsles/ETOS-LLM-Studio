@@ -53,11 +53,6 @@ struct ContentView: View {
     
     var body: some View {
         contentWithNewAPIImportAlerts
-            .localLinuxDiagnosticFeedback(
-                blocked: rootToolPermissionAutoPresentationBlocked
-                    || toolPermissionCenter.activeRequest != nil
-                    || toolPermissionCenter.hasAutoPresentationBlockers(excluding: ["ios.root.presentation"])
-            )
             // 启动时检查公告
             .task {
                 await handleLaunchTasks()
@@ -93,7 +88,6 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .active:
-                    LocalLinuxBackgroundTaskManager.shared.sceneDidBecomeActive()
                     TTSManager.shared.setApplicationIsInBackground(false)
                     appLockManager.handleSceneDidBecomeActive()
                     ChatAppearanceProfileManager.shared.handleAppBecameActive()
@@ -103,7 +97,6 @@ struct ContentView: View {
                         await guideController.persistHistory()
                         await GuideConversationController.modelSetup.persistHistory()
                     }
-                    LocalLinuxBackgroundTaskManager.shared.sceneDidEnterBackground()
                     TTSManager.shared.setApplicationIsInBackground(true)
                     appLockManager.handleSceneDidEnterBackground()
                     Task {
@@ -118,11 +111,6 @@ struct ContentView: View {
 
     private var baseContent: some View {
         notificationAwareContent
-        .alert(NSLocalizedString("记忆系统需要更新", comment: ""), isPresented: $viewModel.showDimensionMismatchAlert) {
-            Button(NSLocalizedString("确定", comment: ""), role: .cancel) {}
-        } message: {
-            Text(viewModel.dimensionMismatchMessage)
-        }
         .alert(NSLocalizedString("数据库已恢复", comment: ""), isPresented: launchRecoveryNoticePresented) {
             Button(NSLocalizedString("好的", comment: ""), role: .cancel) {}
         } message: {
@@ -354,7 +342,6 @@ struct ContentView: View {
             || surveyManager.shouldShowSurvey
             || deviceMessages.currentMessage != nil
             || incomingSnapshotRestorePayload != nil
-            || viewModel.showDimensionMismatchAlert
             || viewModel.externalDocumentImportErrorMessage != nil
             || launchRecoveryNoticeMessage != nil
             || launchRecoveryRequest != nil

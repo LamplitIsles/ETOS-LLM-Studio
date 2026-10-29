@@ -7,7 +7,6 @@
 // ============================================================================
 
 import Foundation
-import MCP
 
 enum MCPNativeVisionLanguageToolDefinitions {
     private static let toolIDs: Set<String> = [

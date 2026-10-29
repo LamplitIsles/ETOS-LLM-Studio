@@ -93,5 +93,13 @@ private struct MacLaunchView: View {
         } message: {
             Text(workspace.errorMessage ?? "")
         }
+        .alert(NSLocalizedString("工具执行结果未知", comment: "Unknown tool result"), isPresented: Binding(
+            get: { workspace.unknownToolOutcome != nil },
+            set: { if !$0 { workspace.acknowledgeUnknownToolOutcome() } }
+        )) {
+            Button(NSLocalizedString("知道了", comment: "Acknowledge"), role: .cancel) { workspace.acknowledgeUnknownToolOutcome() }
+        } message: {
+            Text(NSLocalizedString("请先检查工具的实际状态，再决定下一步。", comment: "Unknown tool result guidance"))
+        }
     }
 }

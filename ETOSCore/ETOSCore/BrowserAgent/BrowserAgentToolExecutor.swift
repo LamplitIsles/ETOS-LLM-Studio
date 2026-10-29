@@ -67,8 +67,7 @@ public actor BrowserAgentToolExecutor {
         sessionID: UUID,
         runID: UUID,
         triggeringMessageID: UUID?,
-        toolCallID: String,
-        selectedMCPServerIDs: [UUID]
+        toolCallID: String
     ) async throws -> String {
         guard !isSuspendedForDataOperation else { throw CancellationError() }
         #if canImport(WebKit) && (canImport(UIKit) || os(macOS)) && !os(watchOS)
@@ -90,8 +89,9 @@ public actor BrowserAgentToolExecutor {
         }
 
 
-        let conversationRun = Persistence.loadConversationRun(id: runID)
-        let dataProfile = conversationRun?.requestConfiguration.browserDataProfile
+        let localRun = Persistence.loadLocalAgentRun(id: runID)
+        if let localRun, localRun.context.sessionID != sessionID { throw CancellationError() }
+        let dataProfile = ChatService.shared.activeRequestConfiguration(for: sessionID, runID: runID)?.browserDataProfile
             ?? Persistence.browserAgentDataProfile(sessionID: sessionID)
         let requestID = await scheduler.reserveRequestID()
         try Task.checkCancellation()
@@ -104,8 +104,8 @@ public actor BrowserAgentToolExecutor {
             kind: .browser,
             sessionID: sessionID,
             runID: runID,
-            rootRunID: conversationRun?.rootRunID ?? runID,
-            parentRunID: conversationRun?.parentRunID,
+            rootRunID: localRun?.context.rootRunID ?? runID,
+            parentRunID: localRun?.context.parentRunID,
             toolCallID: toolCallID,
             workspaceID: nil,
             executorDeviceID: executorDeviceID,

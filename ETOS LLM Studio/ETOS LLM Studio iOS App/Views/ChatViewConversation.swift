@@ -68,7 +68,6 @@ extension ChatView {
     ) -> some View {
         let displayedMessages = viewModel.displayMessages
         let sessionMessages = viewModel.allMessagesForSession
-        let retryableMessageIDs = viewModel.retryableMessageIDs
         let messageLayoutWidth = max(1, chatViewportWidth - 16)
         let reasoningPreviewMaxHeight = responsiveReasoningPreviewMaxHeight(for: chatViewportSize.height)
         ZStack {
@@ -263,7 +262,7 @@ extension ChatView {
                                     markPendingToolCallAutoOpened: { toolCallID in
                                         viewModel.markPendingToolCallAutoOpened(toolCallID)
                                     },
-                                    canRetry: retryableMessageIDs.contains(message.id),
+                                    canRetry: false,
                                     onRetry: {
                                         performDeferredRetry(message)
                                     },

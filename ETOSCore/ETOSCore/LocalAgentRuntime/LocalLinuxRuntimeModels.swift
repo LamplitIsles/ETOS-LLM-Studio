@@ -440,9 +440,6 @@ public struct AgentRuntimeContext: Codable, Equatable, Sendable {
     /// 记录 ID、名称和值一起冻结，使 MCP 的环境引用在 Run 期间不受设置修改影响。
     public let environmentReferenceSnapshots: [LocalLinuxEnvironmentReferenceSnapshot]?
     public let mountIDs: [UUID]
-    public let selectedMCPServerIDs: [UUID]
-    /// MCP 配置也属于 Run 快照；只保存所选服务器，聊天数据库由 SQLCipher 保护。
-    public let selectedMCPServerConfigurations: [MCPServerConfiguration]?
     public let browserSessionID: UUID?
     /// 浏览器数据 profile 在 Run 开始时冻结，后续设置只影响新的 Agent Run。
     public let browserDataProfile: BrowserAgentDataProfile?
@@ -467,8 +464,6 @@ public struct AgentRuntimeContext: Codable, Equatable, Sendable {
         environmentRedactionValues: [String]? = nil,
         environmentReferenceSnapshots: [LocalLinuxEnvironmentReferenceSnapshot]? = nil,
         mountIDs: [UUID],
-        selectedMCPServerIDs: [UUID],
-        selectedMCPServerConfigurations: [MCPServerConfiguration]? = nil,
         browserSessionID: UUID?,
         browserDataProfile: BrowserAgentDataProfile? = nil,
         skillSnapshots: [SkillRunSnapshot]? = nil,
@@ -489,8 +484,6 @@ public struct AgentRuntimeContext: Codable, Equatable, Sendable {
         self.environmentRedactionValues = environmentRedactionValues
         self.environmentReferenceSnapshots = environmentReferenceSnapshots
         self.mountIDs = mountIDs
-        self.selectedMCPServerIDs = selectedMCPServerIDs
-        self.selectedMCPServerConfigurations = selectedMCPServerConfigurations
         self.browserSessionID = browserSessionID
         self.browserDataProfile = browserDataProfile
         self.skillSnapshots = skillSnapshots

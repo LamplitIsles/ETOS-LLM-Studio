@@ -32,7 +32,17 @@ public actor LocalLinuxProcessEnvironmentProvider {
 
     #if os(macOS)
     static var baseEnvironment: [String: String] {
-        var values = MCPMacStdioTransport.baseEnvironment
+        let inherited = ProcessInfo.processInfo.environment
+        var values: [String: String] = [
+            "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+            "USER": NSUserName(),
+            "LOGNAME": NSUserName(),
+            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "SHELL": "/bin/zsh"
+        ]
+        for key in ["TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"] {
+            values[key] = inherited[key]
+        }
         values["TERM"] = "xterm-256color"
         values["COLORTERM"] = "truecolor"
         values["TERM_PROGRAM"] = LocalLinuxTerminalIdentity.programName
@@ -68,6 +78,7 @@ public actor LocalLinuxProcessEnvironmentProvider {
     }
 
     public func snapshot(additional: [String: String] = [:]) throws -> LocalLinuxEnvironmentSnapshot {
+        #if os(macOS)
         var environment = Self.baseEnvironment
         let enabledVariables = variables().filter(\.isEnabled)
         for variable in enabledVariables {
@@ -84,6 +95,9 @@ public actor LocalLinuxProcessEnvironmentProvider {
         }
 
         return try snapshot(explicitValues: environment, redactionValues: enabledVariables.map(\.value) + Array(additional.values))
+        #else
+        throw LocalLinuxRuntimeError.runtimeUnavailable(NSLocalizedString("本机 shell 仅在 macOS 可用。", comment: "Native shell unavailable"))
+        #endif
     }
 
     /// 为本地 MCP 解析 GRDB 变量引用。Agent Run 可传入冻结快照，确保设置页
@@ -97,6 +111,7 @@ public actor LocalLinuxProcessEnvironmentProvider {
         frozenRedactionValues: [String]? = nil,
         baseValues: [String: String]? = nil
     ) throws -> LocalLinuxEnvironmentSnapshot {
+        #if os(macOS)
         let allVariables = variables()
         var environment: [String: String]
         var redactionValues: [String]
@@ -135,6 +150,9 @@ public actor LocalLinuxProcessEnvironmentProvider {
             redactionValues.append(value)
         }
         return try snapshot(explicitValues: environment, redactionValues: redactionValues)
+        #else
+        throw LocalLinuxRuntimeError.runtimeUnavailable(NSLocalizedString("本机 shell 仅在 macOS 可用。", comment: "Native shell unavailable"))
+        #endif
     }
 
     public func snapshot(explicitValues: [String: String]) throws -> LocalLinuxEnvironmentSnapshot {

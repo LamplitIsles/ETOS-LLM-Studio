@@ -22,25 +22,8 @@ extension ChatService {
         } else {
             return
         }
-        var messages = messagesSnapshot(for: resolvedSessionID)
-
         // 格式化错误内容，使其更简洁易读
         let (formattedContent, fullContent) = formatErrorContent(content, httpStatusCode: httpStatusCode)
-
-        let loadingIndex: Int? = {
-            // 优先使用当前请求记录的 loading 消息，避免误命中历史中的空 assistant（例如工具调用占位消息）。
-            if let loadingMessageID = loadingMessageID(for: resolvedSessionID),
-               let index = messages.firstIndex(where: { $0.id == loadingMessageID && $0.role == .assistant }) {
-                return index
-            }
-
-            // 回退策略仅允许替换“最后一条消息且为空 assistant”，避免破坏中间历史结构。
-            guard let lastIndex = messages.indices.last else { return nil }
-            let lastMessage = messages[lastIndex]
-            let isLastLoadingAssistant = lastMessage.role == .assistant
-                && lastMessage.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            return isLastLoadingAssistant ? lastIndex : nil
-        }()
 
         func makeErrorMessage(
             _ requestedAt: Date?,
@@ -71,44 +54,61 @@ extension ChatService {
             return message
         }
 
-        // 找到正在加载中的消息
-        if let loadingIndex {
-            let loadingMessage = finalizeInterruptedReasoningMessage(messages[loadingIndex])
-            messages[loadingIndex] = loadingMessage
-            let loadingAttemptMetadata = responseAttemptMetadata(from: loadingMessage)
-            let shouldPreserveLoadingMessage = messageHasDisplayablePayload(loadingMessage)
+        let messages = mutateRuntimeMessages(for: resolvedSessionID, requireCurrentRequestIfPresent: true) { messages in
+            let loadingIndex: Int? = {
+                // 优先使用当前请求记录的 loading 消息，避免误命中历史中的空 assistant（例如工具调用占位消息）。
+                if let loadingMessageID = loadingMessageID(for: resolvedSessionID),
+                   let index = messages.firstIndex(where: { $0.id == loadingMessageID && $0.role == .assistant }) {
+                    return index
+                }
 
-            if shouldPreserveLoadingMessage {
-                messages.insert(makeErrorMessage(loadingMessage.requestedAt, metadata: loadingAttemptMetadata), at: loadingIndex + 1)
-                logger.error("流式内容已保留，并追加错误消息。")
+                // 回退策略仅允许替换“最后一条消息且为空 assistant”，避免破坏中间历史结构。
+                guard let lastIndex = messages.indices.last else { return nil }
+                let lastMessage = messages[lastIndex]
+                let isLastLoadingAssistant = lastMessage.role == .assistant
+                    && lastMessage.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                return isLastLoadingAssistant ? lastIndex : nil
+            }()
+
+            // 找到正在加载中的消息
+            if let loadingIndex {
+                let loadingMessage = finalizeInterruptedReasoningMessage(messages[loadingIndex])
+                messages[loadingIndex] = loadingMessage
+                let loadingAttemptMetadata = responseAttemptMetadata(from: loadingMessage)
+                let shouldPreserveLoadingMessage = messageHasDisplayablePayload(loadingMessage)
+
+                if shouldPreserveLoadingMessage {
+                    messages.insert(makeErrorMessage(loadingMessage.requestedAt, metadata: loadingAttemptMetadata), at: loadingIndex + 1)
+                    logger.error("流式内容已保留，并追加错误消息。")
+                } else {
+                    // 正常场景：将 loading message 转为 error
+                    messages[loadingIndex] = ChatMessage(
+                        id: loadingMessage.id,
+                        role: .error,
+                        content: formattedContent,
+                        requestedAt: loadingMessage.requestedAt,
+                        modelReference: loadingMessage.modelReference,
+                        costEstimate: loadingMessage.costEstimate,
+                        fullErrorContent: fullContent,
+                        sentSystemPromptSnapshot: loadingMessage.sentSystemPromptSnapshot,
+                        responseGroupID: loadingMessage.responseGroupID,
+                        responseAttemptID: loadingMessage.responseAttemptID,
+                        responseAttemptIndex: loadingMessage.responseAttemptIndex,
+                        selectedResponseAttemptID: loadingMessage.selectedResponseAttemptID ?? loadingMessage.responseAttemptID
+                    )
+                    logger.error("错误消息已添加。")
+                }
             } else {
-                // 正常场景：将 loading message 转为 error
-                messages[loadingIndex] = ChatMessage(
-                    id: loadingMessage.id,
-                    role: .error,
-                    content: formattedContent,
-                    requestedAt: loadingMessage.requestedAt,
-                    modelReference: loadingMessage.modelReference,
-                    costEstimate: loadingMessage.costEstimate,
-                    fullErrorContent: fullContent,
-                    sentSystemPromptSnapshot: loadingMessage.sentSystemPromptSnapshot,
-                    responseGroupID: loadingMessage.responseGroupID,
-                    responseAttemptID: loadingMessage.responseAttemptID,
-                    responseAttemptIndex: loadingMessage.responseAttemptIndex,
-                    selectedResponseAttemptID: loadingMessage.selectedResponseAttemptID ?? loadingMessage.responseAttemptID
-                )
+                // 没有 loading message，直接添加错误
+                messages.append(makeErrorMessage(nil))
                 logger.error("错误消息已添加。")
             }
-        } else {
-            // 没有 loading message，直接添加错误
-            messages.append(makeErrorMessage(nil))
-            logger.error("错误消息已添加。")
+
+            messages = messages.flatMap(ChatMessageAtomicContentSupport.atomized)
+
+            return true
         }
-
-        messages = messages.flatMap(ChatMessageAtomicContentSupport.atomized)
-
-        storeRuntimeMessagesSnapshot(messages, for: resolvedSessionID)
-        publishMessagesIfCurrentSession(messages, for: resolvedSessionID)
+        if let messages { publishMessagesIfCurrentSession(messages, for: resolvedSessionID) }
     }
 
     // MARK: - 附件转写
@@ -152,16 +152,13 @@ extension ChatService {
     }
 
     func applyTranscriptionResult(_ transcript: String, toMessageWithID messageID: UUID, in sessionID: UUID, placeholder: String) async {
-        guard var message = runtimeMessagesSnapshot(for: sessionID)?.first(where: { $0.id == messageID }) else {
-            logger.warning("未找到需要更新的语音消息（可能会话已被切换或删除）。")
-            return
+        let updated = await updateExistingConversationMessage(id: messageID, in: sessionID) { message in
+            guard message.content == placeholder else { return false }
+            message.content = transcript
+            return true
         }
-
-        message.content = transcript
-        do {
-            _ = try await upsertConversationMessage(message, to: sessionID)
-        } catch {
-            logger.error("原子保存语音转写结果失败：\(error.localizedDescription)")
+        guard updated else {
+            logger.warning("未找到需要更新的语音消息（可能会话已被切换或删除）。")
             return
         }
 
@@ -228,13 +225,11 @@ extension ChatService {
     }
 
     func finalizeInterruptedReasoningMessageIfNeeded(loadingMessageID: UUID, in sessionID: UUID) async {
-        guard let message = messagesSnapshot(for: sessionID).first(where: { $0.id == loadingMessageID }) else { return }
-        let finalizedMessage = finalizeInterruptedReasoningMessage(message)
-        guard finalizedMessage != message else { return }
-        do {
-            _ = try await upsertConversationMessage(finalizedMessage, to: sessionID)
-        } catch {
-            logger.error("原子保存中断推理消息失败：\(error.localizedDescription)")
+        await updateExistingConversationMessage(id: loadingMessageID, in: sessionID) { message in
+            let finalized = finalizeInterruptedReasoningMessage(message)
+            guard finalized != message else { return false }
+            message = finalized
+            return true
         }
     }
 
@@ -249,8 +244,9 @@ extension ChatService {
     }
 
     /// 将最终确定的消息更新到消息列表中
-    func updateMessage(with newMessage: ChatMessage, for loadingMessageID: UUID, in sessionID: UUID) async {
-        let priorMessages = messagesSnapshot(for: sessionID)
+    @discardableResult
+    func updateMessage(with newMessage: ChatMessage, for loadingMessageID: UUID, in sessionID: UUID) async -> Bool {
+        guard let priorMessages = currentRequestMessages(containing: loadingMessageID, in: sessionID) else { return false }
         let didProcessRoleplay = RoleplayRuntime.processMVU(
             content: newMessage.content,
             messageID: loadingMessageID,
@@ -263,11 +259,9 @@ extension ChatService {
         let newMessage = messageRegexRules.isEmpty
             ? newMessage
             : applyMessageRegexRules(to: newMessage, rules: messageRegexRules, mode: .persist)
-        let messages = messagesSnapshot(for: sessionID)
-
-        if let index = messages.firstIndex(where: { $0.id == loadingMessageID }) {
+        let didUpdate = replaceExistingResponseMessage(id: loadingMessageID, in: sessionID) { existingMessage in
             // 无论普通请求还是轮次重试，都只替换已预先放入正确位置的占位气泡。
-            let preservedToolCalls = messages[index].toolCalls
+            let preservedToolCalls = existingMessage.toolCalls
             let mergedToolCalls: [InternalToolCall]? = {
                 if let newCalls = newMessage.toolCalls, !newCalls.isEmpty {
                     return newCalls
@@ -279,43 +273,37 @@ extension ChatService {
                 id: loadingMessageID, // 保持ID不变
                 role: newMessage.role,
                 content: newMessage.content,
-                requestedAt: messages[index].requestedAt ?? newMessage.requestedAt,
+                requestedAt: existingMessage.requestedAt ?? newMessage.requestedAt,
                 reasoningContent: newMessage.reasoningContent,
-                reasoningProviderSpecificFields: newMessage.reasoningProviderSpecificFields ?? messages[index].reasoningProviderSpecificFields,
-                providerResponseMetadata: newMessage.providerResponseMetadata ?? messages[index].providerResponseMetadata,
+                reasoningProviderSpecificFields: newMessage.reasoningProviderSpecificFields ?? existingMessage.reasoningProviderSpecificFields,
+                providerResponseMetadata: newMessage.providerResponseMetadata ?? existingMessage.providerResponseMetadata,
                 toolCalls: mergedToolCalls, // 确保 toolCalls 保持最新或沿用历史数据
-                toolCallsPlacement: newMessage.toolCallsPlacement ?? messages[index].toolCallsPlacement,
-                tokenUsage: newMessage.tokenUsage ?? messages[index].tokenUsage,
-                modelReference: newMessage.modelReference ?? messages[index].modelReference,
-                costEstimate: newMessage.costEstimate ?? messages[index].costEstimate,
-                audioFileName: newMessage.audioFileName ?? messages[index].audioFileName,
-                imageFileNames: newMessage.imageFileNames ?? messages[index].imageFileNames,
+                toolCallsPlacement: newMessage.toolCallsPlacement ?? existingMessage.toolCallsPlacement,
+                tokenUsage: newMessage.tokenUsage ?? existingMessage.tokenUsage,
+                modelReference: newMessage.modelReference ?? existingMessage.modelReference,
+                costEstimate: newMessage.costEstimate ?? existingMessage.costEstimate,
+                audioFileName: newMessage.audioFileName ?? existingMessage.audioFileName,
+                imageFileNames: newMessage.imageFileNames ?? existingMessage.imageFileNames,
                 modelExcludedImageFileNames: newMessage.modelExcludedImageFileNames
-                    ?? messages[index].modelExcludedImageFileNames,
-                fileFileNames: newMessage.fileFileNames ?? messages[index].fileFileNames,
-                videoAnalysisResults: newMessage.videoAnalysisResults ?? messages[index].videoAnalysisResults,
-                fullErrorContent: newMessage.fullErrorContent ?? messages[index].fullErrorContent,
-                sentSystemPromptSnapshot: newMessage.sentSystemPromptSnapshot ?? messages[index].sentSystemPromptSnapshot,
-                responseMetrics: newMessage.responseMetrics ?? messages[index].responseMetrics,
-                responseGroupID: newMessage.responseGroupID ?? messages[index].responseGroupID,
-                responseAttemptID: newMessage.responseAttemptID ?? messages[index].responseAttemptID,
-                responseAttemptIndex: newMessage.responseAttemptIndex ?? messages[index].responseAttemptIndex,
-                selectedResponseAttemptID: newMessage.selectedResponseAttemptID ?? messages[index].selectedResponseAttemptID
+                    ?? existingMessage.modelExcludedImageFileNames,
+                fileFileNames: newMessage.fileFileNames ?? existingMessage.fileFileNames,
+                videoAnalysisResults: newMessage.videoAnalysisResults ?? existingMessage.videoAnalysisResults,
+                fullErrorContent: newMessage.fullErrorContent ?? existingMessage.fullErrorContent,
+                sentSystemPromptSnapshot: newMessage.sentSystemPromptSnapshot ?? existingMessage.sentSystemPromptSnapshot,
+                responseMetrics: newMessage.responseMetrics ?? existingMessage.responseMetrics,
+                responseGroupID: newMessage.responseGroupID ?? existingMessage.responseGroupID,
+                responseAttemptID: newMessage.responseAttemptID ?? existingMessage.responseAttemptID,
+                responseAttemptIndex: newMessage.responseAttemptIndex ?? existingMessage.responseAttemptIndex,
+                selectedResponseAttemptID: newMessage.selectedResponseAttemptID ?? existingMessage.selectedResponseAttemptID
             )
-            updatedMessage.usesRainbowThinkingSweep = messages[index].usesRainbowThinkingSweep
-            let atomizedMessages = ChatMessageAtomicContentSupport.atomized(updatedMessage)
-            var updatedMessages = messages
-            updatedMessages.replaceSubrange(index...index, with: atomizedMessages)
-            persistAndPublishMessages(
-                updatedMessages,
-                for: sessionID,
-                keepingSpeedSamplesFor: loadingMessageID
-            )
-            if didProcessRoleplay != nil {
-                // 流式正文可能已与最终消息相同；变量快照落盘后仍需显式重算酒馆 HTML。
-                RoleplayDisplayedMessageBridge.postDidChange(sessionID: sessionID)
-            }
+            updatedMessage.usesRainbowThinkingSweep = existingMessage.usesRainbowThinkingSweep
+            return ChatMessageAtomicContentSupport.atomized(updatedMessage)
         }
+        if didUpdate, didProcessRoleplay != nil {
+            // 流式正文可能已与最终消息相同；变量快照落盘后仍需显式重算酒馆 HTML。
+            RoleplayDisplayedMessageBridge.postDidChange(sessionID: sessionID)
+        }
+        return didUpdate
     }
 
     // MARK: - 成就追踪

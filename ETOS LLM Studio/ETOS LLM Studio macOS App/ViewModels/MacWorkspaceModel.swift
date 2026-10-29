@@ -26,8 +26,6 @@ final class MacWorkspaceModel: ObservableObject {
     @Published private(set) var selectedModelSupportsRewrite = false
     @Published private(set) var messages: [MacMessagePresentation] = []
     @Published private(set) var runningSessionIDs: Set<UUID> = []
-    @Published private(set) var activeQuestionnaireModel: MacQuestionnaireModel?
-    @Published private(set) var pendingQuestionnaireSessionIDs: Set<UUID> = []
     @Published private var sendingSessionIDs: Set<UUID> = []
     @Published private(set) var isRestoringData = false
     @Published private(set) var isExportingSnapshot = false
@@ -40,6 +38,7 @@ final class MacWorkspaceModel: ObservableObject {
     @Published private(set) var audioAttachment: AudioAttachment?
     @Published private(set) var recoveryRequest: Persistence.LaunchRecoveryRequest?
     @Published var errorMessage: String?
+    @Published private(set) var unknownToolOutcome: ChatUnknownToolOutcome?
     @Published var draft = "" {
         didSet {
             guard phase == .ready else { return }
@@ -88,9 +87,7 @@ final class MacWorkspaceModel: ObservableObject {
     private var roleplayHostVisible = false
     private var roleplayLifecycleRevision = UUID()
     @Published private var isClosingRoleplay = false
-    private var questionnaires: [UUID: [MacQuestionnaireModel]] = [:]
     private var toolDrafts: [UUID: [AppToolInputDraftRequest]] = [:]
-    private var pendingSupplements: [UUID: [String]] = [:]
     private var rewriteTasks: [UUID: Task<Void, Never>] = [:]
     private var sendTasks: [UUID: Task<Void, Never>] = [:]
     private var effectiveModel: RunnableModel?
@@ -186,17 +183,13 @@ final class MacWorkspaceModel: ObservableObject {
             .sink { [weak self] _ in self?.refreshMessagePresentation() }.store(in: &subscriptions)
         fonts.$renderRevision.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshMessagePresentation() }.store(in: &subscriptions)
-        sessionLibrary.$isWorking.dropFirst().sink { [weak self] working in
+        sessionLibrary.$isWorking.dropFirst().sink { [weak self] _ in
             self?.objectWillChange.send()
-            if !working { Task { [weak self] in self?.flushToolSupplements() } }
         }.store(in: &subscriptions)
-        await service.waitForInitialPersistenceStateIfNeeded()
         draft = configuration.chatComposerDraft
         phase = .ready
         AppLockManager.shared.refreshState()
         resumeRequestControls()
-        await MCPManager.shared.waitForInitialLoadIfNeeded()
-        MCPManager.shared.connectSelectedServersIfNeeded()
         CloudSyncManager.shared.performAutoSyncIfEnabled()
         Task.detached(priority: .utility) {
             _ = Persistence.scheduleLaunchBackupPointAfterStartupIfEnabled()
@@ -214,6 +207,11 @@ final class MacWorkspaceModel: ObservableObject {
     }
 
     private func bind(_ service: ChatService) {
+        Publishers.CombineLatest(service.unknownToolOutcomesSubject, service.currentSessionSubject)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] outcomes, session in
+                self?.unknownToolOutcome = session.flatMap { outcomes[$0.id]?.first }
+            }.store(in: &subscriptions)
         service.chatSessionsSubject.receive(on: DispatchQueue.main).sink { [weak self] sessions in
             self?.sessions = sessions
             self?.pruneToolInteractions()
@@ -249,7 +247,6 @@ final class MacWorkspaceModel: ObservableObject {
         service.runningSessionIDsSubject.receive(on: DispatchQueue.main).sink { [weak self] ids in
             self?.runningSessionIDs = ids
             self?.refreshMessagePresentation()
-            self?.flushToolSupplements()
         }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: .temporaryChatStateDidChange, object: service)
             .receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -272,27 +269,6 @@ final class MacWorkspaceModel: ObservableObject {
                 sourceMessages = event.messages
                 refreshMessagePresentation()
             }.store(in: &subscriptions)
-        // Core 在 MainActor 同步发送通知，并立即读取回执；不能在认领前异步转发。
-        NotificationCenter.default.publisher(for: .appToolAskUserInputRequested).sink { [weak self] notification in
-            guard let self, !isRestoringData,
-                  var request = AppToolAskUserInputRequest.decode(from: notification.userInfo),
-                  let sessionID = request.sourceSessionID ?? currentSession?.id,
-                  service.chatSessionsSubject.value.contains(where: { $0.id == sessionID && !$0.isEmbeddedSubagent }),
-                  let receipt = AppToolUIRequestDeliveryReceipt.decode(from: notification.userInfo),
-                  receipt.claim(currentSession?.id == sessionID && activeQuestionnaireModel == nil && AppLockManager.shared.state != .locked ? .displayed : .queued) else { return }
-            // 来源缺省时固定为接收会话，之后切换标签不会把答案送到另一段对话。
-            if request.sourceSessionID == nil {
-                request = AppToolAskUserInputRequest(
-                    requestID: request.requestID, title: request.title, description: request.description,
-                    submitLabel: request.submitLabel, questions: request.questions,
-                    sourceSessionID: sessionID, sourceMessageID: request.sourceMessageID
-                )
-            }
-            guard !questionnaires[sessionID, default: []].contains(where: { $0.request.id == request.id }) else { return }
-            questionnaires[sessionID, default: []].append(MacQuestionnaireModel(request: request))
-            pendingQuestionnaireSessionIDs.insert(sessionID)
-            refreshToolInteractions()
-        }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: .appToolFillUserInputRequested).sink { [weak self] notification in
             guard let self, !isRestoringData,
                   let request = AppToolInputDraftRequest.decode(from: notification.userInfo),
@@ -313,13 +289,19 @@ final class MacWorkspaceModel: ObservableObject {
                 incomingDocuments.suspend(acceptNewFiles: !isRestoringData && !isExportingSnapshot && !isClosingRoleplay)
                 dailyPulse.suspend(); slashCommands.suspend(); connectionSecurity.suspend(); remoteAccess.suspend(); dataImportOperations.cancelPreviews()
             }
-            else { self?.resumeRoleplayPresentation(); self?.resumeRequestControls(); self?.flushToolSupplements() }
+            else { self?.resumeRoleplayPresentation(); self?.resumeRequestControls() }
         }.store(in: &subscriptions)
         for name in [RoleplayStore.didChangeNotification, RoleplayDisplayedMessageBridge.didChangeNotification,
                      MessageRegexRuleStore.didChangeNotification] {
             NotificationCenter.default.publisher(for: name).receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.refreshMessagePresentation() }.store(in: &subscriptions)
         }
+    }
+
+    func acknowledgeUnknownToolOutcome() {
+        guard let outcome = unknownToolOutcome else { return }
+        _ = service?.acknowledgeUnknownToolOutcome(id: outcome.id, sessionID: outcome.sessionID)
+        unknownToolOutcome = nil
     }
 
     func refreshMessagePresentation() {
@@ -408,7 +390,6 @@ final class MacWorkspaceModel: ObservableObject {
         await requestControls.waitForPendingWrites()
         await presentationTask?.value
         await roleplayRuntime.waitForPendingActions()
-        await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
     }
 
     func allowsRoleplayAction(_ action: String, sessionID: UUID) -> Bool {
@@ -429,27 +410,19 @@ final class MacWorkspaceModel: ObservableObject {
         case "set_input": draft = text
         case "send_message":
             guard !isGenerating, !isPreparingSend, effectiveModel != nil, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard let lease = acquireChatLease(sessionID: sessionID, service: service) else { return }
             let configuration = MacChatRequestConfiguration(AppConfigStore.shared, session: session)
             sendingSessionIDs.insert(sessionID)
             // HTML 发送自己的正文，保留用户尚未发送的输入和附件。
             sendTasks[sessionID] = Task { [weak self] in
                 await self?.requestControls.waitForPendingWrites()
-                if !Task.isCancelled { await configuration.send(text, through: service, sessionID: sessionID) }
+                if !Task.isCancelled { await configuration.send(text, through: service, sessionID: sessionID, requestLease: lease) }
+                lease.release()
                 self?.sendTasks.removeValue(forKey: sessionID)
                 self?.sendingSessionIDs.remove(sessionID)
-                self?.flushToolSupplements()
             }
         case "generate":
-            guard !isGenerating, !isPreparingSend, effectiveModel != nil, let message = sourceMessages.last(where: { $0.role == .assistant }) else { return }
-            let configuration = MacChatRequestConfiguration(AppConfigStore.shared, session: session)
-            sendingSessionIDs.insert(sessionID)
-            sendTasks[sessionID] = Task { [weak self] in
-                await self?.requestControls.waitForPendingWrites()
-                if !Task.isCancelled { await configuration.retry(message, through: service, sessionID: sessionID, prefill: false) }
-                self?.sendTasks.removeValue(forKey: sessionID)
-                self?.sendingSessionIDs.remove(sessionID)
-                self?.flushToolSupplements()
-            }
+            errorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
         default: break
         }
     }
@@ -491,7 +464,7 @@ final class MacWorkspaceModel: ObservableObject {
         sessionLibrary.query = ""
         isMutatingHistory = true
         Task {
-            defer { isMutatingHistory = false; flushToolSupplements() }
+            defer { isMutatingHistory = false }
             await Task.detached(priority: .userInitiated) { service.createNewSession() }.value
         }
     }
@@ -501,7 +474,7 @@ final class MacWorkspaceModel: ObservableObject {
         incomingDocuments.invalidateAttachmentContext()
         isMutatingHistory = true
         Task {
-            defer { isMutatingHistory = false; flushToolSupplements() }
+            defer { isMutatingHistory = false }
             let failure = await Task.detached(priority: .userInitiated) { () -> String? in
                 guard service.currentSessionSubject.value?.id == sourceID else { return MessageToolCallEditingError.messageChanged.localizedDescription }
                 guard service.isTemporaryChatEnabled(for: sourceID) || service.messagesSnapshot(for: sourceID).isEmpty else {
@@ -523,21 +496,29 @@ final class MacWorkspaceModel: ObservableObject {
 
     func deleteSession(_ session: ChatSession) {
         guard !isRestoringData, !isMutatingHistory, !sessionLibrary.isWorking, let service else { return }
-        if currentSession?.id == session.id { incomingDocuments.invalidateAttachmentContext() }
+        let attachmentContext = currentSession?.id == session.id ? incomingDocuments.contextID : nil
         isMutatingHistory = true
         Task {
-            defer { isMutatingHistory = false; flushToolSupplements() }
-            await Task.detached(priority: .userInitiated) { service.deleteSessions([session]) }.value
+            defer { isMutatingHistory = false }
+            let result = await Task.detached(priority: .userInitiated) { service.deleteSessions([session]) }.value
+            switch result {
+            case .success:
+                if let attachmentContext, incomingDocuments.contextID == attachmentContext {
+                    incomingDocuments.invalidateAttachmentContext()
+                }
+            case .failure(.busy):
+                errorMessage = NSLocalizedString("请先停止当前请求并等待结束，再删除会话。", comment: "Cannot delete a session while its request is active")
+            }
         }
     }
 
     func saveSession(_ session: ChatSession, replacing original: ChatSession) async throws {
         guard !isRestoringData, !isMutatingHistory, !sessionLibrary.isWorking, let service else { throw MacWorkspaceWriteError.busy }
         isMutatingHistory = true
-        defer { isMutatingHistory = false; flushToolSupplements() }
+        defer { isMutatingHistory = false }
         try await Task.detached(priority: .userInitiated) {
             guard service.chatSessionsSubject.value.first(where: { $0.id == original.id }) == original else {
-                throw MCPConfigurationWriteError.changedExternally
+                throw MacWorkspaceWriteError.changedExternally
             }
             var saved = session
             // 普通空白会话可保存设置；明确开启的临时模式仍只更新运行期元数据。
@@ -553,7 +534,7 @@ final class MacWorkspaceModel: ObservableObject {
               let service else { throw MacWorkspaceWriteError.busy }
         // 修改可能初始化或替换开场白，沿用历史写入屏障，并始终操作编辑页捕获的会话。
         isMutatingHistory = true
-        defer { isMutatingHistory = false; flushToolSupplements() }
+        defer { isMutatingHistory = false }
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
             guard service.chatSessionsSubject.value.contains(where: { $0.id == draft.sessionID }) else {
@@ -576,7 +557,7 @@ final class MacWorkspaceModel: ObservableObject {
               AppLockManager.shared.state != .locked, let service else { throw MacWorkspaceWriteError.busy }
         // 共享层可能影响其他会话；编辑期间不与桌面的任何生成或历史写入并发。
         isMutatingHistory = true
-        defer { isMutatingHistory = false; flushToolSupplements() }
+        defer { isMutatingHistory = false }
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
             guard service.runningSessionIDsSubject.value.isEmpty else { throw MacWorkspaceWriteError.busy }
@@ -591,25 +572,47 @@ final class MacWorkspaceModel: ObservableObject {
         let attachments = self.attachments
         let audioAttachment = self.audioAttachment
         let configuration = MacChatRequestConfiguration(AppConfigStore.shared, session: session)
+        guard let lease = acquireChatLease(sessionID: session.id, service: service) else { return }
         sendingSessionIDs.insert(session.id)
-        draft = ""
-        self.attachments = []
-        self.audioAttachment = nil
         sendTasks[session.id] = Task { [weak self] in
             await self?.requestControls.waitForPendingWrites()
             if !Task.isCancelled {
                 await configuration.send(content, attachments: attachments, audioAttachment: audioAttachment, through: service,
-                    sessionID: session.id, onMessagesPrepared: onMessagesPrepared)
+                    sessionID: session.id, onMessagesPrepared: onMessagesPrepared, requestLease: lease,
+                    onInputAccepted: { [weak self] _, cancelled in
+                        guard let self else { return false }
+                        guard self.currentSession?.id == session.id else {
+                            self.errorMessage = NSLocalizedString("会话已切换，请查看原会话后再继续。", comment: "Send session changed")
+                            return false
+                        }
+                        let attachmentIDs = Set(attachments.map(\.id))
+                        let retained = self.draft == content
+                            && attachmentIDs.isSubset(of: Set(self.attachments.map(\.id)))
+                            && (audioAttachment == nil || self.audioAttachment?.id == audioAttachment?.id)
+                        if cancelled { return retained }
+                        if self.draft == content { self.draft = "" }
+                        self.attachments.removeAll { attachmentIDs.contains($0.id) }
+                        if audioAttachment != nil, self.audioAttachment?.id == audioAttachment?.id { self.audioAttachment = nil }
+                        return false
+                    })
             }
+            lease.release()
             self?.sendTasks.removeValue(forKey: session.id)
             self?.sendingSessionIDs.remove(session.id)
-            self?.flushToolSupplements()
         }
     }
 
+    private func acquireChatLease(sessionID: UUID, service: ChatService) -> ChatRequestLease? {
+        switch service.beginRequest(sessionID: sessionID) {
+        case .success(let lease): return lease
+        case .failure(.busy): errorMessage = NSLocalizedString("当前会话正在处理，请稍后再发送。", comment: "Session busy")
+        case .failure(.sessionMissing): errorMessage = NSLocalizedString("会话已不存在，内容未发送。", comment: "Missing send session")
+        }
+        return nil
+    }
+
     private func refreshToolInteractions() {
-        guard let sessionID = currentSession?.id else { activeQuestionnaireModel = nil; return }
-        activeQuestionnaireModel = questionnaires[sessionID]?.first
+        guard let sessionID = currentSession?.id else { return }
         for request in toolDrafts.removeValue(forKey: sessionID) ?? [] {
             switch request.mode {
             case .replace: draft = request.text
@@ -619,61 +622,13 @@ final class MacWorkspaceModel: ObservableObject {
         }
     }
 
-    func submitQuestionnaire(_ request: AppToolAskUserInputRequest, answers: [AppToolAskUserInputQuestionAnswer], cancelled: Bool) async {
-        guard !isRestoringData, let sessionID = request.sourceSessionID,
-              questionnaires[sessionID]?.first?.request == request else { return }
-        let content = await Task.detached(priority: .userInitiated) {
-            let submission = AppToolAskUserInputSubmission(
-                requestID: request.id, cancelled: cancelled,
-                submittedAt: ISO8601DateFormatter().string(from: Date()), answers: answers
-            )
-            return AppToolAskUserInputSubmissionFormatter.messageContent(request: request, submission: submission)
-        }.value
-        guard !isRestoringData, questionnaires[sessionID]?.first?.request == request else { return }
-        questionnaires[sessionID]?.removeFirst()
-        if questionnaires[sessionID]?.isEmpty == true {
-            questionnaires.removeValue(forKey: sessionID)
-            pendingQuestionnaireSessionIDs.remove(sessionID)
-        }
-        pendingSupplements[sessionID, default: []].append(content)
-        refreshToolInteractions()
-        flushToolSupplements()
-    }
-
-    func flushToolSupplements() {
-        guard !isRestoringData, !isMutatingHistory, !sessionLibrary.isWorking, AppLockManager.shared.state != .locked, let service else { return }
-        for sessionID in Array(pendingSupplements.keys) {
-            guard !service.runningSessionIDsSubject.value.contains(sessionID), !sendingSessionIDs.contains(sessionID),
-                  let session = sessions.first(where: { $0.id == sessionID }) else { continue }
-            guard var queue = pendingSupplements[sessionID], !queue.isEmpty else { continue }
-            let content = queue.removeFirst()
-            pendingSupplements[sessionID] = queue.isEmpty ? nil : queue
-            let configuration = MacChatRequestConfiguration(AppConfigStore.shared, session: session)
-            sendingSessionIDs.insert(sessionID)
-            sendTasks[sessionID] = Task { [weak self] in
-                await self?.requestControls.waitForPendingWrites()
-                if !Task.isCancelled { await configuration.send(content, through: service, sessionID: sessionID) }
-                self?.sendTasks.removeValue(forKey: sessionID)
-                self?.sendingSessionIDs.remove(sessionID)
-                self?.flushToolSupplements()
-            }
-        }
-    }
-
     private func discardToolInteractions() {
-        questionnaires.removeAll()
         toolDrafts.removeAll()
-        pendingSupplements.removeAll()
-        activeQuestionnaireModel = nil
-        pendingQuestionnaireSessionIDs.removeAll()
     }
 
     private func pruneToolInteractions() {
         let ids = Set(sessions.map(\.id))
-        questionnaires = questionnaires.filter { ids.contains($0.key) }
         toolDrafts = toolDrafts.filter { ids.contains($0.key) }
-        pendingSupplements = pendingSupplements.filter { ids.contains($0.key) }
-        pendingQuestionnaireSessionIDs.formIntersection(ids)
         refreshToolInteractions()
     }
 
@@ -686,39 +641,12 @@ final class MacWorkspaceModel: ObservableObject {
 
     @discardableResult
     func rewriteMessage(_ request: MacMessageRewriteRequest) -> Bool {
-        guard canModifyCurrentHistory, currentSession?.id == request.sessionID,
-              let service, let model = effectiveModel, model.model.isChatModel else { return false }
-        let temperature = AppConfigStore.shared.aiTemperature
-        sendingSessionIDs.insert(request.sessionID)
-        rewriteTasks[request.sessionID] = Task { [weak self] in
-            do {
-                await self?.requestControls.waitForPendingWrites()
-                try Task.checkCancellation()
-                try await service.rewriteMessage(request.message, instruction: request.instruction, aiTemperature: temperature,
-                                                 sessionID: request.sessionID, referenceVersions: request.references,
-                                                 selectionTarget: request.selection, runnableModel: model, expectedMessage: request.message)
-            } catch is CancellationError {
-            } catch { self?.errorMessage = error.localizedDescription }
-            self?.rewriteTasks.removeValue(forKey: request.sessionID)
-            self?.sendingSessionIDs.remove(request.sessionID)
-            self?.flushToolSupplements()
-        }
-        return true
+        errorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
+        return false
     }
 
     func retryMessage(_ message: ChatMessage, prefill: Bool = false) {
-        guard canModifyCurrentHistory,
-              effectiveModel != nil, AppLockManager.shared.state != .locked,
-              let service, let session = currentSession else { return }
-        let configuration = MacChatRequestConfiguration(AppConfigStore.shared, session: session)
-        sendingSessionIDs.insert(session.id)
-        sendTasks[session.id] = Task { [weak self] in
-            await self?.requestControls.waitForPendingWrites()
-            if !Task.isCancelled { await configuration.retry(message, through: service, sessionID: session.id, prefill: prefill) }
-            self?.sendTasks.removeValue(forKey: session.id)
-            self?.sendingSessionIDs.remove(session.id)
-            self?.flushToolSupplements()
-        }
+        errorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
     }
 
     func selectVersion(_ index: Int, of message: ChatMessage) {
@@ -731,7 +659,6 @@ final class MacWorkspaceModel: ObservableObject {
             }.value
             self?.isMutatingHistory = false
             if !didSave { self?.errorMessage = MessageToolCallEditingError.messageChanged.localizedDescription }
-            self?.flushToolSupplements()
         }
     }
 
@@ -747,14 +674,13 @@ final class MacWorkspaceModel: ObservableObject {
                 } else { _ = service.branchSession(from: session, copyMessages: copyMessages) }
             }.value
             self?.isMutatingHistory = false
-            self?.flushToolSupplements()
         }
     }
 
     func updateMessage(_ edited: ChatMessage, original: ChatMessage, sessionID: UUID) async throws {
         guard canModifyCurrentHistory, currentSession?.id == sessionID, let service else { throw MessageToolCallEditingError.messageChanged }
         isMutatingHistory = true
-        defer { isMutatingHistory = false; flushToolSupplements() }
+        defer { isMutatingHistory = false }
         try await service.updateEditedMessage(edited, original: original, targetSessionID: sessionID)
     }
 
@@ -764,7 +690,7 @@ final class MacWorkspaceModel: ObservableObject {
               AppLockManager.shared.state != .locked, let service else { return }
         isMutatingHistory = true
         Task {
-            defer { isMutatingHistory = false; flushToolSupplements() }
+            defer { isMutatingHistory = false }
             let deleted = await Task.detached(priority: .userInitiated) {
                 service.deleteHistoryMessage(target.message, sessionID: target.sessionID, kind: target.kind)
             }.value
@@ -838,9 +764,8 @@ final class MacWorkspaceModel: ObservableObject {
 
     func performDataMaintenance<Value>(remoteAccessCommand: Bool = false, _ operation: (ChatService) async throws -> Value) async throws -> Value {
         let cloud = CloudSyncManager.shared
-        let mcp = MCPManager.shared
         guard canManageLocalModels, !isRestoringData, !isMutatingHistory, !sessionLibrary.isWorking, !roleplayModel.isWorking, !isExportingSnapshot, sendingSessionIDs.isEmpty,
-              !SnapshotUploadManager.shared.isUploading, !mcp.isBusy,
+              !SnapshotUploadManager.shared.isUploading,
               let service, cloud.beginLocalDataRestore() else {
             throw NSError(domain: "ETOSMacSnapshot", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: NSLocalizedString("当前有数据或工具任务正在运行，请稍后重试。", comment: "")
@@ -877,27 +802,25 @@ final class MacWorkspaceModel: ObservableObject {
         await requestControls.waitForPendingWrites()
         await presentationTask?.value
         await roleplayRuntime.waitForPendingActions()
-        await NetworkConnectionSecurity.shared.prepareForDatabaseRestore(); await mcp.prepareForDatabaseRestore()
+        await NetworkConnectionSecurity.shared.prepareForDatabaseRestore()
         do {
             await AppConfigStore.shared.flushPendingWrites()
-            await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
             let summary = try await operation(service)
             didRestore = true
             await refreshRestoredData(service)
-            await NetworkConnectionSecurity.shared.finishDatabaseRestore(); await mcp.finishDatabaseRestore()
+            await NetworkConnectionSecurity.shared.finishDatabaseRestore()
             AppLockManager.shared.refreshState()
             return summary
         } catch {
-            await NetworkConnectionSecurity.shared.finishDatabaseRestore(); await mcp.finishDatabaseRestore()
+            await NetworkConnectionSecurity.shared.finishDatabaseRestore()
             throw error
         }
     }
 
     func resolveCloudConflict(using resolution: CloudSyncInitialResolution, conflictID: UUID) async throws {
         let cloud = CloudSyncManager.shared
-        let mcp = MCPManager.shared
         guard !isRestoringData, !isMutatingHistory, !sessionLibrary.isWorking, !roleplayModel.isWorking, !isExportingSnapshot, sendingSessionIDs.isEmpty,
-              !SnapshotUploadManager.shared.isUploading, !mcp.isBusy, let service,
+              !SnapshotUploadManager.shared.isUploading, let service,
               cloud.initialConflict?.id == conflictID else {
             throw NSError(domain: "ETOSMacSnapshot", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: NSLocalizedString("当前有数据或工具任务正在运行，请稍后重试。", comment: "")
@@ -927,13 +850,12 @@ final class MacWorkspaceModel: ObservableObject {
         await requestControls.waitForPendingWrites()
         await presentationTask?.value
         await roleplayRuntime.waitForPendingActions()
-        await NetworkConnectionSecurity.shared.prepareForDatabaseRestore(); await mcp.prepareForDatabaseRestore()
+        await NetworkConnectionSecurity.shared.prepareForDatabaseRestore()
         await AppConfigStore.shared.flushPendingWrites()
-        await Persistence.flushPendingMessageWritesForSyncSnapshotAsync()
         // 异步清理期间裁决可能已失效，核心再次核对 ID 后才允许覆盖。
         await cloud.resolveInitialConflict(using: resolution, expectedConflictID: conflictID)
         await refreshRestoredData(service)
-        await NetworkConnectionSecurity.shared.finishDatabaseRestore(); await mcp.finishDatabaseRestore()
+        await NetworkConnectionSecurity.shared.finishDatabaseRestore()
         AppLockManager.shared.refreshState()
         if case .failed(let reason) = cloud.state {
             throw NSError(domain: "ETOSMacCloudSync", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
@@ -963,9 +885,12 @@ final class MacWorkspaceModel: ObservableObject {
 }
 
 enum MacWorkspaceWriteError: LocalizedError {
-    case busy
+    case busy, changedExternally
 
     var errorDescription: String? {
-        NSLocalizedString("当前有数据或工具任务正在运行，请稍后重试。", comment: "")
+        switch self {
+        case .busy: NSLocalizedString("当前有数据或工具任务正在运行，请稍后重试。", comment: "")
+        case .changedExternally: NSLocalizedString("配置已在其他页面修改，请重新打开后再编辑。", comment: "")
+        }
     }
 }

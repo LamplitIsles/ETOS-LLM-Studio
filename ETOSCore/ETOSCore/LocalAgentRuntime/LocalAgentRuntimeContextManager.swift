@@ -34,14 +34,19 @@ public actor LocalAgentRuntimeContextManager {
         runID: UUID = UUID(),
         rootRunID: UUID? = nil,
         parentRunID: UUID? = nil,
-        selectedMCPServerIDs: [UUID] = [],
-        browserSessionID: UUID? = nil
+        browserSessionID: UUID? = nil,
+        requestedMode: LocalAgentMode? = nil
     ) async throws -> (context: AgentRuntimeContext, workspace: LocalAgentWorkspace) {
         let activity = try LocalLinuxActivityBarrier.shared.begin()
         var transferredActivity = false
         defer { if !transferredActivity { activity.finish() } }
         if let existing = Persistence.loadLocalAgentRun(id: runID) {
             try Self.validateReusableRun(existing, sessionID: sessionID)
+            if let requestedMode, existing.context.mode != requestedMode {
+                throw LocalLinuxRuntimeError.runtimeUnavailable(
+                    NSLocalizedString("现有 Agent Run 的模式与本次请求不一致。", comment: "Existing Agent run mode mismatch")
+                )
+            }
             guard let workspace = Persistence.loadLocalAgentWorkspaces().first(where: {
                 $0.id == existing.context.workspaceID
             }) else {
@@ -54,7 +59,7 @@ public actor LocalAgentRuntimeContextManager {
             return (existing.context, workspace)
         }
 
-        let mode = Persistence.localAgentMode(sessionID: sessionID)
+        let mode = requestedMode ?? Persistence.localAgentMode(sessionID: sessionID)
         guard mode == .agent else {
             throw LocalLinuxRuntimeError.runtimeUnavailable(
                 NSLocalizedString("当前会话不是 Agent 模式。", comment: "Local Agent mode required error")
@@ -74,15 +79,9 @@ public actor LocalAgentRuntimeContextManager {
                 isEnabled: $0.isEnabled
             )
         }
-        let selectedMCPConfigurations = MCPServerStore.loadServers().filter {
-            selectedMCPServerIDs.contains($0.id)
-        }
-        #if os(macOS)
         let mountIDs: [UUID] = []
-        #endif
-        let conversationRun = Persistence.loadConversationRun(id: runID)
-        let resolvedRootRunID = rootRunID ?? conversationRun?.rootRunID ?? runID
-        let resolvedParentRunID = parentRunID ?? conversationRun?.parentRunID
+        let resolvedRootRunID = rootRunID ?? runID
+        let resolvedParentRunID = parentRunID
         let skillState = await MainActor.run {
             (
                 names: SkillManager.shared.chatToolsEnabled
@@ -111,8 +110,6 @@ public actor LocalAgentRuntimeContextManager {
             environmentRedactionValues: environment.redactionValues,
             environmentReferenceSnapshots: environmentReferences,
             mountIDs: mountIDs,
-            selectedMCPServerIDs: selectedMCPServerIDs,
-            selectedMCPServerConfigurations: selectedMCPConfigurations,
             browserSessionID: browserSessionID ?? sessionID,
             browserDataProfile: Persistence.browserAgentDataProfile(sessionID: sessionID),
             skillSnapshots: skillSnapshots,
@@ -141,7 +138,9 @@ public actor LocalAgentRuntimeContextManager {
             _ = Persistence.saveLocalAgentRun(record)
         }
         if state.isTerminal {
+            #if os(macOS)
             await OpenAIResponsesLocalShellRuntime.shared.finishRun(id: id)
+            #endif
             await SkillAllowedToolRuntime.shared.finishRun(id: id)
             await LocalAgentFileToolExecutor.shared.finishRun(id: id)
             await MCPNativeMediaExecutor.shared.finishRun(id: id)

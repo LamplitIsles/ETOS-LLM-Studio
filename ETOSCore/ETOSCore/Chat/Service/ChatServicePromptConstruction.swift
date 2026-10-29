@@ -10,32 +10,14 @@ import Foundation
 
 extension ChatService {
     func buildFinalSystemPrompt(
-        includeConversationRuntime: Bool = false,
-        linkedConversations: [LinkedConversationContact] = [],
         includeSystemTime: Bool,
         roleplayPrompt: String? = nil
     ) -> String {
         var parts: [String] = []
 
-        if includeConversationRuntime {
-            let runtimeInstructions = NSLocalizedString(
-                "会话协作运行时协议",
-                comment: "Conversation runtime model instructions"
-            )
-            parts.append("""
-            <conversation_runtime>
-            \(runtimeInstructions)
-            </conversation_runtime>
-            """)
-        }
-
         if let roleplayPrompt,
            !roleplayPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             parts.append(roleplayPrompt)
-        }
-
-        if includeConversationRuntime, !linkedConversations.isEmpty {
-            parts.append(makeLinkedConversationsPromptBlock(linkedConversations))
         }
 
         if includeSystemTime {
@@ -43,24 +25,6 @@ extension ChatService {
         }
 
         return parts.joined(separator: "\n\n")
-    }
-
-    func makeLinkedConversationsPromptBlock(_ contacts: [LinkedConversationContact]) -> String {
-        let rows = contacts.map { contact in
-            var permissions: [String] = []
-            if contact.canRead { permissions.append("read") }
-            if contact.canSend { permissions.append("send") }
-            if contact.canTriggerReply { permissions.append("trigger_reply") }
-            if contact.canInterrupt { permissions.append("interrupt") }
-            let status = contact.runStatus?.rawValue ?? "idle"
-            let visibility = contact.isEmbeddedSubagent ? "hidden" : "visible"
-            return "  <conversation id=\"\(xmlEscapedAttribute(contact.sessionID.uuidString))\" title=\"\(xmlEscapedAttribute(contact.title))\" visibility=\"\(visibility)\" relation=\"\(contact.relation.rawValue)\" status=\"\(status)\" unread=\"\(contact.unreadEventCount)\" permissions=\"\(permissions.joined(separator: ","))\" />"
-        }
-        return """
-        <linked_conversations>
-        \(rows.joined(separator: "\n"))
-        </linked_conversations>
-        """
     }
 
     func tailContextRole(apiFormat: String, openAIUsesSystemRole: Bool) -> MessageRole {

@@ -11,6 +11,8 @@ public enum ETOSSystemEntryError: LocalizedError {
     case sessionNotFound
     case requestInProgress
     case persistenceUnavailable
+    case busy
+    case outcomeUnknown
 
     public var errorDescription: String? {
         switch self {
@@ -22,31 +24,51 @@ public enum ETOSSystemEntryError: LocalizedError {
             return NSLocalizedString("该请求正在处理中。", comment: "System-entry request is already claimed")
         case .persistenceUnavailable:
             return NSLocalizedString("暂时无法写入本地数据库。", comment: "System-entry persistence unavailable")
+        case .busy:
+            return NSLocalizedString("当前会话正在处理，请稍后再发送。", comment: "System-entry session busy")
+        case .outcomeUnknown:
+            return NSLocalizedString("该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。", comment: "System-entry outcome unknown")
         }
     }
 }
 
-public struct ETOSSystemEntryTaskResult: Sendable {
-    public let sessionID: UUID
-    public let wasAlreadyHandled: Bool
+/// True only when the caller can still present the complete original input.
+public typealias ETOSSystemEntrySourceRetained = @MainActor @Sendable () -> Bool
 
-    public init(sessionID: UUID, wasAlreadyHandled: Bool) {
-        self.sessionID = sessionID
-        self.wasAlreadyHandled = wasAlreadyHandled
+public struct ETOSSystemEntryTaskResult: Sendable {
+    public enum Outcome: Sendable {
+        case locallyAccepted
+        case alreadyRecorded
     }
+    public let sessionID: UUID
+    public let outcome: Outcome
+    public init(sessionID: UUID, outcome: Outcome) {
+        self.sessionID = sessionID
+        self.outcome = outcome
+    }
+}
+
+/// System-entry state is process-local and does not reuse the widget snapshot schema.
+public enum ETOSSystemEntryProcessStatus: Sendable {
+    case running
+    case toolOutcomeUnknown
+    case unknown
 }
 
 public struct ETOSSystemEntryStatus: Sendable {
     public let sessionID: UUID
     public let sessionName: String
-    public let status: ETOSTaskSnapshotStatus
-    public let updatedAt: Date
+    public let status: ETOSSystemEntryProcessStatus
+    public let unknownToolOutcomes: [ChatUnknownToolOutcome]
+    public let observedAt: Date
 
-    public init(sessionID: UUID, sessionName: String, status: ETOSTaskSnapshotStatus, updatedAt: Date) {
+    public init(sessionID: UUID, sessionName: String, status: ETOSSystemEntryProcessStatus,
+                unknownToolOutcomes: [ChatUnknownToolOutcome], observedAt: Date) {
         self.sessionID = sessionID
         self.sessionName = sessionName
         self.status = status
-        self.updatedAt = updatedAt
+        self.unknownToolOutcomes = unknownToolOutcomes
+        self.observedAt = observedAt
     }
 }
 
@@ -68,7 +90,8 @@ public final class SystemEntryCoordinator {
         requestID: UUID,
         kind: ETOSSystemEntryRequestKind = .appIntent,
         fileAttachments: [FileAttachment] = [],
-        imageAttachments: [ImageAttachment] = []
+        imageAttachments: [ImageAttachment] = [],
+        sourceRetained: ETOSSystemEntrySourceRetained? = nil
     ) async throws -> ETOSSystemEntryTaskResult {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !fileAttachments.isEmpty || !imageAttachments.isEmpty else {
@@ -78,24 +101,28 @@ public final class SystemEntryCoordinator {
         if let receipt = await Task.detached(priority: .userInitiated, operation: {
             Persistence.loadSystemEntryReceipt(id: requestID)
         }).value {
-            guard let sessionID = receipt.sessionID else { throw ETOSSystemEntryError.requestInProgress }
-            return ETOSSystemEntryTaskResult(sessionID: sessionID, wasAlreadyHandled: true)
+            guard let sessionID = receipt.sessionID else { throw ETOSSystemEntryError.outcomeUnknown }
+            return ETOSSystemEntryTaskResult(sessionID: sessionID, outcome: .alreadyRecorded)
         }
-        let claimed = await Task.detached(priority: .userInitiated) {
-            Persistence.claimSystemEntryRequest(id: requestID, kind: kind)
-        }.value
-        guard claimed else {
+        let session = await SystemEntryNewSessionClaim.createIfClaimed {
+            await Task.detached(priority: .userInitiated) {
+                Persistence.claimSystemEntryRequest(id: requestID, kind: kind)
+            }.value
+        } create: {
+            chatService.createSavedSession(name: resolvedTitle(title, prompt: trimmed))
+        }
+        guard let session else {
             if let sessionID = await Task.detached(priority: .userInitiated, operation: {
                 Persistence.loadSystemEntryReceipt(id: requestID)?.sessionID
             }).value {
-                return ETOSSystemEntryTaskResult(sessionID: sessionID, wasAlreadyHandled: true)
+                return ETOSSystemEntryTaskResult(sessionID: sessionID, outcome: .alreadyRecorded)
             }
-            throw ETOSSystemEntryError.persistenceUnavailable
+            throw ETOSSystemEntryError.outcomeUnknown
         }
-
-        let session = chatService.createSavedSession(
-            name: resolvedTitle(title, prompt: trimmed)
-        )
+        let lease: ChatRequestLease
+        do { lease = try reserve(sessionID: session.id) }
+        catch { throw ETOSSystemEntryError.outcomeUnknown }
+        defer { lease.release() }
         let persisted = await Task.detached(priority: .userInitiated) {
             guard Persistence.saveLocalAgentMode(mode, sessionID: session.id) else { return false }
             return Persistence.saveSystemEntryReceipt(
@@ -103,10 +130,13 @@ public final class SystemEntryCoordinator {
             )
         }.value
         guard persisted else {
-            throw ETOSSystemEntryError.persistenceUnavailable
+            throw ETOSSystemEntryError.outcomeUnknown
         }
-        await send(trimmed, to: session.id, fileAttachments: fileAttachments, imageAttachments: imageAttachments)
-        return ETOSSystemEntryTaskResult(sessionID: session.id, wasAlreadyHandled: false)
+        guard await send(trimmed, to: session.id, mode: mode, fileAttachments: fileAttachments,
+                         imageAttachments: imageAttachments, requestLease: lease, sourceRetained: sourceRetained) else {
+            throw ETOSSystemEntryError.outcomeUnknown
+        }
+        return ETOSSystemEntryTaskResult(sessionID: session.id, outcome: .locallyAccepted)
     }
 
     public func continueTask(
@@ -115,19 +145,22 @@ public final class SystemEntryCoordinator {
         requestID: UUID,
         kind: ETOSSystemEntryRequestKind = .appIntent,
         fileAttachments: [FileAttachment] = [],
-        imageAttachments: [ImageAttachment] = []
+        imageAttachments: [ImageAttachment] = [],
+        sourceRetained: ETOSSystemEntrySourceRetained? = nil
     ) async throws -> ETOSSystemEntryTaskResult {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !fileAttachments.isEmpty || !imageAttachments.isEmpty else {
             throw ETOSSystemEntryError.emptyPrompt
         }
-        guard chatService.conversationSession(withID: sessionID) != nil else { throw ETOSSystemEntryError.sessionNotFound }
         if let receipt = await Task.detached(priority: .userInitiated, operation: {
             Persistence.loadSystemEntryReceipt(id: requestID)
         }).value {
-            guard let handledSessionID = receipt.sessionID else { throw ETOSSystemEntryError.requestInProgress }
-            return ETOSSystemEntryTaskResult(sessionID: handledSessionID, wasAlreadyHandled: true)
+            guard let handledSessionID = receipt.sessionID else { throw ETOSSystemEntryError.outcomeUnknown }
+            return ETOSSystemEntryTaskResult(sessionID: handledSessionID, outcome: .alreadyRecorded)
         }
+        guard chatService.conversationSession(withID: sessionID) != nil else { throw ETOSSystemEntryError.sessionNotFound }
+        let lease = try reserve(sessionID: sessionID)
+        defer { lease.release() }
         let persisted = await Task.detached(priority: .userInitiated) {
             guard Persistence.claimSystemEntryRequest(id: requestID, kind: kind) else { return false }
             return Persistence.saveSystemEntryReceipt(
@@ -135,15 +168,22 @@ public final class SystemEntryCoordinator {
             )
         }.value
         guard persisted else {
-            throw ETOSSystemEntryError.persistenceUnavailable
+            if let existing = await Task.detached(priority: .userInitiated, operation: {
+                Persistence.loadSystemEntryReceipt(id: requestID)?.sessionID
+            }).value {
+                return ETOSSystemEntryTaskResult(sessionID: existing, outcome: .alreadyRecorded)
+            }
+            throw ETOSSystemEntryError.outcomeUnknown
         }
-        await send(
+        guard await send(
             trimmed,
             to: sessionID,
             fileAttachments: fileAttachments,
-            imageAttachments: imageAttachments
-        )
-        return ETOSSystemEntryTaskResult(sessionID: sessionID, wasAlreadyHandled: false)
+            imageAttachments: imageAttachments,
+            requestLease: lease,
+            sourceRetained: sourceRetained
+        ) else { throw ETOSSystemEntryError.outcomeUnknown }
+        return ETOSSystemEntryTaskResult(sessionID: sessionID, outcome: .locallyAccepted)
     }
 
     public func stop(sessionID: UUID) async throws {
@@ -155,23 +195,28 @@ public final class SystemEntryCoordinator {
         let session = sessionID.flatMap { chatService.conversationSession(withID: $0) }
             ?? (sessionID == nil ? chatService.currentSessionSubject.value : nil)
         guard let session else { throw ETOSSystemEntryError.sessionNotFound }
-        let run = await Task.detached(priority: .userInitiated) {
-            Persistence.loadLatestConversationRun(sessionID: session.id)
-        }.value
+        let unknownTools = chatService.unknownToolOutcomes(for: session.id)
+        let state: ETOSSystemEntryProcessStatus = !unknownTools.isEmpty
+            ? .toolOutcomeUnknown
+            : (chatService.runningSessionIDsSubject.value.contains(session.id) ? .running : .unknown)
         return ETOSSystemEntryStatus(
             sessionID: session.id,
             sessionName: String(session.name.prefix(80)),
-            status: snapshotStatus(run?.status, isRunning: chatService.runningSessionIDsSubject.value.contains(session.id)),
-            updatedAt: run?.finishedAt ?? run?.startedAt ?? run?.createdAt ?? Date()
+            status: state,
+            unknownToolOutcomes: unknownTools,
+            observedAt: Date()
         )
     }
 
     private func send(
         _ content: String,
         to sessionID: UUID,
+        mode: LocalAgentMode? = nil,
         fileAttachments: [FileAttachment] = [],
-        imageAttachments: [ImageAttachment] = []
-    ) async {
+        imageAttachments: [ImageAttachment] = [],
+        requestLease: ChatRequestLease,
+        sourceRetained: ETOSSystemEntrySourceRetained?
+    ) async -> Bool {
         await chatService.sendAndProcessMessage(
             content: content,
             aiTemperature: realConfig(.aiTemperature),
@@ -187,8 +232,20 @@ public final class SystemEntryCoordinator {
             enableResponseSpeedMetrics: AppConfigStore.boolValue(for: .enableResponseSpeedMetrics),
             imageAttachments: imageAttachments,
             fileAttachments: fileAttachments,
-            targetSessionID: sessionID
+            targetSessionID: sessionID,
+            requestedLocalAgentMode: mode,
+            requestLease: requestLease,
+            onInputAccepted: { _, _ in sourceRetained?() ?? false }
         )
+        return requestLease.wasInputAccepted
+    }
+
+    private func reserve(sessionID: UUID) throws -> ChatRequestLease {
+        switch chatService.beginRequest(sessionID: sessionID) {
+        case .success(let lease): return lease
+        case .failure(.busy): throw ETOSSystemEntryError.busy
+        case .failure(.sessionMissing): throw ETOSSystemEntryError.sessionNotFound
+        }
     }
 
     private func resolvedTitle(_ title: String?, prompt: String) -> String {
@@ -211,15 +268,4 @@ public final class SystemEntryCoordinator {
         return 0
     }
 
-    private func snapshotStatus(_ status: ConversationRunStatus?, isRunning: Bool) -> ETOSTaskSnapshotStatus {
-        guard let status else { return isRunning ? .running : .completed }
-        switch status {
-        case .queued: return .queued
-        case .running, .waitingTool, .waitingConversation: return .running
-        case .waitingUser, .pausedByBudget: return .waitingForInput
-        case .completed: return .completed
-        case .failed, .interrupted: return .failed
-        case .cancelled: return .cancelled
-        }
-    }
 }

@@ -3,8 +3,8 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 解析 OpenMinis 导出的 Provider JSON 与 MCP
-// JSON。归档只读取安全路径和受限大小的相关文件；Skill 包只识别，不恢复执行状态。
+// 解析 OpenMinis 导出的 Provider JSON。归档只读取安全路径和受限大小的相关文件；
+// Skill 包只识别，不恢复执行状态。
 // ============================================================================
 
 import Foundation
@@ -13,7 +13,6 @@ import ZIPFoundation
 extension ThirdPartyImportService {
     struct OpenMinisParsedPayload {
         var payload: ParsedPayload
-        var mcpServers: [MCPServerConfiguration]
         var skills: [SyncedSkillBundle]
         var recognizedSkillNames: [String]
         var containsSensitiveCredentials: Bool
@@ -27,7 +26,6 @@ extension ThirdPartyImportService {
     static func parseOpenMinis(fileURL: URL) throws -> OpenMinisParsedPayload {
         let files = try loadOpenMinisInputFiles(fileURL)
         var providers: [Provider] = []
-        var mcpServers: [MCPServerConfiguration] = []
         var warnings: [String] = []
         var containsSensitiveCredentials = false
 
@@ -40,22 +38,6 @@ extension ThirdPartyImportService {
             }
             guard lowerPath.hasSuffix(".json"),
                   let json = try? JSONSerialization.jsonObject(with: file.data) else {
-                continue
-            }
-
-            if let root = json as? [String: Any], root["mcpServers"] != nil {
-                if let imported = try? MCPServerConfigurationTransferService.importConfigurations(from: file.data) {
-                    mcpServers.append(contentsOf: imported.servers)
-                    containsSensitiveCredentials = containsSensitiveCredentials || !imported.sensitiveServerNames.isEmpty
-                    if !imported.skippedNames.isEmpty {
-                        warnings.append(
-                            String(
-                                format: NSLocalizedString("OpenMinis MCP 配置中有 %d 个 Server 无法识别，已跳过。", comment: "OpenMinis skipped MCP servers warning"),
-                                imported.skippedNames.count
-                            )
-                        )
-                    }
-                }
                 continue
             }
 
@@ -75,10 +57,8 @@ extension ThirdPartyImportService {
                 )
             )
         }
-        if providers.isEmpty && mcpServers.isEmpty && skills.isEmpty {
-            throw ThirdPartyImportError.unsupportedBackupFormat(
-                reason: NSLocalizedString("未识别到 OpenMinis Provider、MCP 或 Skill 内容。", comment: "OpenMinis no recognized data")
-            )
+        if providers.isEmpty && skills.isEmpty {
+            throw ThirdPartyImportError.noImportableContent
         }
 
         return OpenMinisParsedPayload(
@@ -86,7 +66,6 @@ extension ThirdPartyImportService {
                 providers: dedupeProviders(providers),
                 warnings: warnings
             ),
-            mcpServers: dedupeOpenMinisMCPServers(mcpServers),
             skills: skills,
             recognizedSkillNames: skills.map(\.name).sorted(),
             containsSensitiveCredentials: containsSensitiveCredentials
@@ -338,14 +317,6 @@ extension ThirdPartyImportService {
             }
             guard skillFiles.contains(where: { $0.relativePath == "SKILL.md" }) else { return nil }
             return SyncedSkillBundle(name: manifest.name, files: skillFiles)
-        }
-    }
-
-    private static func dedupeOpenMinisMCPServers(_ servers: [MCPServerConfiguration]) -> [MCPServerConfiguration] {
-        var seen = Set<String>()
-        return servers.filter { server in
-            let key = "\(server.displayName.lowercased())|\(server.humanReadableEndpoint.lowercased())"
-            return seen.insert(key).inserted
         }
     }
 

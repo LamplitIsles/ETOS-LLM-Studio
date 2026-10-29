@@ -77,7 +77,7 @@ struct ToolPermissionBubble: View {
                 Divider()
                     .padding(.horizontal, 4)
 
-                // 决策选项行（仿 AskUserInput 逐行排列）
+                // 决策选项逐行排列。
                 ForEach(Array(decisionRows.enumerated()), id: \.offset) { index, row in
                     Button {
                         onDecision(row.decision)

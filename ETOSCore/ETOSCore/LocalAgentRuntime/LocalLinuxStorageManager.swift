@@ -150,9 +150,7 @@ public actor LocalLinuxStorageManager {
     #endif
 
     private func executionWorkspacePath(_ relativePath: String) -> String {
-        #if os(macOS)
         return layout.root.appendingPathComponent(relativePath, isDirectory: true).path
-        #endif
     }
 
     public func workspace(sessionID: UUID, profileID: UUID? = nil) throws -> LocalAgentWorkspace {
@@ -294,10 +292,8 @@ public actor LocalLinuxStorageManager {
         let resolved = try checkedDescendant(url, of: workspaceURL)
         let relativePath = String(resolved.path.dropFirst(workspaceURL.standardizedFileURL.path.count))
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        #if os(macOS)
         let workspacePath = layout.root.lastPathComponent + "/" + workspace.hostRelativePath
         return "app://" + workspacePath + (relativePath.isEmpty ? "" : "/" + relativePath)
-        #endif
     }
 
     public func outputURLs(jobID: UUID, workspace: LocalAgentWorkspace) throws -> (raw: URL, model: URL) {

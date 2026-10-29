@@ -152,12 +152,6 @@ struct DailyPulseView: View {
                 set: { pulseManager.tomorrowCurationText = $0 }
             ),
             .bool(
-                "include_mcp_context",
-                label: NSLocalizedString("纳入 MCP 服务器能力", comment: "每日脉冲向导字段"),
-                get: { pulseManager.includeMCPContext },
-                set: { pulseManager.includeMCPContext = $0 }
-            ),
-            .bool(
                 "include_shortcut_context",
                 label: NSLocalizedString("纳入快捷指令能力", comment: "每日脉冲向导字段"),
                 get: { pulseManager.includeShortcutContext },
@@ -450,7 +444,6 @@ struct DailyPulseView: View {
                 summary: NSLocalizedString("让每日卡片参考工具结果和近期动态。", comment: "外部上下文简介"),
                 details: externalSourcesDetailsText
             )
-            Toggle(NSLocalizedString("纳入 MCP 服务器能力", comment: ""), isOn: $pulseManager.includeMCPContext)
             Toggle(NSLocalizedString("纳入快捷指令能力", comment: ""), isOn: $pulseManager.includeShortcutContext)
             Toggle(NSLocalizedString("纳入最近外部结果", comment: ""), isOn: $pulseManager.includeRecentExternalResults)
             Toggle(NSLocalizedString("纳入公告与趋势信号", comment: ""), isOn: $pulseManager.includeTrendContext)
@@ -482,10 +475,10 @@ struct DailyPulseView: View {
 
     private var externalSourcesDetailsText: String {
         var parts: [String] = [
-            NSLocalizedString("前两项会纳入可调用能力描述；“最近外部结果”会纳入快捷指令 / MCP 的最近结果与历史信号；“公告与趋势信号”则会纳入应用当前公告与已积累的趋势片段。", comment: "Daily Pulse external context footer")
+            NSLocalizedString("外部上下文可包含快捷指令能力、最近结果和公告趋势。", comment: "Daily Pulse external context footer")
         ]
         if pulseManager.externalSignalPreview.isEmpty {
-            parts.append(NSLocalizedString("还没有积累到可复用的外部信号历史。快捷指令执行、MCP 输出和公告变化会逐步沉淀到这里。", comment: ""))
+            parts.append(NSLocalizedString("还没有积累到可复用的外部信号历史。", comment: ""))
         }
         return parts.joined(separator: "\n")
     }
