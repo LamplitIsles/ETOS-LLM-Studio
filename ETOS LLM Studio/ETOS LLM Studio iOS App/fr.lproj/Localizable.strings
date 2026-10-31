@@ -8670,3 +8670,8 @@ If seulement le Archiver state changes, Aucun re-embedding est performed.";
 "展开提醒" = "Développer le rappel";
 "收起提醒" = "Réduire le rappel";
 "复制提醒" = "Copier le rappel";
+
+"CFL顶栏在线" = "En ligne";
+"CFL顶栏回复中" = "Réponse en cours";
+"CFL顶栏连接中" = "Connexion";
+"CFL顶栏离线" = "Hors ligne";

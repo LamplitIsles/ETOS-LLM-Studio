@@ -8593,3 +8593,8 @@
 "展开提醒" = "Expand reminder";
 "收起提醒" = "Collapse reminder";
 "复制提醒" = "Copy reminder";
+
+"CFL顶栏在线" = "Online";
+"CFL顶栏回复中" = "Replying";
+"CFL顶栏连接中" = "Connecting";
+"CFL顶栏离线" = "Offline";

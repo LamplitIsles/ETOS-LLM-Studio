@@ -599,6 +599,36 @@ final class CFLConversationModel: ObservableObject {
     }
 }
 
+enum CFLHeaderStatus: Equatable {
+    case online, replying, connecting, offline
+
+    init(hasOrigin: Bool, connection: CFLConnection, hasActiveTurn: Bool) {
+        guard hasOrigin else { self = .offline; return }
+        switch connection {
+        case .online: self = hasActiveTurn ? .replying : .online
+        case .connecting: self = .connecting
+        case .offline, .accessDenied, .protocolError: self = .offline
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .online: return NSLocalizedString("CFL顶栏在线", comment: "Chat header online")
+        case .replying: return NSLocalizedString("CFL顶栏回复中", comment: "Chat header replying")
+        case .connecting: return NSLocalizedString("CFL顶栏连接中", comment: "Chat header connecting")
+        case .offline: return NSLocalizedString("CFL顶栏离线", comment: "Chat header offline")
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .online: return .green
+        case .replying, .connecting: return .orange
+        case .offline: return .red
+        }
+    }
+}
+
 struct CFLConversationView: View {
     @ObservedObject var model: CFLConversationModel
     let openSettings: () -> Void
@@ -614,6 +644,8 @@ struct CFLConversationView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .headline) private var headerTitleSize: CGFloat = 16
+    @ScaledMetric(relativeTo: .caption) private var headerSubtitleSize: CGFloat = 12
 
     private var text: Binding<String> {
         Binding(get: { draft.text }, set: { config.chatComposerDraft = $0 })
@@ -758,32 +790,45 @@ struct CFLConversationView: View {
     }
 
     private var navigationBar: some View {
-        let titleFont = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        let subtitleFont = UIFont.systemFont(ofSize: 12)
+        let titleFont = UIFont.systemFont(ofSize: headerTitleSize, weight: .semibold)
+        let subtitleFont = UIFont.systemFont(ofSize: headerSubtitleSize)
         let height = titleFont.lineHeight + subtitleFont.lineHeight + 1 + 12
+        let iconSize: CGFloat = 48
         let tintOpacity = LiquidGlassTintSetting.normalized(config.liquidGlassTintOpacity)
         let tint = colorScheme == .dark ? Color.black.opacity(tintOpacity) : Color.white.opacity(tintOpacity)
+        let headerStatus = CFLHeaderStatus(hasOrigin: !config.cflHTTPSOrigin.isEmpty,
+                                           connection: model.state.connection,
+                                           hasActiveTurn: model.state.activeTurnId != nil)
         return ChatNavigationBar {
+            ChatNavigationIconSurface(
+                content: Image(systemName: "list.bullet").etFont(.system(size: 17, weight: .semibold))
+                    .foregroundColor(TelegramColors.navBarText.opacity(0.5)).frame(width: iconSize, height: iconSize),
+                usesLiquidGlass: config.enableLiquidGlass, tint: tint,
+                strokeColor: Color.white.opacity(0.2), lineWidth: 0.5
+            ).allowsHitTesting(false).accessibilityHidden(true)
+        } center: {
+            ChatNavigationPillSurface(
+                content: VStack(alignment: .leading, spacing: 1) {
+                    MarqueeText(content: model.state.name.isEmpty ? NSLocalizedString("聊天", comment: "CFL chat title") : model.state.name,
+                                uiFont: titleFont).foregroundColor(TelegramColors.navBarText)
+                    HStack(spacing: 5) {
+                        Circle().fill(headerStatus.color).frame(width: 6, height: 6).accessibilityHidden(true)
+                        MarqueeText(content: headerStatus.label, uiFont: subtitleFont)
+                            .foregroundColor(TelegramColors.navBarSubtitle)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal, 22).padding(.vertical, 6).frame(height: height),
+                usesLiquidGlass: config.enableLiquidGlass, tint: tint, selected: false
+            )
+        } trailing: {
             Button(action: openSettings) {
                 ChatNavigationIconSurface(
                     content: Image(systemName: "gearshape").etFont(.system(size: 17, weight: .semibold))
-                        .foregroundColor(TelegramColors.navBarText).frame(width: height, height: height),
+                        .foregroundColor(TelegramColors.navBarText).frame(width: iconSize, height: iconSize),
                     usesLiquidGlass: config.enableLiquidGlass, tint: tint,
                     strokeColor: Color.white.opacity(0.2), lineWidth: 0.5
                 )
             }.buttonStyle(.plain).disabled(model.busy)
                 .accessibilityLabel(NSLocalizedString("设置", comment: "Settings"))
-        } center: {
-            ChatNavigationPillSurface(
-                content: VStack(spacing: 1) {
-                    MarqueeText(content: model.state.name.isEmpty ? NSLocalizedString("聊天", comment: "CFL chat title") : model.state.name,
-                                uiFont: titleFont).foregroundColor(TelegramColors.navBarText)
-                    MarqueeText(content: statusText, uiFont: subtitleFont).foregroundColor(TelegramColors.navBarSubtitle)
-                }.padding(.horizontal, 22).padding(.vertical, 6).frame(height: height),
-                usesLiquidGlass: config.enableLiquidGlass, tint: tint, selected: false
-            )
-        } trailing: {
-            Color.clear.frame(width: height, height: height).accessibilityHidden(true)
         }
     }
 
