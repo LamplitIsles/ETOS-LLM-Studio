@@ -8666,3 +8666,7 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 "内容未发送，可以继续编辑。" = "El contenido no se envió. Puedes seguir editándolo.";
 "发送失败，可以恢复内容后重新编辑。" = "Error al enviar. Restaura el contenido para editarlo.";
 "当前聊天暂不支持通过此方式导入文件。" = "Este chat no admite importar archivos de esta manera.";
+
+"展开提醒" = "Expandir recordatorio";
+"收起提醒" = "Contraer recordatorio";
+"复制提醒" = "Copiar recordatorio";

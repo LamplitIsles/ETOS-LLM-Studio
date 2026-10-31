@@ -34,6 +34,40 @@ struct CFLDisplayMessage: Identifiable, Sendable {
     let images: [CFLImageRef]
     let sessionRevision: Int
     let clientID: UUID
+    var isReminder = false
+}
+
+/// A reminder is one server message, independently of its transport role.
+struct CFLReminderBubble: View {
+    let text: String
+    @State private var expanded = false
+
+    static func displayedText(_ text: String, expanded: Bool) -> String {
+        let content = expanded ? text : text.components(separatedBy: .newlines).joined(separator: " ")
+        return "⏰ " + content
+    }
+
+    var body: some View {
+        HStack {
+            Button { expanded.toggle() } label: {
+                Text(Self.displayedText(text, expanded: expanded))
+                    .etFont(.system(size: 15))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(expanded ? nil : 1)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(Text(NSLocalizedString(expanded ? "收起提醒" : "展开提醒", comment: "Reminder expand or collapse")))
+            .contextMenu {
+                Button(NSLocalizedString("复制提醒", comment: "Copy reminder")) { UIPasteboard.general.string = text }
+            }
+            Spacer(minLength: 40)
+        }
+    }
 }
 
 /// Adapts a server-owned display row to ETOS's existing bubble presentation.
@@ -185,6 +219,10 @@ final class CFLConversationModel: ObservableObject {
             }
         }
         let messages = input.messages.flatMap { message in
+            if message.isReminder {
+                return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: 0), text: message.text,
+                                          outgoing: false, markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID, isReminder: true)]
+            }
             if message.role == "agent" { return rows(id: message.id, text: message.text, streaming: false, images: message.images ?? []) }
             return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: 0), text: message.text,
                                       outgoing: message.role == "user", markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID)]
@@ -634,7 +672,16 @@ struct CFLConversationView: View {
                                         .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding()
                                 }
                                 ForEach(model.visibleMessages) { message in
-                                    CFLNativeMessageBubble(item: message, model: model)
+                                    if message.isReminder {
+                                        CFLReminderBubble(text: message.text)
+                                        if !message.images.isEmpty {
+                                            CFLMessageImages(images: message.images, outgoing: false, model: model,
+                                                             target: message.id.target, session: message.id.session,
+                                                             revision: message.sessionRevision, clientID: message.clientID)
+                                        }
+                                    } else {
+                                        CFLNativeMessageBubble(item: message, model: model)
+                                    }
                                 }
                                 ForEach(model.visibleReply) { reply in
                                     CFLNativeMessageBubble(item: reply, model: model)

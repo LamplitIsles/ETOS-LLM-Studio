@@ -8666,3 +8666,7 @@ If seulement le Archiver state changes, Aucun re-embedding est performed.";
 "内容未发送，可以继续编辑。" = "Le contenu n’a pas été envoyé. Vous pouvez continuer à le modifier.";
 "发送失败，可以恢复内容后重新编辑。" = "Échec de l’envoi. Restaurez le contenu pour le modifier.";
 "当前聊天暂不支持通过此方式导入文件。" = "Cette discussion ne permet pas d’importer des fichiers de cette façon.";
+
+"展开提醒" = "Développer le rappel";
+"收起提醒" = "Réduire le rappel";
+"复制提醒" = "Copier le rappel";

@@ -127,17 +127,63 @@ func historyPage(_ range: Range<Int>, before: String?) -> ChordJSON {
     .object(["messages": .array(range.map(historyMessage)), "before": before.map(ChordJSON.string) ?? .null])
 }
 
-func historySnapshot(_ range: Range<Int>, before: String?, session: String = "fixture-session") -> ChordJSON {
+func historySnapshot(_ range: Range<Int>, before: String?, session: String = "fixture-session", messages: [ChordJSON]? = nil) -> ChordJSON {
     let view: ChordJSON = .object([
         "version": .number(2), "sessionId": .string(session), "name": .string("Mica"), "activeTurnId": .null,
         "contextUsage": .null, "compaction": .null, "recovery": .array([]),
         "capabilities": .object(["text": .bool(true), "stop": .bool(true)]),
-        "messages": .array(range.map(historyMessage)), "before": before.map(ChordJSON.string) ?? .null,
+        "messages": .array(messages ?? range.map(historyMessage)), "before": before.map(ChordJSON.string) ?? .null,
     ])
     return .object(["serviceId": .string("lamplit.chat.v2"), "mode": .string("singleton"), "instances": .array([
         .object(["members": .array([.object(["name": .string("view"), "kind": .string("state"), "sequence": .number(0),
             "ops": .array([.array([.string("r"), view])])])])])
     ])])
+}
+
+func checkReminderSources() async throws {
+    let image: ChordJSON = .object(["attachmentId": .string("fixture_image"), "name": .string("image.png"),
+                                    "mediaType": .string("image/png"), "availability": .string("available")])
+    let reminder: ChordJSON = .object(["kind": .string("reminder"), "reminderId": .string("r1"),
+                                       "occurrenceId": .string("occ1")])
+    func fixture(_ id: String, _ role: String, _ text: String, source: ChordJSON? = nil, images: [ChordJSON]? = nil) -> ChordJSON {
+        var fields: [String: ChordJSON] = ["id": .string(id), "role": .string(role), "text": .string(text),
+                                            "createdAt": .number(1), "operationId": .null, "turnId": .null]
+        if let source { fields["source"] = source }
+        if let images { fields["images"] = .array(images) }
+        return .object(fields)
+    }
+    let current = [
+        fixture("live-user", "user", "第一行\n第二行", source: reminder, images: [image]),
+        fixture("emoji", "user", "⏰ 普通消息"),
+        fixture("matrix", "user", "matrix", source: .object(["kind": .string("matrix"), "nested": .array([.bool(true)])])),
+        fixture("future", "agent", "future", source: .object(["kind": .string("future"), "detail": .number(42)])),
+        fixture("malformed", "user", "ordinary", source: .string("unexpected")),
+        fixture("unknown-kind", "user", "ordinary", source: .object(["kind": .array([])])),
+        fixture("null", "user", "ordinary", source: .null),
+    ]
+    let historical = fixture("history-agent", "agent", "历史提醒\n原文", source: reminder, images: [image])
+    let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: "older", messages: current))
+    await socket.setHistory(["older": .object(["messages": .array([historical]), "before": .null])])
+    let client = CFLChatClient(target: "fixture", store: MemoryStore(), transport: { socket })
+    await client.connect()
+    var state = await client.currentState()
+    precondition(state.connection == .online && state.messages.map(\.id) == ["live-user", "emoji", "matrix", "future", "malformed", "unknown-kind", "null"])
+    precondition(state.messages.map(\.isReminder) == [true, false, false, false, false, false, false])
+    precondition(state.messages[0].role == "user" && state.messages[0].text == "第一行\n第二行" && state.messages[0].images?.first?.attachmentId == "fixture_image")
+    try await client.loadEarlier()
+    state = await client.currentState()
+    precondition(state.messages.first?.id == "history-agent" && state.messages.first?.role == "agent" && state.messages.first?.isReminder == true)
+    precondition(state.messages.first?.text == "历史提醒\n原文" && state.messages.first?.images?.first?.attachmentId == "fixture_image")
+    try await socket.emit(update(sequence: 1, field: "messages", value: .array(current + [fixture("live-agent", "agent", "新提醒", source: reminder)])))
+    for _ in 0..<100 {
+        if await client.currentState().messages.last?.id == "live-agent" { break }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    state = await client.currentState()
+    precondition(state.messages.first?.id == "history-agent" && state.messages.last?.id == "live-agent" && state.messages.last?.isReminder == true)
+    let methods = await socket.methods(); precondition(!methods.contains("submit"))
+    await client.disconnect()
+    print("CFL reminder source checks passed")
 }
 
 func checkHistoryWindows() async throws {
@@ -490,7 +536,9 @@ func checkImages() async throws {
 
 @main struct CFLChatChecks {
     static func main() async throws {
+        if CommandLine.arguments.dropFirst().elementsEqual(["--reminders-only"]) { try await checkReminderSources(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--images-only"]) { try await checkImages(); return }
+        try await checkReminderSources()
         try await checkHistoryWindows()
         if CommandLine.arguments.dropFirst().elementsEqual(["--history-only"]) {
             print("CFL history window checks passed")

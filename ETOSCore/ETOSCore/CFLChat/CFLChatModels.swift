@@ -69,6 +69,16 @@ public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public let operationId: String?
     public let turnId: String?
     public let images: [CFLImageRef]?
+    public let source: CFLMessageSource?
+    public var isReminder: Bool { source?.kind == "reminder" }
+}
+public struct CFLMessageSource: Codable, Equatable, Sendable {
+    public let kind: String?
+
+    public init(from decoder: Decoder) throws {
+        let container = try? decoder.container(keyedBy: CodingKeys.self)
+        kind = try? container?.decode(String.self, forKey: .kind)
+    }
 }
 public struct CFLImageRef: Codable, Equatable, Sendable, Identifiable {
     public var id: String { attachmentId }

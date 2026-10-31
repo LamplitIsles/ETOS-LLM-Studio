@@ -8589,3 +8589,7 @@
 "内容未发送，可以继续编辑。" = "Content was not sent. You can continue editing.";
 "发送失败，可以恢复内容后重新编辑。" = "Send failed. Restore the content to edit it.";
 "当前聊天暂不支持通过此方式导入文件。" = "This chat cannot import files using this method.";
+
+"展开提醒" = "Expand reminder";
+"收起提醒" = "Collapse reminder";
+"复制提醒" = "Copy reminder";
