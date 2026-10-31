@@ -112,9 +112,8 @@ struct GeminiInteractionsAdapterTests {
         #expect((edited.first?["content"] as? [[String: Any]])?.first?["text"] as? String == "已编辑")
     }
 
-    @Test("普通响应收敛保留 Interactions 正文原貌，关闭思考回传也保留必需签名")
+    @Test("Interactions 响应保留正文原貌，关闭思考回传也保留必需签名")
     func responseFinalizationPreservesReplay() throws {
-        let service = ChatService()
         for content in ["\n  缩进正文  \n", "<think>正文中的示例</think>\n答案"] {
             let data = try JSONSerialization.data(withJSONObject: [
                 "status": "completed", "steps": [
@@ -122,11 +121,8 @@ struct GeminiInteractionsAdapterTests {
                     ["type": "model_output", "content": [["type": "text", "text": content]]]
                 ]
             ])
-            var message = try adapter.parseResponse(data: data)
-            let finalized = service.parseResponseThoughtTags(from: message)
-            #expect(finalized.content == content)
-            #expect(finalized.reasoning.isEmpty)
-            message.content = finalized.content
+            let message = try adapter.parseResponse(data: data)
+            #expect(message.content == content)
             for mode in ReasoningContentEchoMode.allCases {
                 let body = try payload(request(messages: [message], common: [ReasoningContentEchoPayload.key: mode.rawValue]))
                 let steps = try #require(body["input"] as? [[String: Any]])
@@ -134,9 +130,6 @@ struct GeminiInteractionsAdapterTests {
                 #expect((steps.last?["content"] as? [[String: String]])?.first?["text"] == content)
             }
         }
-        let legacy = service.parseResponseThoughtTags(from: ChatMessage(role: .assistant, content: "<think>推理</think> 答案 "))
-        #expect(legacy.content == "答案")
-        #expect(legacy.reasoning == "推理")
     }
 
     @Test("流式工具参数与思考签名按消息累积，并发流互不污染")
@@ -267,42 +260,10 @@ struct GeminiInteractionsAdapterTests {
         #expect(embedding.url?.path.contains("embedContent") == true)
     }
 
-    @Test("官方视频上传独立使用 Files 版本，上传与状态查询保留网关路径")
-    func videoFilesAPIVersion() throws {
-        for (base, upload, status) in [
-            ("https://generativelanguage.googleapis.com/v1", "/upload/v1beta/files", "/v1beta/files/video"),
-            ("https://generativelanguage.googleapis.com", "/upload/v1beta/files", "/v1beta/files/video"),
-            ("https://proxy.invalid/google/v1", "/google/upload/v1/files", "/google/v1/files/video"),
-            ("https://proxy.invalid/google", "/google/upload/v1beta/files", "/google/v1beta/files/video")
-        ] {
-            let url = try #require(URL(string: base))
-            #expect(GeminiVideoUploadRequestBuilder.uploadStartURL(from: url)?.path == upload)
-            #expect(GeminiVideoUploadRequestBuilder.statusURL(from: url, fileName: "files/video")?.path == status)
-        }
-    }
-
-    @Test("视频换 Key 只替换原生视频 URI，不改写文本和工具参数")
-    func videoRebinding() throws {
-        let id = UUID()
-        let old = FileAttachment(data: Data([1]), mimeType: "video/mp4", fileName: "v.mp4", remoteFileURI: "old-uri")
-        let new = FileAttachment(data: Data([1]), mimeType: "video/mp4", fileName: "v.mp4", remoteFileURI: "new-uri")
-        var original = URLRequest(url: URL(string: "https://example.invalid/v1/interactions")!)
-        original.httpBody = Data(#"{"input":[{"type":"user_input","content":[{"type":"video","uri":"old-uri"},{"type":"text","text":"old-uri"}]},{"type":"function_call","arguments":{"uri":"old-uri"}}]}"#.utf8)
-        let updated = try GeminiVideoRequestRebinding.replacingFileReferences(in: original, previous: [id: [old]], updated: [id: [new]])
-        let input = try #require(try payload(updated)["input"] as? [[String: Any]])
-        let content = try #require(input.first?["content"] as? [[String: Any]])
-        #expect(content.first?["uri"] as? String == "new-uri")
-        #expect(content.last?["text"] as? String == "old-uri")
-        #expect((input.last?["arguments"] as? [String: String])?["uri"] == "old-uri")
-    }
-
-    @Test("协议分类、同步、导入、思考控制与向导知识保留独立格式")
+    @Test("协议分类、思考控制与向导知识保留独立格式")
     func configurationIntegration() throws {
         #expect(ProviderAPIFormatOption.allCases.contains(.geminiInteractions))
         #expect(ProviderAPIFormatFamily(apiFormat: "gemini-interactions") == .geminiInteractions)
-        #expect(SyncEngine.canonicalProviderAPIFormat("gemini-interactions") == "gemini-interactions")
-        #expect(ThirdPartyImportService.normalizeProviderFormat(typeHint: "gemini-interactions", modelIDs: []) == "gemini-interactions")
-        #expect(ThirdPartyImportService.normalizeBaseURL(nil, for: "gemini-interactions") == "https://generativelanguage.googleapis.com/v1")
         let control = ModelRequestBodyControlDefaults.thinkingOptionGroup(for: "gemini-interactions")
         #expect(control.options.map(\.id) == ["minimal", "low", "medium", "high"])
         #expect(control.options.allSatisfy { $0.payload["generationConfig"] == nil && $0.payload["generation_config"] != nil })

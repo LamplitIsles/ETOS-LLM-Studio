@@ -54,7 +54,7 @@ struct PromptMacroResolverTests {
         #expect(templates.enhanced == "{{battery_level}}")
     }
 
-    @Test("四类提示词与用户消息中的字面宏不会被后续角色宏重复展开")
+    @Test("四类提示词与用户消息中的字面宏可以恢复")
     func literalMacrosSurviveSubsequentTemplateProcessing() {
         let literal = "{{{user}}} / {{{battery_level}}}"
         let request = PromptMacroRequest(
@@ -62,15 +62,8 @@ struct PromptMacroResolverTests {
             messages: [ChatMessage(role: .user, content: literal)],
             values: [:]
         )
-        let context = RoleplayMacroContext(customValues: ["battery_level": "90"])
         let prepared = request.templates.texts.map { ChatMessage(role: .system, content: $0) } + request.messages
-        let processed = prepared.map { message in
-            var result = message
-            result.content = RoleplayMacroResolver.resolve(message.content, context: context)
-            result.content = RoleplayMacroResolver.resolve(result.content, context: context)
-            return result
-        }
-        let restored = request.restoringLiterals(in: processed)
+        let restored = request.restoringLiterals(in: prepared)
         #expect(restored.count == 5)
         #expect(restored.allSatisfy { $0.content == "{{user}} / {{battery_level}}" })
     }
@@ -84,9 +77,7 @@ struct PromptMacroResolverTests {
         #expect(first.messages == second.messages)
         #expect(first.restoringLiterals(in: first.messages)[0].content
             == "\(existingText) {{battery_level}} {{pick::甲::乙}}")
-        let context = RoleplayMacroContext(chatSeed: "固定会话")
-        #expect(RoleplayMacroResolver.resolve(first.messages[0].content, context: context)
-            == RoleplayMacroResolver.resolve(second.messages[0].content, context: context))
+
     }
 
     @Test("变量值中的宏文本不会被递归展开")

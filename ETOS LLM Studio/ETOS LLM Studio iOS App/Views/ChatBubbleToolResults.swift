@@ -131,9 +131,6 @@ struct ToolResultsDisclosureView: View, Equatable {
         if let label = ShortcutToolManager.shared.displayLabel(for: toolName) {
             return label
         }
-        if let label = SkillManager.shared.displayLabel(for: toolName) {
-            return label
-        }
         if let label = AppToolManager.shared.displayLabel(for: toolName) {
             return label
         }

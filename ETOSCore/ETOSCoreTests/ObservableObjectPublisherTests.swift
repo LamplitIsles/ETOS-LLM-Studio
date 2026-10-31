@@ -63,7 +63,6 @@ struct ObservableObjectPublisherTests {
     func startupObservableObjectsExposePublisherGetterSafely() {
         let publishers: [(String, () -> ObservableObjectPublisher)] = [
             ("AnnouncementManager", { AnnouncementManager.shared.objectWillChange }),
-            ("CloudSyncManager", { CloudSyncManager.shared.objectWillChange }),
             ("FeedbackService", { FeedbackService.shared.objectWillChange }),
             ("ToolPermissionCenter", { ToolPermissionCenter.shared.objectWillChange }),
             ("AppToolManager", { AppToolManager.shared.objectWillChange }),
@@ -91,33 +90,6 @@ struct ObservableObjectPublisherTests {
         manager.shouldShowAlert = !original
         manager.shouldShowAlert = original
 
-        #expect(changeCount >= 1)
-        withExtendedLifetime(cancellable) {}
-    }
-
-    @Test("CloudSyncManager 状态变化会触发 objectWillChange")
-    @MainActor
-    func cloudSyncManagerPublishesWhenStateChanges() async {
-        let suiteName = "ObservableObjectPublisherTests.CloudSync.\(UUID().uuidString)"
-        let userDefaults = UserDefaults(suiteName: suiteName)!
-        userDefaults.removePersistentDomain(forName: suiteName)
-        let manager = CloudSyncManager(userDefaults: userDefaults)
-
-        var changeCount = 0
-        let cancellable = manager.objectWillChange.sink { _ in
-            changeCount += 1
-        }
-
-        await manager.performSync(options: [.providers], silent: false)
-
-        let didEnterFailedState: Bool
-        switch manager.state {
-        case .failed:
-            didEnterFailedState = true
-        default:
-            didEnterFailedState = false
-        }
-        #expect(didEnterFailedState, "CloudSyncManager 在关闭状态下执行同步应进入失败态。")
         #expect(changeCount >= 1)
         withExtendedLifetime(cancellable) {}
     }

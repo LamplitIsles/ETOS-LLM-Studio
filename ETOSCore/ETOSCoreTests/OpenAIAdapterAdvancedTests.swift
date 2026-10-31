@@ -1212,25 +1212,6 @@ struct OpenAIAdapterAdvancedTests {
         #expect(inputItems[2]["role"] as? String == "user")
     }
 
-    @Test("OpenAI Responses previous_response_id miss 可识别为全量回退条件")
-    func testOpenAIResponsesPreviousResponseMissingDetection() throws {
-        let service = ChatService()
-        let missingBody = """
-        {"error":{"code":"response_not_found","message":"Could not find previous_response_id resp_missing"}}
-        """.data(using: .utf8)
-        let plainMissingBody = """
-        previous_response_id resp_missing not found
-        """.data(using: .utf8)
-        let unrelatedBody = """
-        {"error":{"code":"invalid_request_error","message":"model is required"}}
-        """.data(using: .utf8)
-
-        #expect(service.isOpenAIResponsesPreviousResponseMissing(statusCode: 400, bodyData: missingBody))
-        #expect(service.isOpenAIResponsesPreviousResponseMissing(statusCode: 404, bodyData: plainMissingBody))
-        #expect(service.isOpenAIResponsesPreviousResponseMissing(statusCode: 400, bodyData: unrelatedBody) == false)
-        #expect(service.isOpenAIResponsesPreviousResponseMissing(statusCode: 500, bodyData: missingBody) == false)
-    }
-
     @Test("OpenAI Responses 不回传模式会移除 reasoning item")
     func testBuildResponsesAPIRequestOmitsReasoningItemsWhenDisabled() throws {
         let responseModel = RunnableModel(

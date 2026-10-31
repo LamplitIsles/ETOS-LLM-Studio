@@ -108,7 +108,6 @@ enum ChatBubbleRendererIdentity: String, Hashable, Sendable {
     case streamingUIKit
     case nativeMarkdown
     case webMarkdown
-    case roleplayHTML
 
     nonisolated static func resolved(
         hasContent: Bool,
@@ -116,10 +115,8 @@ enum ChatBubbleRendererIdentity: String, Hashable, Sendable {
         isStreaming: Bool,
         isAwaitingStaticHandoff: Bool,
         hasPreparedMarkdown: Bool,
-        usesWebRenderer: Bool,
-        hasRoleplayHTML: Bool = false
+        usesWebRenderer: Bool
     ) -> Self {
-        if hasRoleplayHTML { return .roleplayHTML }
         guard hasContent else { return .none }
         if isStreaming || isAwaitingStaticHandoff { return .streamingUIKit }
         guard enableMarkdown, hasPreparedMarkdown else { return .plainText }

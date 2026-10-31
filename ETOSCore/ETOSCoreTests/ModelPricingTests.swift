@@ -111,19 +111,12 @@ struct ModelPricingTests {
         }
     }
 
-    @Test("同步合并保留缓存时长明细且旧用量解码不要求新字段")
-    func cacheDurationUsageMergesWithLegacyUsage() throws {
+    @Test("旧用量解码不要求新增缓存时长字段")
+    func legacyUsageDecodesWithoutCacheDurationFields() throws {
         let legacy = try JSONDecoder().decode(MessageTokenUsage.self, from: Data(#"{"promptTokens":20,"cacheWriteTokens":300}"#.utf8))
         #expect(legacy.cacheWriteFiveMinuteTokens == nil)
         #expect(legacy.cacheWriteOneHourTokens == nil)
         #expect(legacy.uncachedInputTokens == nil)
-        let detailed = MessageTokenUsage(
-            promptTokens: 20, completionTokens: 8, totalTokens: nil,
-            cacheWriteTokens: 300, cacheWriteFiveMinuteTokens: 100, cacheWriteOneHourTokens: 200,
-            uncachedInputTokens: 20
-        )
-        #expect(SyncEngine.mergeTokenUsage(legacy, detailed) == detailed)
-        #expect(SyncEngine.mergeTokenUsage(detailed, legacy) == detailed)
     }
 
     @Test("空价格不会产生费用")

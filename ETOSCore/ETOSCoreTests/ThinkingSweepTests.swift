@@ -90,44 +90,4 @@ extension ChatServiceTests {
         #expect(service.activeResponseMessageID(for: sessionID) == nil)
     }
 
-    @Test("扫光绑定实际请求模型，切换模型不修改旧请求，落盘不恢复样式")
-    func thinkingSweepStaysWithRequestedMessage() async throws {
-        let session = createPermanentTestSession(name: "请求扫光快照")
-        let service = try #require(chatService)
-        let previous = ChatMessage(role: .assistant, content: "历史回复")
-        let pending = ChatMessage(role: .assistant, content: "")
-        service.persistAndPublishMessages([previous, pending], for: session.id)
-        let control = ModelRequestBodyControl(
-            title: "思考强度", kind: .optionGroup, defaultOptionID: "high",
-            isSliderEnabled: true, usesRainbowAtMaximum: true,
-            options: [.init(id: "low", title: "低"), .init(id: "high", title: "高")]
-        )
-        let model = RunnableModel(
-            provider: dummyModel.provider,
-            model: Model(modelName: "rainbow-test", requestBodyControls: [control])
-        )
-        let usesRainbow = await service.prepareThinkingSweepAppearance(
-            for: model, messageID: pending.id, sessionID: session.id
-        )
-        #expect(usesRainbow)
-        service.selectedModelSubject.send(dummyModel)
-        #expect(service.messagesSnapshot(for: session.id).first?.usesRainbowThinkingSweep == false)
-        #expect(service.messagesSnapshot(for: session.id).last?.usesRainbowThinkingSweep == true)
-
-        service.setMessageReceivingStream(true, messageID: pending.id, sessionID: session.id)
-        #expect(service.messagesSnapshot(for: session.id).last?.usesRainbowThinkingSweep == true)
-        await service.updateMessage(
-            with: ChatMessage(role: .assistant, content: "回复完成"),
-            for: pending.id, in: session.id
-        )
-        #expect(service.messagesSnapshot(for: session.id).last?.usesRainbowThinkingSweep == true)
-
-        let nextPending = ChatMessage(role: .assistant, content: "")
-        _ = try await service.appendConversationMessage(nextPending, to: session.id)
-        let nextUsesRainbow = await service.prepareThinkingSweepAppearance(
-            for: dummyModel, messageID: nextPending.id, sessionID: session.id
-        )
-        #expect(!nextUsesRainbow)
-        #expect(service.messagesSnapshot(for: session.id).last?.usesRainbowThinkingSweep == false)
-    }
 }

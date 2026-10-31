@@ -18,8 +18,6 @@ import WebKit
 
 struct ChatBubble: View {
     @ObservedObject var messageState: ChatMessageRenderState
-    let roleplaySessionID: UUID?
-    let roleplayMessages: [ChatMessage]
     let layoutWidth: CGFloat?
     let reasoningPreviewMaxHeight: CGFloat
     let preparedMarkdownPayload: ETPreparedMarkdownRenderPayload?
@@ -79,8 +77,6 @@ struct ChatBubble: View {
 
     init(
         messageState: ChatMessageRenderState,
-        roleplaySessionID: UUID? = nil,
-        roleplayMessages: [ChatMessage] = [],
         layoutWidth: CGFloat? = nil,
         reasoningPreviewMaxHeight: CGFloat = 177,
         preparedMarkdownPayload: ETPreparedMarkdownRenderPayload? = nil,
@@ -128,8 +124,6 @@ struct ChatBubble: View {
         providers: [Provider] = []
     ) {
         self.messageState = messageState
-        self.roleplaySessionID = roleplaySessionID
-        self.roleplayMessages = roleplayMessages
         self.layoutWidth = layoutWidth
         self.reasoningPreviewMaxHeight = reasoningPreviewMaxHeight
         self.preparedMarkdownPayload = preparedMarkdownPayload
@@ -400,8 +394,7 @@ struct ChatBubble: View {
                 isAwaitingStaticHandoff: messageState.streamingMarkdownState
                     .isAwaitingStaticHandoff(channel: .content),
                 hasPreparedMarkdown: preparedMarkdownPayload != nil,
-                usesWebRenderer: enableAdvancedRenderer && preparedMarkdownPayload?.containsMermaidContent == true,
-                hasRoleplayHTML: messageState.roleplayHTML?.containsHTML == true
+                usesWebRenderer: enableAdvancedRenderer && preparedMarkdownPayload?.containsMermaidContent == true
             ),
             reasoningRenderer: ChatBubbleRendererIdentity.resolved(
                 hasContent: !(message.reasoningContent?.isEmpty ?? true),

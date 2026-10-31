@@ -16,7 +16,6 @@ public final class ChatMessageRenderState: ObservableObject, Identifiable {
     @Published public private(set) var visualMessage: ChatMessage
     public private(set) var isUserContentTruncated = false
     public private(set) var textFontSnapshot: ETTextFontSnapshot?
-    @Published public private(set) var roleplayHTML: RoleplayHTMLExtraction?
     public private(set) var layoutRevision: UInt = 0
     public private(set) var rendererHandoffRevision: UInt = 0
     public private(set) var lastRendererHandoffAt: Date?
@@ -35,7 +34,6 @@ public final class ChatMessageRenderState: ObservableObject, Identifiable {
             self.textFontSnapshot = userContentPreview.fontSnapshot
         }
         self.visualMessage = initialVisualMessage
-        self.roleplayHTML = nil
         self.lastRendererHandoffAt = nil
         self.retainsStreamingAssistantWidth = Self.isAssistantLoadingPlaceholder(message)
         self.streamingMarkdownState = ETStreamingMarkdownRenderState()
@@ -75,12 +73,6 @@ public final class ChatMessageRenderState: ObservableObject, Identifiable {
         self.isUserContentTruncated = isUserContentTruncated
         textFontSnapshot = nextFontSnapshot
         visualMessage = message
-    }
-
-    public func updateRoleplayHTML(_ extraction: RoleplayHTMLExtraction?) {
-        guard roleplayHTML != extraction else { return }
-        layoutRevision &+= 1
-        roleplayHTML = extraction
     }
 
     /// UIKit Markdown 与 SwiftUI 静态视图完成交接后，强制刷新气泡的测量身份。

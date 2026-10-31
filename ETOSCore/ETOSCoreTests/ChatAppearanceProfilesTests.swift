@@ -555,42 +555,6 @@ struct ChatAppearanceProfilesTests {
         #expect(window?.endMinuteOfDay == 19 * 60)
     }
 
-    @Test("AppConfig 同步包不会携带颜色配置")
-    func appStorageSnapshotDoesNotContainColorConfiguration() throws {
-        let suite = "com.ETOS.tests.chatAppearance.sync.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else {
-            Issue.record("无法创建测试专用 UserDefaults")
-            return
-        }
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let configuration = ChatAppearanceProfileConfiguration(
-            profiles: [
-                ChatAppearanceProfile.defaultProfile,
-                ChatAppearanceProfile(
-                    id: "warm",
-                    name: "Warm",
-                    userBubble: .init(isEnabled: true, hex: "AA0000FF")
-                )
-            ],
-            scheduleRules: [
-                ChatAppearanceScheduleRule(profileID: "warm", startMinuteOfDay: 9 * 60, endMinuteOfDay: 18 * 60)
-            ]
-        )
-        _ = try ChatAppearanceProfileStore.saveConfiguration(configuration, userDefaults: defaults)
-
-        let package = SyncEngine.buildPackage(options: [.appStorage], userDefaults: defaults)
-        guard let snapshotData = package.appStorageSnapshot,
-              let plist = try? PropertyListSerialization.propertyList(from: snapshotData, options: [], format: nil),
-              let snapshot = plist as? [String: Any] else {
-            Issue.record("同步包快照解码失败")
-            return
-        }
-
-        #expect(snapshot[ChatAppearanceProfileStore.configurationStorageKey] == nil)
-    }
-
     private func makeUTCDate(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> Date {
         var components = DateComponents()
         components.calendar = Calendar(identifier: .gregorian)

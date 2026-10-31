@@ -72,7 +72,6 @@ public actor GuideKnowledgeService {
 
 public enum GuideDocumentCatalog {
     public static let documents: [GuideDocument] = [
-        BatchGuideSupport.document(),
         GuideMacWorkspaceKnowledge.document(),
         GuideChatQuickActionsKnowledge.document(),
         GuideDataImportKnowledge.document(),
@@ -100,20 +99,6 @@ public enum GuideDocumentCatalog {
             根页、预览和介绍各自声明只读向导上下文，只提供图片数量、导出状态和只读标记，不公开图片、提示词、文件路径，也不允许向导删除或导出。系统保存面板不属于 App 配置页。
 
             On macOS, open Extended Features and Image Gallery to view assistant images from the current conversation. Preview an image or export its original file using the system save panel. Deletion requires native confirmation and preserves files referenced elsewhere. The guide receives only counts and status, never images, prompts or file paths.
-            """
-        ),
-        GuideDocument(
-            id: "message-tool-call-editing",
-            title: "消息工具调用 JSON 编辑",
-            keywords: ["工具调用", "JSON", "编辑消息", "参数", "arguments", "result", "空消息"],
-            content: """
-            iOS 在消息“更多”→“编辑消息”中提供“工具调用 JSON”；macOS 从消息右键菜单的“编辑”进入。助手和工具结果消息可进入此编辑器。正文或思考为空不会阻止保存；助手消息可以从 [] 开始添加调用。点击“添加工具调用”会生成带唯一 id 的草稿，必须填写 toolName 后才能保存；arguments 接受 JSON 对象或包含对象的字符串。result 是字符串，resultDisposition 可选 completed、failed、rejected，providerSpecificFields 保留服务商专有字段。不支持的字段、重复 id、错误类型及无效 JSON 会阻止保存。[] 清空调用，单个工具结果消息只能关联一个调用，多个调用应添加到助手消息。
-
-            从 JSON 编辑器返回不会保存，只有父消息编辑器的原生“保存”才更新记录，取消会丢弃草稿。编辑或添加调用不会执行工具。保留调用 id 可以维持结果关联；修改助手调用的结果会同步同轮对话、同次回复的结果消息，移除调用会移除其结果，手工填写的新结果会补充到聊天历史。编辑工具结果正文会同步对应助手调用。若消息或会话在保存期间变化，则要求重新打开编辑器，避免覆盖新内容。被编辑的响应不再复用旧 Responses 输出缓存。
-
-            编辑器顶部的“编辑说明”介绍卡通过“进一步了解…”打开独立介绍页，阅读字段格式、结果关联与保存规则，不在编辑表单中展开长文。介绍页不持有 JSON 草稿，只声明只读状态。
-
-            编辑器与其 JSON 子页面分别声明向导上下文。消息正文、思考、工具参数、结果及服务商字段可能含凭据，全部不向向导读取，向导只知道保存状态。此页面不提供修改提案或执行工具，仅帮助用户理解格式与操作。
             """
         ),
         GuideDocument(
@@ -322,11 +307,9 @@ public enum GuideDocumentCatalog {
         GuideDocument(
             id: "settings-extended",
             title: "拓展功能入口",
-            keywords: ["拓展", "批量任务", "Batch", "导入", "反馈", "图片相册"],
+            keywords: ["拓展", "导入", "反馈", "图片相册"],
             content: """
-            拓展功能页汇总快速指令、批量任务、后台生成、应用锁、图片相册、存储管理和数据导入，底部的“连接例外”用于管理用户确认的 HTTP 和 HTTPS 证书例外。该页本身是入口索引；进入具体功能后，向导使用对应页面的文档、快照和工具，不会把其他功能的设置混入当前提案。
-
-            iOS 和 macOS 均通过设置→拓展功能→批量任务进入 Batch；设置首页不再单列该入口。打开批量任务后可新建草稿，或查看已有任务与结果；提供商需支持 Batch API。具体限制见 batch-tasks 文档，向导不能代替用户提交任务。
+            拓展功能页汇总快速指令、后台生成、应用锁、图片相册、存储管理和数据导入，底部的“连接例外”用于管理用户确认的 HTTP 和 HTTPS 证书例外。该页本身是入口索引；进入具体功能后，向导使用对应页面的文档、快照和工具，不会把其他功能的设置混入当前提案。
 
             图片相册、反馈记录和数据导入等页面包含文件或网络副作用。向导可以解释当前页面和可见状态，但下载、导入、删除、提交等操作仍使用原生按钮及其确认流程。
             """
@@ -354,20 +337,6 @@ public enum GuideDocumentCatalog {
 
 
             Mac 的“数据管理”提供 iCloud 漫游同步开关和立即同步；开启后沿用核心的自动同步。首次同步选择数据来源后还需输入确认词，执行前由核心创建安全快照；确认只对应当时的同步裁决。向导不能运行同步或代填覆盖确认。
-            """
-        ),
-        GuideDocument(
-            id: "snapshot-backup",
-            title: "快照备份与云端上传",
-            keywords: ["快照", "备份", "云备份", "S3", "R2", "上传", "通知"],
-            content: """
-            备份页可生成数据库快照或包含附件的完整快照，可设置简单密码或高强度派生加密。快照类型、加密方式与密码只改变当前页面的导出草稿，仍需用户点击保存快照并选择目的地。启用 S3/R2 保存及对象存储详情页中的连接配置会直接保存；所有向导修改必须经过原生确认。已有密码、Access Key ID、Secret Access Key 与 Session Token 只写不可读。
-
-            iOS 与 macOS 的 S3/R2 上传由应用任务管理器持有。点击上传后可在 App 内切换页面、继续聊天，返回备份页可查看进度及最近结果。准备、加密和上传期间不能重复发起备份。上传完成或失败后使用与聊天回复相同的本地通知中心，需要系统通知权限；通知被拒绝时仍可返回备份页查看结果。此功能不保证关闭 App 或系统挂起后继续上传。
-
-            Mac 使用系统保存面板导出文件，可在 Finder 中定位导出结果。恢复共用 .elsbackup 检查和加密流程，并在替换数据库前等待配置写入、取消聊天请求。数据库或完整快照的范围与移动端一致，不包括 Linux 根文件系统或本机任意目录。
-
-            本次上传使用点击时的配置和密码，之后编辑草稿或连接配置只影响下次上传。向导不能代替用户执行上传、下载或覆盖恢复。历史归档列表和详情仅提供只读状态。恢复会替换当前数据，必须由用户在原生界面操作。页面切换后旧页面提案失效。
             """
         ),
         GuideDocument(

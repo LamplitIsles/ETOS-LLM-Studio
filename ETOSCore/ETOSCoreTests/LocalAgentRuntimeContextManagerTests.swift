@@ -61,7 +61,7 @@ struct LocalAgentRuntimeContextManagerTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let service = ChatService(adapters: [:])
+        let service = ChatService()
         let session = service.createSavedSession(name: "Agent 文件清理")
         let run = ConversationRun(
             sessionID: session.id,

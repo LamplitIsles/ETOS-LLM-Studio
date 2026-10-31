@@ -265,41 +265,6 @@ public struct SkillFileReference: Hashable, Identifiable, Sendable {
     }
 }
 
-public struct SkillImportResult: Sendable {
-    public var skillName: String
-    public var files: [String: Data]
-
-    public init(skillName: String, files: [String: Data]) {
-        self.skillName = skillName
-        self.files = files
-    }
-}
-
-public struct SkillTextResourceChunk: Sendable {
-    public var relativePath: String
-    public var startLine: Int
-    public var endLine: Int
-    public var totalLines: Int
-    public var hasMore: Bool
-    public var content: String
-
-    public init(
-        relativePath: String,
-        startLine: Int,
-        endLine: Int,
-        totalLines: Int,
-        hasMore: Bool,
-        content: String
-    ) {
-        self.relativePath = relativePath
-        self.startLine = startLine
-        self.endLine = endLine
-        self.totalLines = totalLines
-        self.hasMore = hasMore
-        self.content = content
-    }
-}
-
 public enum SkillStoreError: LocalizedError, Sendable {
     case invalidSkillName
     case invalidSkillContent

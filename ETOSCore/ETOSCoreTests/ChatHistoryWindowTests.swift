@@ -216,56 +216,6 @@ struct ChatHistoryWindowTests {
         #expect(ChatHistoryWindowSupport.weightedCount(in: messages, window: expanded) == 9)
     }
 
-    @Test("跳转到合并工具结果时会落到相邻的实际气泡")
-    func testJumpTargetResolvesHiddenToolResult() {
-        let user = ChatMessage(role: .user, content: "问题")
-        let assistant = ChatMessage(role: .assistant, content: "正在调用工具")
-        let tool = ChatMessage(
-            role: .tool,
-            content: "工具结果",
-            toolCalls: [
-                InternalToolCall(
-                    id: "tool-result",
-                    toolName: "search",
-                    arguments: "{}",
-                    result: "完成"
-                )
-            ]
-        )
-        let messages = [user, assistant, tool]
-
-        let targetID = ChatJumpTargetSupport.messageID(
-            at: 2,
-            in: messages,
-            hiddenToolCallResultIDs: ["tool-result"]
-        )
-
-        #expect(targetID == assistant.id)
-    }
-
-    @Test("气泡导航索引排除隐藏工具结果")
-    func testRenderedMessageIDsExcludeHiddenToolResult() {
-        let user = ChatMessage(role: .user, content: "问题")
-        let assistant = ChatMessage(role: .assistant, content: "正在调用工具")
-        let tool = ChatMessage(
-            role: .tool,
-            content: "工具结果",
-            toolCalls: [
-                InternalToolCall(
-                    id: "hidden-result",
-                    toolName: "search",
-                    arguments: "{}",
-                    result: "完成"
-                )
-            ]
-        )
-
-        #expect(ChatJumpTargetSupport.renderedMessageIDs(
-            in: [user, assistant, tool],
-            hiddenToolCallResultIDs: ["hidden-result"]
-        ) == [user.id, assistant.id])
-    }
-
     private func makeMessages(count: Int) -> [ChatMessage] {
         (0..<count).map { index in
             ChatMessage(role: .user, content: "消息 \(index)")

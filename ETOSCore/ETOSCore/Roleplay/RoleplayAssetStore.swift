@@ -13,30 +13,6 @@ public enum RoleplayAssetStore {
         Persistence.getImageDirectory()
     }
 
-    public static func install(
-        _ imported: [RoleplayImportedCardAsset],
-        characterID: UUID
-    ) throws -> [RoleplayCardAsset] {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var installed: [RoleplayCardAsset] = []
-        do {
-            for item in imported {
-                var asset = item.asset
-                if let data = item.data {
-                    let ext = safeExtension(asset.fileExtension)
-                    let fileName = "roleplay-asset-\(characterID.uuidString)-\(asset.id.uuidString).\(ext)"
-                    try data.write(to: directory.appendingPathComponent(fileName), options: .atomic)
-                    asset.localFileName = fileName
-                }
-                installed.append(asset)
-            }
-            return installed
-        } catch {
-            deleteFiles(for: installed)
-            throw error
-        }
-    }
-
     public static func resolvedURL(for asset: RoleplayCardAsset) -> URL? {
         guard let fileName = asset.localFileName else {
             return URL(string: asset.uri)
@@ -69,8 +45,4 @@ public enum RoleplayAssetStore {
         }
     }
 
-    private static func safeExtension(_ raw: String) -> String {
-        let filtered = raw.lowercased().filter { $0.isLetter || $0.isNumber }
-        return filtered.isEmpty ? "bin" : String(filtered.prefix(12))
-    }
 }

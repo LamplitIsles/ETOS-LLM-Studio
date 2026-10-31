@@ -43,13 +43,6 @@ extension ChatServiceTests {
         let expectedIDs = [user.id, source.id, firstResult.id, delayedResult.id, nextSource.id, nextResult.id, loading.id]
         #expect(updated.map(\.id) == expectedIDs)
 
-        let prepared = chatService.preparedMessagesForRequest(
-            from: updated, loadingMessageID: loading.id, session: chatService.currentSessionSubject.value
-        )
-        #expect(prepared.map(\.id) == Array(expectedIDs.dropLast()))
-        #expect(prepared.filter { $0.role == .tool }.map(\.content) == [
-            "第一轮检索结果", "后台保存完成", "第二轮检索结果"
-        ])
         await cleanup()
     }
 

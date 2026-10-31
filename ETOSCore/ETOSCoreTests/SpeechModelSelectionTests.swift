@@ -103,56 +103,6 @@ struct SpeechModelSelectionTests {
         ])
     }
 
-    @Test("远端语音模型统一使用 OpenAI 转写适配器")
-    func testRemoteTranscriptionAlwaysUsesOpenAICompatibleAdapter() async throws {
-        let expectedURL = URL(string: "https://fake.url/audio/transcriptions")!
-        let response = HTTPURLResponse(
-            url: expectedURL,
-            statusCode: 200,
-            httpVersion: nil,
-            headerFields: nil
-        )!
-        MockURLProtocol.mockResponses = [
-            expectedURL: .success((response, Data()))
-        ]
-        defer { MockURLProtocol.mockResponses = [:] }
-
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        let openAIAdapter = MockAPIAdapter()
-        openAIAdapter.transcriptionRequestURL = expectedURL
-        openAIAdapter.transcriptionResponseToReturn = "识别结果"
-        let providerAdapter = MockAPIAdapter()
-        let service = ChatService(
-            adapters: [
-                "openai-compatible": openAIAdapter,
-                "gemini": providerAdapter
-            ],
-            urlSession: URLSession(configuration: configuration)
-        )
-        let provider = Provider(
-            name: "兼容服务",
-            baseURL: "https://example.com/v1",
-            apiKeys: ["key"],
-            apiFormat: "gemini"
-        )
-        let model = RunnableModel(
-            provider: provider,
-            model: Model(modelName: "custom-transcriber")
-        )
-
-        let transcript = try await service.transcribeAudio(
-            using: model,
-            audioData: Data([1, 2, 3]),
-            fileName: "recording.m4a",
-            mimeType: "audio/m4a"
-        )
-
-        #expect(transcript == "识别结果")
-        #expect(openAIAdapter.receivedTranscriptionModel?.id == model.id)
-        #expect(providerAdapter.receivedTranscriptionModel == nil)
-    }
-
 #if canImport(Speech) && canImport(AVFoundation)
     @Test("系统语音识别将简体中文回退到可用地区")
     func testSystemSpeechLocaleResolverUsesSimplifiedChineseFallback() {

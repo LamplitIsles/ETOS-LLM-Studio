@@ -19,13 +19,6 @@ public class ChatService {
     let logger = Logger(subsystem: "com.ETOS.LLM.Studio", category: "ChatService")
     static let modelOrderStorageKey = "modelOrder.runnableModels"
     static let selectedRunnableModelStorageKey = "selectedRunnableModelID"
-    struct RetryAchievementSignature: Equatable {
-        let sessionID: UUID
-        let content: String
-    }
-
-    var consecutiveRetrySignature: RetryAchievementSignature?
-    var consecutiveRetryCount = 0
     public static let systemSpeechRecognizerProviderID = UUID(uuidString: "2FB43D6B-8E40-4D65-9EA6-C13AB41D8A2E")!
     public static let systemSpeechRecognizerModelID = UUID(uuidString: "EE2F84DF-F640-47B8-9A83-BE438905C4F3")!
     public static let systemOCRProviderID = UUID(uuidString: "4301D30F-D7C6-4A4F-A45B-F8721CD68099")!
@@ -131,26 +124,6 @@ public class ChatService {
         case cancelled(sessionID: UUID?, loadingMessageID: UUID?, prompt: String, finishedAt: Date)
     }
 
-    public enum DetachedCompletionError: LocalizedError {
-        case noAvailableModel
-        case unsupportedAdapter
-        case buildRequestFailed
-        case unsupportedAttachments
-
-        public var errorDescription: String? {
-            switch self {
-            case .noAvailableModel:
-                return NSLocalizedString("当前没有可用于 Detached Completion 的聊天模型。", comment: "Detached completion no model error")
-            case .unsupportedAdapter:
-                return NSLocalizedString("当前模型对应的适配器不可用，无法执行 Detached Completion。", comment: "Detached completion adapter unavailable error")
-            case .buildRequestFailed:
-                return NSLocalizedString("Detached Completion 请求构建失败。", comment: "Detached completion build request error")
-            case .unsupportedAttachments:
-                return NSLocalizedString("当前 Detached Completion 模型不支持这组附件。", comment: "Detached completion attachments unsupported error")
-            }
-        }
-    }
-
     // MARK: - 私有状态
     
     private var cancellables = Set<AnyCancellable>()
@@ -172,33 +145,8 @@ public class ChatService {
     /// 显式临时对话只保留运行期消息，和“尚未发送首条消息”的占位会话语义分开。
     var ephemeralSessionIDs: Set<UUID> = []
     let ephemeralSessionLock = NSLock()
-    /// 记录每个会话上一次注入周期性时间路标的时间，保证路标按周期出现且不会过于频繁。
-    var periodicTimeLandmarkLastInjectedAtBySessionID: [UUID: Date] = [:]
     var providers: [Provider]
-    let adapters: [String: APIAdapter]
     let roleplayStore: RoleplayStore
-    let urlSession: URLSession
-    let fileAttachmentTextExtractor: FileAttachmentTextExtractor
-    private let audioAttachmentDataCache: NSCache<NSString, NSData> = {
-        let cache = NSCache<NSString, NSData>()
-        cache.countLimit = 24
-        cache.totalCostLimit = 32 * 1024 * 1024
-        return cache
-    }()
-    private let imageAttachmentDataCache: NSCache<NSString, NSData> = {
-        let cache = NSCache<NSString, NSData>()
-        cache.countLimit = 96
-        cache.totalCostLimit = 64 * 1024 * 1024
-        return cache
-    }()
-    private let fileAttachmentDataCache: NSCache<NSString, NSData> = {
-        let cache = NSCache<NSString, NSData>()
-        cache.countLimit = 32
-        cache.totalCostLimit = 64 * 1024 * 1024
-        return cache
-    }()
-    let geminiVideoUploadCache = GeminiVideoUploadCache()
-
     struct ImageGenerationContext {
         let sessionID: UUID
         let loadingMessageID: UUID
@@ -216,63 +164,6 @@ public class ChatService {
         var taskRegistrationPending = false
         var hasFinishedResponse = false
         var isCancelled = false
-    }
-
-    struct ImageOCRPreprocessingResult {
-        let messages: [ChatMessage]
-        let imageAttachments: [UUID: [ImageAttachment]]
-        let errorMessage: String?
-    }
-
-    struct FileAttachmentTextPreprocessingResult {
-        let messages: [ChatMessage]
-        let fileAttachments: [UUID: [FileAttachment]]
-        let errorMessage: String?
-    }
-
-    struct VideoAttachmentPreprocessingResult {
-        let messages: [ChatMessage]
-        let imageAttachments: [UUID: [ImageAttachment]]
-        let nativeVideoAttachments: [UUID: [FileAttachment]]
-        let documentAttachments: [UUID: [FileAttachment]]
-        let errorMessage: String?
-    }
-
-    struct RequestLogContext {
-        let requestID: UUID
-        let sessionID: UUID?
-        let providerID: UUID?
-        let providerName: String
-        let modelID: String
-        let requestSource: UsageRequestSource
-        let isStreaming: Bool
-        let requestedAt: Date
-        let modelReference: MessageModelReference?
-        let modelPricing: ModelPricing?
-
-        init(
-            requestID: UUID,
-            sessionID: UUID?,
-            providerID: UUID?,
-            providerName: String,
-            modelID: String,
-            requestSource: UsageRequestSource,
-            isStreaming: Bool,
-            requestedAt: Date,
-            modelReference: MessageModelReference? = nil,
-            modelPricing: ModelPricing? = nil
-        ) {
-            self.requestID = requestID
-            self.sessionID = sessionID
-            self.providerID = providerID
-            self.providerName = providerName
-            self.modelID = modelID
-            self.requestSource = requestSource
-            self.isStreaming = isStreaming
-            self.requestedAt = requestedAt
-            self.modelReference = modelReference
-            self.modelPricing = modelPricing?.normalized
-        }
     }
 
     public func messagesSnapshot(for sessionID: UUID) -> [ChatMessage] {
@@ -476,31 +367,6 @@ public class ChatService {
         guard let messages else { return }
         publishMessagesIfCurrentSession(messages, for: sessionID)
         await promoteSessionToTopIfNeeded(sessionID: sessionID)
-    }
-
-    func replaceExistingResponseMessage(
-        id messageID: UUID, in sessionID: UUID,
-        replacement: (ChatMessage) -> [ChatMessage]
-    ) -> Bool {
-        let messages = requestStateLock.withLock { () -> [ChatMessage]? in
-            guard permitsRequestWrite(sessionID: sessionID), var messages = runtimeMessagesBySessionID[sessionID],
-                  let index = messages.firstIndex(where: { $0.id == messageID }) else { return nil }
-            let additions = replacement(messages[index])
-            messages.replaceSubrange(index...index, with: additions)
-            runtimeMessagesBySessionID[sessionID] = messages
-            return messages
-        }
-        guard let messages else { return false }
-        publishMessagesIfCurrentSession(messages, for: sessionID, keepingSpeedSamplesFor: messageID)
-        return true
-    }
-
-    func currentRequestMessages(containing messageID: UUID, in sessionID: UUID) -> [ChatMessage]? {
-        requestStateLock.withLock {
-            guard permitsRequestWrite(sessionID: sessionID), let messages = runtimeMessagesBySessionID[sessionID],
-                  messages.contains(where: { $0.id == messageID }) else { return nil }
-            return messages
-        }
     }
 
     /// Checks at the synchronous admission point. Work admitted before a later
@@ -785,20 +651,6 @@ public class ChatService {
         publishMessagesIfCurrentSession(messages, for: sessionID, keepingSpeedSamplesFor: preferredMessageID)
     }
 
-    func mergeAndStoreStreamingMessage(
-        _ streamingMessages: [ChatMessage], loadingMessageID: UUID, sessionID: UUID
-    ) -> [ChatMessage] {
-        requestStateLock.withLock {
-            var latest = runtimeMessagesBySessionID[sessionID] ?? []
-            guard permitsRequestWrite(sessionID: sessionID),
-                  let update = streamingMessages.first(where: { $0.id == loadingMessageID }),
-                  let index = latest.firstIndex(where: { $0.id == loadingMessageID }) else { return latest }
-            latest[index] = update
-            runtimeMessagesBySessionID[sessionID] = latest
-            return latest
-        }
-    }
-
     private func withRequestStateLock<T>(_ body: () -> T) -> T {
         requestStateLock.lock()
         defer { requestStateLock.unlock() }
@@ -1017,106 +869,12 @@ public class ChatService {
         }
     }
 
-    private func cachedAttachmentData(
-        for fileName: String,
-        cache: NSCache<NSString, NSData>,
-        loader: (String) -> Data?
-    ) -> Data? {
-        let key = fileName as NSString
-        if let cached = cache.object(forKey: key) {
-            return Data(referencing: cached)
-        }
-
-        guard let data = loader(fileName) else { return nil }
-        cache.setObject(data as NSData, forKey: key, cost: data.count)
-        return data
-    }
-
-    func loadAudioAttachmentFromStorage(fileName: String) -> AudioAttachment? {
-        guard let audioData = cachedAttachmentData(
-            for: fileName,
-            cache: audioAttachmentDataCache,
-            loader: { Persistence.loadAudio(fileName: $0) }
-        ) else {
-            return nil
-        }
-
-        let fileExtension = (fileName as NSString).pathExtension.lowercased()
-        let mimeType = "audio/\(fileExtension)"
-        return AudioAttachment(
-            data: audioData,
-            mimeType: mimeType,
-            format: fileExtension,
-            fileName: fileName
-        )
-    }
-
-    func loadImageAttachmentFromStorage(fileName: String) -> ImageAttachment? {
-        guard let imageData = cachedAttachmentData(
-            for: fileName,
-            cache: imageAttachmentDataCache,
-            loader: { Persistence.loadImage(fileName: $0) }
-        ) else {
-            return nil
-        }
-
-        let fileExtension = (fileName as NSString).pathExtension.lowercased()
-        let mimeType: String
-        switch fileExtension {
-        case "png":
-            mimeType = "image/png"
-        case "webp":
-            mimeType = "image/webp"
-        case "gif":
-            mimeType = "image/gif"
-        default:
-            mimeType = "image/jpeg"
-        }
-        return ImageAttachment(data: imageData, mimeType: mimeType, fileName: fileName)
-    }
-
-    func loadFileAttachmentFromStorage(fileName: String) -> FileAttachment? {
-        guard let fileData = cachedAttachmentData(
-            for: fileName,
-            cache: fileAttachmentDataCache,
-            loader: { Persistence.loadFile(fileName: $0) }
-        ) else {
-            return nil
-        }
-
-        let mimeType = resolvedMimeType(for: fileName)
-        return FileAttachment(data: fileData, mimeType: mimeType, fileName: fileName)
-    }
-
-    func invalidateAttachmentCache(for message: ChatMessage) {
-        if let audioFileName = message.audioFileName {
-            audioAttachmentDataCache.removeObject(forKey: audioFileName as NSString)
-        }
-        if let imageFileNames = message.imageFileNames {
-            for fileName in imageFileNames {
-                imageAttachmentDataCache.removeObject(forKey: fileName as NSString)
-            }
-        }
-        if let fileFileNames = message.fileFileNames {
-            for fileName in fileFileNames {
-                fileAttachmentDataCache.removeObject(forKey: fileName as NSString)
-            }
-        }
-    }
-
     // MARK: - 初始化
     
-    public init(
-        adapters: [String: APIAdapter]? = nil,
-        roleplayStore: RoleplayStore = .shared,
-        fileAttachmentTextExtractor: FileAttachmentTextExtractor = FileAttachmentTextExtractor(),
-        urlSession: URLSession = NetworkSessionConfiguration.shared
-    ) {
+    public init(roleplayStore: RoleplayStore = .shared) {
         logger.info("ChatService 正在初始化...")
 
         self.roleplayStore = roleplayStore
-        self.fileAttachmentTextExtractor = fileAttachmentTextExtractor
-        self.urlSession = urlSession
         ConfigLoader.setupInitialProviderConfigs()
         ConfigLoader.setupBackgroundsDirectory()
         self.providers = ConfigLoader.loadProviders()
@@ -1125,13 +883,7 @@ public class ChatService {
             name: NSLocalizedString("新的对话", comment: "Default new chat session name"),
             isTemporary: true
         )
-        self.adapters = adapters ?? [
-            "openai-compatible": OpenAIAdapter(),
-            "openai-responses": OpenAIResponsesAdapter(),
-            "gemini": GeminiAdapter(),
-            "gemini-interactions": GeminiInteractionsAdapter(),
-            "anthropic": AnthropicAdapter(),
-        ]
+
 
         self.providersSubject = CurrentValueSubject(self.providers)
         self.selectedModelSubject = CurrentValueSubject(nil)
@@ -1175,91 +927,6 @@ public class ChatService {
 
         logger.info("  - 初始选中模型为: \(initialModel?.model.displayName ?? "无")")
         logger.info("  - 初始化完成。")
-    }
-
-    public func fetchModels(for provider: Provider) async throws -> [Model] {
-        logger.info("正在为提供商 '\(provider.name)' 获取云端模型列表...")
-        guard let adapter = adapters[provider.apiFormat] else {
-            throw NetworkError.adapterNotFound(format: provider.apiFormat)
-        }
-
-        if let configurationError = providerConfigurationValidationErrorMessage(
-            for: provider,
-            action: NSLocalizedString("在线获取模型列表", comment: "Fetch model list action")
-        ) {
-            logger.warning("  - 提供商 '\(provider.name)' 配置异常: \(configurationError)")
-            throw NetworkError.invalidProviderConfiguration(message: configurationError)
-        }
-
-        guard let request = adapter.buildModelListRequest(for: provider) else {
-            logger.warning("  - 提供商 '\(provider.name)' (\(provider.apiFormat)) 当前适配器未实现在线模型列表。")
-            throw NetworkError.modelListUnavailable(provider: provider.name, apiFormat: provider.apiFormat)
-        }
-
-        do {
-            let data = try await fetchData(for: request, provider: provider)
-            let fetchedModels = try adapter.parseModelListResponse(data: data)
-            logger.info("  - 成功获取并解析了 \(fetchedModels.count) 个模型。")
-            return fetchedModels
-        } catch {
-            logger.error("  - 获取或解析模型列表失败: \(error.localizedDescription)")
-            throw error
-        }
-    }
-
-    /// 将音频数据发送到选定的语音转文字模型，并返回识别结果。
-    /// - Parameters:
-    ///   - model: 需要调用的语音模型。
-    ///   - audioData: 录制的音频数据。
-    ///   - fileName: 上传使用的文件名。
-    ///   - mimeType: 音频数据的类型，例如 `audio/m4a`。
-    ///   - language: 可选的语言提示，留空则由模型自动判断。
-    /// - Returns: 识别出的文本。
-    public func transcribeAudio(
-        using model: RunnableModel,
-        audioData: Data,
-        fileName: String,
-        mimeType: String,
-        language: String? = nil
-    ) async throws -> String {
-        if Self.isSystemSpeechRecognizerModel(model) {
-            let extensionFromName = URL(fileURLWithPath: fileName).pathExtension
-            let fallbackExtension = mimeType.lowercased().contains("wav") ? "wav" : "m4a"
-            let transcript = try await SystemSpeechRecognizerService.transcribe(
-                audioData: audioData,
-                fileExtension: extensionFromName.isEmpty ? fallbackExtension : extensionFromName,
-                localeIdentifier: language
-            )
-            logger.info("系统语音识别完成，长度 \(transcript.count) 字符。")
-            return transcript
-        }
-
-        logger.info("正在向 \(model.provider.name) 的语音模型 \(model.model.displayName) 发起转写请求...")
-        
-        // 专用语音选择允许任意远端模型，但转写端点统一遵循 OpenAI Audio Transcriptions 协议。
-        guard let adapter = adapters["openai-compatible"] else {
-            throw NetworkError.adapterNotFound(format: "openai-compatible")
-        }
-        
-        guard let request = adapter.buildTranscriptionRequest(
-            for: model,
-            audioData: audioData,
-            fileName: fileName,
-            mimeType: mimeType,
-            language: language
-        ) else {
-            throw NetworkError.featureUnavailable(provider: model.provider.name)
-        }
-        
-        do {
-            let data = try await fetchData(for: request, provider: model.provider)
-            let transcript = try adapter.parseTranscriptionResponse(data: data)
-            logger.info("语音转文字完成，长度 \(transcript.count) 字符。")
-            return transcript
-        } catch {
-            logger.error("语音转文字失败: \(error.localizedDescription)")
-            throw error
-        }
     }
 
     /// 删除正在生成的占位消息前先终止对应请求，避免后续 Token

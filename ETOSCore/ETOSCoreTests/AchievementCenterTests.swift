@@ -144,72 +144,6 @@ struct AchievementCenterTests {
         #expect(center.journalEntries.isEmpty)
     }
 
-    @Test("成就记录键不会进入 AppConfig 同步快照")
-    func achievementRecordIsNotIncludedInAppStorageSnapshot() {
-        let suite = "com.ETOS.tests.achievement.snapshot.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else {
-            Issue.record("无法创建测试 UserDefaults")
-            return
-        }
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let record = AchievementUnlockRecord(
-            achievementID: Self.firstDefinition.id,
-            unlockedAt: Date(timeIntervalSince1970: 1_744_156_800),
-            originDeviceID: "device-a",
-            originPlatform: "iOS"
-        )
-        store(record, in: defaults)
-
-        let package = SyncEngine.buildPackage(options: [.appStorage], userDefaults: defaults)
-        let snapshot = decodeAppStorageSnapshot(package.appStorageSnapshot)
-
-        #expect(snapshot[AchievementCenter.storageKey(for: record)] == nil)
-    }
-
-    @Test("导入 AppConfig 同步快照不会写入成就记录键")
-    func appStorageImportPreservesIndependentAchievementKeys() async {
-        let suite = "com.ETOS.tests.achievement.import.\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else {
-            Issue.record("无法创建测试 UserDefaults")
-            return
-        }
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let localRecord = AchievementUnlockRecord(
-            achievementID: Self.firstDefinition.id,
-            unlockedAt: Date(timeIntervalSince1970: 1_744_156_800),
-            originDeviceID: "device-a",
-            originPlatform: "iOS"
-        )
-        let remoteRecord = AchievementUnlockRecord(
-            achievementID: Self.secondDefinition.id,
-            unlockedAt: Date(timeIntervalSince1970: 1_744_243_200),
-            originDeviceID: "device-b",
-            originPlatform: "watchOS"
-        )
-        store(localRecord, in: defaults)
-
-        let incoming: [String: Any] = [
-            AchievementCenter.storageKey(for: remoteRecord): encoded(remoteRecord) ?? Data()
-        ]
-        let snapshotData = try? PropertyListSerialization.data(
-            fromPropertyList: incoming,
-            format: .binary,
-            options: 0
-        )
-        let package = SyncPackage(options: [.appStorage], appStorageSnapshot: snapshotData)
-
-        let summary = await SyncEngine.apply(package: package, userDefaults: defaults)
-
-        #expect(defaults.data(forKey: AchievementCenter.storageKey(for: localRecord)) != nil)
-        #expect(defaults.data(forKey: AchievementCenter.storageKey(for: remoteRecord)) == nil)
-        #expect(summary.importedAppStorageValues == 0)
-        #expect(summary.skippedAppStorageValues == 1)
-    }
-
     @Test("稳稳接住成就定义已登记")
     func steadyCatchDefinitionIsRegistered() {
         let definition = AchievementCatalog.definitions.first { $0.id == .steadyCatch }
@@ -490,12 +424,5 @@ struct AchievementCenterTests {
         defaults.dictionaryRepresentation().keys.filter(AchievementCenter.isAchievementStorageKey)
     }
 
-    private func decodeAppStorageSnapshot(_ data: Data?) -> [String: Any] {
-        guard let data,
-              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-              let dictionary = plist as? [String: Any] else {
-            return [:]
-        }
-        return dictionary
-    }
+
 }

@@ -3,7 +3,6 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 本文件负责会话标签模型、持久化与 ChatService 绑定行为测试。
 // ============================================================================
 
 import Combine
@@ -157,65 +156,5 @@ struct SessionTagTests {
         let loadedSession = Persistence.loadChatSessions().first(where: { $0.id == session.id })
 
         #expect(loadedSession?.tagIDs == [tagID])
-    }
-}
-
-extension ChatServiceTests {
-    @Test("删除标签会清理所有会话绑定")
-    func testDeleteSessionTagRemovesSessionAssignments() async throws {
-        await cleanup()
-        chatService.sessionTagsSubject.send([])
-
-        let tag = try #require(chatService.createSessionTag(name: "工作", color: .blue))
-        let session = chatService.createSavedSession(name: "标签清理会话")
-        defer {
-            chatService.deleteSessions([session])
-        }
-        chatService.setSessionTags(sessionID: session.id, tagIDs: [tag.id])
-
-        #expect(chatService.chatSessionsSubject.value.first(where: { $0.id == session.id })?.tagIDs == [tag.id])
-
-        chatService.deleteSessionTag(tag)
-
-        #expect(!chatService.sessionTagsSubject.value.contains(where: { $0.id == tag.id }))
-        #expect(chatService.chatSessionsSubject.value.first(where: { $0.id == session.id })?.tagIDs.isEmpty == true)
-    }
-
-    @Test("快捷颜色标记会复用系统标签并保留自定义标签")
-    func testQuickColorMarkerUsesSystemTagsAndPreservesCustomTags() async throws {
-        await cleanup()
-        chatService.sessionTagsSubject.send([])
-
-        let customTag = try #require(chatService.createSessionTag(name: "发票", color: .red))
-        let session = chatService.createSavedSession(name: "快捷颜色标记会话")
-        defer {
-            chatService.deleteSessions([session])
-        }
-        chatService.setSessionTags(sessionID: session.id, tagIDs: [customTag.id])
-
-        chatService.toggleSessionColorMarker(sessionID: session.id, color: .red)
-
-        let systemRedID = SessionTag.systemColorTagID(for: .red)
-        let taggedSession = try #require(chatService.chatSessionsSubject.value.first(where: { $0.id == session.id }))
-        #expect(taggedSession.tagIDs.contains(customTag.id))
-        #expect(taggedSession.tagIDs.contains(systemRedID))
-        #expect(chatService.sessionTagsSubject.value.contains(where: { $0.id == systemRedID && $0.isSystemColorTag }))
-
-        let sameNameCustomTag = try #require(chatService.createSessionTag(
-            name: SessionTag.systemColorTag(for: .red).name,
-            color: .gray
-        ))
-        #expect(!sameNameCustomTag.isSystemColorTag)
-
-        let systemBlueID = SessionTag.systemColorTagID(for: .blue)
-        chatService.setSessionTags(sessionID: session.id, tagIDs: [customTag.id, systemBlueID])
-        let blueTaggedSession = try #require(chatService.chatSessionsSubject.value.first(where: { $0.id == session.id }))
-        #expect(blueTaggedSession.tagIDs == [customTag.id, systemBlueID])
-        #expect(chatService.sessionTagsSubject.value.contains(where: { $0.id == systemBlueID && $0.isSystemColorTag }))
-
-        chatService.toggleSessionColorMarker(sessionID: session.id, color: nil)
-
-        let clearedSession = try #require(chatService.chatSessionsSubject.value.first(where: { $0.id == session.id }))
-        #expect(clearedSession.tagIDs == [customTag.id])
     }
 }

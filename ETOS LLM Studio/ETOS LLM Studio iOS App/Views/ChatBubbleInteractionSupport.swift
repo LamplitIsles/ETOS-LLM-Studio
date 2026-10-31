@@ -368,8 +368,7 @@ extension ChatBubble {
               let request = toolPermissionCenter.activeRequest else {
             return nil
         }
-        if let sourceSessionID = request.sourceSessionID,
-           sourceSessionID != roleplaySessionID {
+        if request.sourceSessionID != nil {
             return nil
         }
         if let toolCallID = request.toolCallID {
@@ -429,9 +428,6 @@ extension ChatBubble {
             return NSLocalizedString("添加记忆", comment: "Tool label for saving memory.")
         }
         if let label = ShortcutToolManager.shared.displayLabel(for: toolName) {
-            return label
-        }
-        if let label = SkillManager.shared.displayLabel(for: toolName) {
             return label
         }
         if let label = AppToolManager.shared.displayLabel(for: toolName) {

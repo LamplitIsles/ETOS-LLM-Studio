@@ -167,39 +167,4 @@ extension ChatServiceTests {
         service.clearRequestContextIfNeeded(for: session.id, token: newToken)
     }
 
-    @Test("错误排队落盘后不会回发旧快照，也不会覆盖紧接着保存的重试结果")
-    func queuedErrorDoesNotReplayOverNewResponse() async throws {
-        let session = createPermanentTestSession(name: "错误写入顺序")
-        let previousReply = ChatMessage(role: .assistant, content: "**上一条完整回复**")
-        let placeholder = ChatMessage(role: .assistant, content: "")
-        let service = try #require(chatService)
-        service.persistAndPublishMessages([previousReply, placeholder], for: session.id)
-        service.addErrorMessage("HTTP 400", sessionID: session.id, httpStatusCode: 400)
-        let errorSnapshot = service.messagesSnapshot(for: session.id)
-        #expect(errorSnapshot.last?.role == .error)
-
-        let retryReply = ChatMessage(id: placeholder.id, role: .assistant, content: "重试成功")
-        service.persistAndPublishMessages([previousReply, retryReply], for: session.id)
-
-        #expect(service.messagesSnapshot(for: session.id) == [previousReply, retryReply])
-    }
-
-    @Test("占位变成错误后不会把流式状态转移给上一条助手回复")
-    func streamLifecycleStaysBoundToOriginalMessage() async throws {
-        let session = createPermanentTestSession(name: "流式消息身份")
-        let previousReply = ChatMessage(role: .assistant, content: "**历史 Markdown**")
-        let placeholder = ChatMessage(role: .assistant, content: "")
-        let service = try #require(chatService)
-        service.persistAndPublishMessages([previousReply, placeholder], for: session.id)
-        service.setMessageReceivingStream(true, messageID: placeholder.id, sessionID: session.id)
-        #expect(service.messagesSnapshot(for: session.id).last?.isReceivingStream == true)
-        #expect(service.messagesSnapshot(for: session.id).first?.isReceivingStream == false)
-
-        service.addErrorMessage("HTTP 400", sessionID: session.id, httpStatusCode: 400)
-        service.setMessageReceivingStream(false, messageID: placeholder.id, sessionID: session.id)
-
-        let messages = service.messagesSnapshot(for: session.id)
-        #expect(messages.last?.role == .error)
-        #expect(!messages.contains { $0.isReceivingStream })
-    }
 }

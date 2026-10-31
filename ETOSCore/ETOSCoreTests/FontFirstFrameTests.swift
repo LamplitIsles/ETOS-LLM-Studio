@@ -13,10 +13,9 @@ extension FontRouteSyncTests {
         try await withIsolatedFontStore {
             let (latin, mixed) = try installFirstFrameFixtures(scale: scale)
             let message = ChatMessage(role: .user, content: "Hello 中文")
-            let snapshot = await Task.detached {
-                ChatMessageListSnapshot(messages: [message], sessionID: nil)
+            let preview = await Task.detached {
+                ChatUserMessagePreview(content: message.content)
             }.value
-            let preview = try #require(snapshot.userContentPreviews[message.id])
             let renderState = ChatMessageRenderState(message: message, userContentPreview: preview)
             let fonts = try #require(renderState.textFontSnapshot)
             #expect(fonts.names.body == mixed.postScriptName)
@@ -99,10 +98,9 @@ extension FontRouteSyncTests {
         try await withIsolatedFontStore {
             let (latin, mixed) = try installFirstFrameFixtures(scale: 1)
             let message = ChatMessage(role: .user, content: "Hello 中文")
-            let original = await Task.detached {
-                ChatMessageListSnapshot(messages: [message], sessionID: nil)
+            let preview = await Task.detached {
+                ChatUserMessagePreview(content: message.content)
             }.value
-            let preview = try #require(original.userContentPreviews[message.id])
             let fonts = preview.fontSnapshot
             await Task.detached {
                 for index in 0..<600 {
@@ -125,9 +123,9 @@ extension FontRouteSyncTests {
             FontLibrary.updateChain([latin.id], for: .body)
             #expect(!fonts.matches(sampleText: message.content, revision: FontLibrary.adapterCacheToken()))
             let refreshed = await Task.detached {
-                ChatMessageListSnapshot(messages: [message], sessionID: nil, previous: original)
+                ChatUserMessagePreview(content: message.content)
             }.value
-            #expect(refreshed.userContentPreviews[message.id]?.fontSnapshot.names.body == nil)
+            #expect(refreshed.fontSnapshot.names.body == nil)
             FontLibrary.updateRuntimeSettings(isCustomFontEnabled: true, fallbackScope: .character, customFontScale: 1)
             #expect(FontLibrary.resolvePostScriptName(for: .body, sampleText: message.content) == latin.postScriptName)
         }

@@ -8,7 +8,6 @@
 // - ModelRequestBodyControls.swift: 模型请求体控制项
 // - ProviderModels.swift: Provider、Model 与网络代理配置
 // - ChatModels.swift: 聊天消息、请求日志与会话模型
-// - SessionHistoryModels.swift: 历史会话检索模型
 // - AudioMemoryModels.swift: 音频录制格式与记忆条目
 // - WorldbookModels.swift: 世界书模型
 // - ExportUIModels.swift: 导出结构与轻量 UI 状态

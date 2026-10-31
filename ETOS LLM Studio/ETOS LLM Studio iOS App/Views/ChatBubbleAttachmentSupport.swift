@@ -191,32 +191,6 @@ extension ChatBubble {
                     .buttonStyle(.plain)
                 }
             }
-        } else if let extraction = messageState.roleplayHTML,
-           let roleplaySessionID,
-           extraction.containsHTML {
-            VStack(alignment: .leading) {
-                if !extraction.remainingText.isEmpty {
-                    ETAdvancedMarkdownRenderer(
-                        content: extraction.remainingText,
-                        preparedContent: nil,
-                        enableMarkdown: enableMarkdown,
-                        isOutgoing: shouldRenderAsOutgoing,
-                        enableAdvancedRenderer: enableAdvancedRenderer,
-                        enableMathRendering: enableMathRendering,
-                        customTextColor: customTextColorOverride,
-                        customTextStyleColors: customTextStyleColors,
-                        isStreaming: showsStreamingIndicators,
-                        streamingState: messageState.streamingMarkdownState
-                    )
-                }
-                RoleplayHTMLCardView(
-                    extraction: extraction,
-                    sessionID: roleplaySessionID,
-                    messageID: message.id,
-                    versionIndex: message.getCurrentVersionIndex(),
-                    chatMessages: roleplayMessages
-                )
-            }
         } else {
             ETAdvancedMarkdownRenderer(
                 content: content,

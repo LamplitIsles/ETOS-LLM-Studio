@@ -3,7 +3,6 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// ChatService 的会话文件夹管理与当前会话刷新逻辑。
 // ============================================================================
 
 import Foundation
@@ -11,110 +10,6 @@ import Combine
 import os.log
 
 extension ChatService {
-    // MARK: - 会话文件夹管理
-
-    public func createSessionFolder(name: String, parentID: UUID? = nil) -> SessionFolder? {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return nil }
-
-        var folders = sessionFoldersSubject.value
-        if let parentID, !folders.contains(where: { $0.id == parentID }) {
-            return nil
-        }
-
-        let folder = SessionFolder(name: trimmedName, parentID: parentID, updatedAt: Date())
-        folders.append(folder)
-        sessionFoldersSubject.send(folders)
-        logger.info("已创建会话文件夹: \(trimmedName)")
-        return folder
-    }
-
-    public func renameSessionFolder(folderID: UUID, newName: String) {
-        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
-
-        var folders = sessionFoldersSubject.value
-        guard let index = folders.firstIndex(where: { $0.id == folderID }) else { return }
-        guard folders[index].name != trimmedName else { return }
-        folders[index].name = trimmedName
-        folders[index].updatedAt = Date()
-        sessionFoldersSubject.send(folders)
-        logger.info("已重命名会话文件夹: \(trimmedName)")
-    }
-
-    public func deleteSessionFolder(folderID: UUID) {
-        let folders = sessionFoldersSubject.value
-        guard folders.contains(where: { $0.id == folderID }) else { return }
-
-        let removedIDs = collectSessionFolderDescendantIDs(rootID: folderID, folders: folders)
-        let retainedFolders = folders.filter { !removedIDs.contains($0.id) }
-        sessionFoldersSubject.send(retainedFolders)
-
-        var sessions = chatSessionsSubject.value
-        var didUpdateSessions = false
-        for index in sessions.indices {
-            guard let assignedFolderID = sessions[index].folderID else { continue }
-            guard removedIDs.contains(assignedFolderID) else { continue }
-            sessions[index].folderID = nil
-            didUpdateSessions = true
-        }
-
-        if didUpdateSessions {
-            chatSessionsSubject.send(sessions)
-            if let current = currentSessionSubject.value,
-               let updatedCurrent = sessions.first(where: { $0.id == current.id }),
-               updatedCurrent != current {
-                currentSessionSubject.send(updatedCurrent)
-            }
-        }
-
-        logger.info("已删除会话文件夹及子目录，共 \(removedIDs.count) 个。")
-    }
-
-    public func moveSessionFolder(folderID: UUID, toParentID parentID: UUID?) {
-        var folders = sessionFoldersSubject.value
-        guard let folderIndex = folders.firstIndex(where: { $0.id == folderID }) else { return }
-        guard folders[folderIndex].parentID != parentID else { return }
-
-        if let parentID {
-            guard folders.contains(where: { $0.id == parentID }) else { return }
-            let descendantIDs = collectSessionFolderDescendantIDs(rootID: folderID, folders: folders)
-            guard !descendantIDs.contains(parentID) else { return }
-        }
-
-        folders[folderIndex].parentID = parentID
-        folders[folderIndex].updatedAt = Date()
-        sessionFoldersSubject.send(folders)
-        logger.info("已移动会话文件夹。")
-    }
-
-    public func moveSessionFolder(_ folder: SessionFolder, toParentID parentID: UUID?) {
-        moveSessionFolder(folderID: folder.id, toParentID: parentID)
-    }
-
-    public func moveSession(sessionID: UUID, toFolderID folderID: UUID?) {
-        var sessions = chatSessionsSubject.value
-        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-
-        if let folderID,
-           !sessionFoldersSubject.value.contains(where: { $0.id == folderID }) {
-            return
-        }
-        guard sessions[sessionIndex].folderID != folderID else { return }
-        sessions[sessionIndex].folderID = folderID
-        chatSessionsSubject.send(sessions)
-
-        if let current = currentSessionSubject.value, current.id == sessionID {
-            currentSessionSubject.send(sessions[sessionIndex])
-        }
-
-        logger.info("已移动会话到文件夹。")
-    }
-
-    public func moveSession(_ session: ChatSession, toFolderID folderID: UUID?) {
-        moveSession(sessionID: session.id, toFolderID: folderID)
-    }
-
     public func setCurrentSession(_ session: ChatSession?) {
         sessionSelectionLock.withLock {
             sessionSelectionToken = UUID()
@@ -155,21 +50,5 @@ extension ChatService {
         sessions.insert(session, at: 0)
         chatSessionsSubject.send(sessions)
         logger.info("已将会话移动到列表顶部。")
-    }
-
-    private func collectSessionFolderDescendantIDs(rootID: UUID, folders: [SessionFolder]) -> Set<UUID> {
-        let childrenByParent = Dictionary(grouping: folders, by: \.parentID)
-        var collected: Set<UUID> = [rootID]
-        var queue: [UUID] = [rootID]
-
-        while let current = queue.first {
-            queue.removeFirst()
-            let children = childrenByParent[current] ?? []
-            for child in children where collected.insert(child.id).inserted {
-                queue.append(child.id)
-            }
-        }
-
-        return collected
     }
 }

@@ -71,23 +71,6 @@ public enum SkillStore {
         }
     }
 
-    public static func readSkillBody(skillName: String) -> String? {
-        guard let fileURL = resolveSkillFile(skillName: skillName, relativePath: defaultSkillFileName),
-              FileManager.default.fileExists(atPath: fileURL.path),
-              let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
-            return nil
-        }
-        return SkillFrontmatterParser.extractBody(content)
-    }
-
-    public static func readSkillContent(skillName: String) -> String? {
-        guard let fileURL = resolveSkillFile(skillName: skillName, relativePath: defaultSkillFileName),
-              FileManager.default.fileExists(atPath: fileURL.path) else {
-            return nil
-        }
-        return try? String(contentsOf: fileURL, encoding: .utf8)
-    }
-
     public static func listSkillFiles(skillName: String) -> [SkillFileReference] {
         guard let skillDir = resolveSkillDir(skillName: skillName),
               FileManager.default.fileExists(atPath: skillDir.path) else {
@@ -129,137 +112,6 @@ public enum SkillStore {
             if rhs.relativePath == defaultSkillFileName { return false }
             return lhs.relativePath.localizedCaseInsensitiveCompare(rhs.relativePath) == .orderedAscending
         }
-    }
-
-    public static func loadSkillFile(skillName: String, relativePath: String) -> String? {
-        guard let fileURL = resolveSkillFile(skillName: skillName, relativePath: relativePath),
-              FileManager.default.fileExists(atPath: fileURL.path) else {
-            return nil
-        }
-        return try? String(contentsOf: fileURL, encoding: .utf8)
-    }
-
-    public static func loadSkillTextResource(skillName: String, relativePath: String) throws -> String {
-        let normalizedPath = try normalizedReadablePath(relativePath)
-        let resolved = try resolveReadableResource(
-            skillName: skillName,
-            normalizedPath: normalizedPath,
-            enforceSizeLimit: true
-        )
-        return try loadResolvedTextResource(resolved)
-    }
-
-    public static func loadSkillReadableResource(skillName: String, relativePath: String) async throws -> String {
-        let normalizedPath = try normalizedReadablePath(relativePath)
-        let resolved = try resolveReadableResource(
-            skillName: skillName,
-            normalizedPath: normalizedPath,
-            enforceSizeLimit: true
-        )
-        return try await loadResolvedReadableResource(resolved)
-    }
-
-    public static func loadSkillTextResourceChunk(
-        skillName: String,
-        relativePath: String,
-        startLine: Int = 1,
-        maxLines: Int = 200
-    ) throws -> SkillTextResourceChunk {
-        let normalizedPath = try normalizedReadablePath(relativePath)
-        let resolved = try resolveReadableResource(
-            skillName: skillName,
-            normalizedPath: normalizedPath,
-            enforceSizeLimit: requiresFullReadSizeLimit(relativePath: normalizedPath)
-        )
-        let content = try loadResolvedTextResource(resolved)
-        return try makeResourceChunk(
-            relativePath: normalizedPath,
-            content: content,
-            startLine: startLine,
-            maxLines: maxLines
-        )
-    }
-
-    public static func loadSkillReadableResourceChunk(
-        skillName: String,
-        relativePath: String,
-        startLine: Int = 1,
-        maxLines: Int = 200
-    ) async throws -> SkillTextResourceChunk {
-        let normalizedPath = try normalizedReadablePath(relativePath)
-        let resolved = try resolveReadableResource(
-            skillName: skillName,
-            normalizedPath: normalizedPath,
-            enforceSizeLimit: requiresFullReadSizeLimit(relativePath: normalizedPath)
-        )
-        let content = try await loadResolvedReadableResource(resolved)
-        return try makeResourceChunk(
-            relativePath: normalizedPath,
-            content: content,
-            startLine: startLine,
-            maxLines: maxLines
-        )
-    }
-
-    public static func saveSkillFile(skillName: String, relativePath: String, content: String) -> Bool {
-        guard let fileURL = resolveSkillFile(skillName: skillName, relativePath: relativePath) else { return false }
-        do {
-            try fileURL.deletingLastPathComponent().createDirectoryIfNeeded()
-            try content.write(to: fileURL, atomically: true, encoding: .utf8)
-            try applySupportedScriptPermissions(
-                relativePath: relativePath,
-                data: Data(content.utf8),
-                fileURL: fileURL,
-                fileManager: .default
-            )
-            return true
-        } catch {
-            skillStoreLogger.error("保存技能文件失败 \(relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-    }
-
-    public static func deleteSkillFile(skillName: String, relativePath: String) -> Bool {
-        guard relativePath != defaultSkillFileName else { return false }
-        guard let fileURL = resolveSkillFile(skillName: skillName, relativePath: relativePath),
-              FileManager.default.fileExists(atPath: fileURL.path) else {
-            return false
-        }
-        do {
-            try FileManager.default.removeItem(at: fileURL)
-            return true
-        } catch {
-            skillStoreLogger.error("删除技能文件失败 \(relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-    }
-
-    public static func saveSkill(name: String, content: String) -> SkillMetadata? {
-        guard SkillPaths.isValidSkillName(name) else { return nil }
-        let files = [defaultSkillFileName: content]
-        guard saveSkillFilesAtomically(skillName: name, files: files) else { return nil }
-        return listSkills().first(where: { $0.name == name })
-    }
-
-    public static func deleteSkill(name: String) -> Bool {
-        guard let skillDir = resolveSkillDir(skillName: name),
-              FileManager.default.fileExists(atPath: skillDir.path) else {
-            return false
-        }
-        do {
-            try FileManager.default.removeItem(at: skillDir)
-            return true
-        } catch {
-            skillStoreLogger.error("删除技能目录失败 \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-    }
-
-    public static func saveSkillFilesAtomically(skillName: String, files: [String: String]) -> Bool {
-        let dataFiles = files.reduce(into: [String: Data]()) { result, element in
-            result[element.key] = Data(element.value.utf8)
-        }
-        return saveSkillDataFilesAtomically(skillName: skillName, files: dataFiles)
     }
 
     public static func saveSkillDataFilesAtomically(skillName: String, files: [String: Data]) -> Bool {
@@ -334,87 +186,6 @@ public enum SkillStore {
         }
     }
 
-    public static func replaceSkillDataFilesAtomically(
-        oldSkillName: String,
-        newSkillName: String,
-        files: [String: Data]
-    ) -> Bool {
-        let oldName = oldSkillName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newName = newSkillName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard oldName != newName else {
-            return saveSkillDataFilesAtomically(skillName: newName, files: files)
-        }
-
-        let root = setupDirectoryIfNeeded()
-        guard let oldDir = SkillPaths.resolveSkillDir(skillsRoot: root, skillName: oldName),
-              let newDir = SkillPaths.resolveSkillDir(skillsRoot: root, skillName: newName),
-              files.keys.contains(defaultSkillFileName),
-              let skillFileData = files[defaultSkillFileName],
-              String(data: skillFileData, encoding: .utf8) != nil else {
-            return false
-        }
-
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: oldDir.path), !fm.fileExists(atPath: newDir.path) else {
-            return false
-        }
-        guard let stagingDir = createTempSkillDir(root: root, skillName: newName, suffix: "staging") else {
-            return false
-        }
-        var backupDir: URL?
-
-        defer {
-            if fm.fileExists(atPath: stagingDir.path) {
-                try? fm.removeItem(at: stagingDir)
-            }
-            if let backupDir, fm.fileExists(atPath: backupDir.path), fm.fileExists(atPath: newDir.path) {
-                try? fm.removeItem(at: backupDir)
-            }
-        }
-
-        do {
-            for (relativePath, data) in files {
-                guard let target = SkillPaths.resolveSkillFile(skillDir: stagingDir, relativePath: relativePath) else {
-                    return false
-                }
-                try target.deletingLastPathComponent().createDirectoryIfNeeded()
-                try data.write(to: target, options: .atomic)
-                try applySupportedScriptPermissions(
-                    relativePath: relativePath,
-                    data: data,
-                    fileURL: target,
-                    fileManager: fm
-                )
-            }
-
-            let stagingSkillFile = stagingDir.appendingPathComponent(defaultSkillFileName, isDirectory: false)
-            guard fm.fileExists(atPath: stagingSkillFile.path) else { return false }
-
-            guard let backup = createTempSkillDir(root: root, skillName: oldName, suffix: "backup") else {
-                return false
-            }
-            backupDir = backup
-            try fm.removeItem(at: backup)
-            try fm.moveItem(at: oldDir, to: backup)
-            do {
-                try fm.moveItem(at: stagingDir, to: newDir)
-            } catch {
-                if !fm.fileExists(atPath: oldDir.path) {
-                    try? fm.moveItem(at: backup, to: oldDir)
-                }
-                throw error
-            }
-
-            if fm.fileExists(atPath: backup.path) {
-                try? fm.removeItem(at: backup)
-            }
-            return true
-        } catch {
-            skillStoreLogger.error("替换技能目录失败 \(oldName, privacy: .public) -> \(newName, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-    }
-
     public static func skillExists(_ skillName: String) -> Bool {
         guard let skillDir = resolveSkillDir(skillName: skillName) else { return false }
         return FileManager.default.fileExists(atPath: skillDir.path)
@@ -449,21 +220,6 @@ public enum SkillStore {
         try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: fileURL.path)
     }
 
-    // MARK: - Sync
-
-    public static func exportSkillBundles() -> [SyncedSkillBundle] {
-        let skills = listSkills()
-        var bundles: [SyncedSkillBundle] = []
-        for skill in skills {
-            guard let filesMap = readAllSkillFileData(skillName: skill.name), !filesMap.isEmpty else { continue }
-            let files = filesMap
-                .map { SyncedSkillFile(relativePath: $0.key, data: $0.value) }
-                .sorted { $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending }
-            bundles.append(SyncedSkillBundle(name: skill.name, files: files))
-        }
-        return bundles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
     public static func readAllSkillFileData(skillName: String) -> [String: Data]? {
         guard let skillDir = resolveSkillDir(skillName: skillName),
               FileManager.default.fileExists(atPath: skillDir.path) else {
@@ -477,23 +233,6 @@ public enum SkillStore {
                 return nil
             }
             files[fileRef.relativePath] = data
-        }
-        return files
-    }
-
-    public static func readAllSkillFiles(skillName: String) -> [String: String]? {
-        guard let skillDir = resolveSkillDir(skillName: skillName),
-              FileManager.default.fileExists(atPath: skillDir.path) else {
-            return nil
-        }
-        let fileRefs = listSkillFiles(skillName: skillName)
-        var files: [String: String] = [:]
-        for fileRef in fileRefs {
-            guard let fileURL = SkillPaths.resolveSkillFile(skillDir: skillDir, relativePath: fileRef.relativePath),
-                  let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
-                return nil
-            }
-            files[fileRef.relativePath] = content
         }
         return files
     }
@@ -517,67 +256,6 @@ public enum SkillStore {
             allowedTools: manifest.allowedTools,
             updatedAt: updateTime
         )
-    }
-
-    private struct ResolvedSkillResource {
-        let relativePath: String
-        let fileURL: URL
-    }
-
-    private static func normalizedReadablePath(_ relativePath: String) throws -> String {
-        guard let normalizedPath = SkillResourcePolicy.normalizeRelativePath(relativePath) else {
-            throw SkillStoreError.invalidPath
-        }
-        return normalizedPath
-    }
-
-    private static func resolveReadableResource(
-        skillName: String,
-        normalizedPath: String,
-        enforceSizeLimit: Bool
-    ) throws -> ResolvedSkillResource {
-        guard let fileURL = resolveSkillFile(skillName: skillName, relativePath: normalizedPath),
-              FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw SkillStoreError.fileNotFound
-        }
-        let values = try fileURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-        guard values.isDirectory != true else {
-            throw SkillStoreError.invalidPath
-        }
-        let size = Int64(values.fileSize ?? 0)
-        let candidate = SkillResourcePolicy.candidateTextReadability(
-            relativePath: normalizedPath,
-            size: size,
-            enforceSizeLimit: enforceSizeLimit
-        )
-        guard candidate.canAttemptRead else {
-            throw SkillStoreError.saveFailed(
-                candidate.reason ?? NSLocalizedString("该技能资源不能作为文本读取。", comment: "Skill resource is not text-readable")
-            )
-        }
-        return ResolvedSkillResource(relativePath: normalizedPath, fileURL: fileURL)
-    }
-
-    private static func requiresFullReadSizeLimit(relativePath: String) -> Bool {
-        SkillResourcePolicy.isExtractableDocumentPath(relativePath)
-            || SkillResourcePolicy.isImagePath(relativePath)
-    }
-
-    private static func loadResolvedTextResource(_ resource: ResolvedSkillResource) throws -> String {
-        if SkillResourcePolicy.isExtractableDocumentPath(resource.relativePath) {
-            return try extractSkillDocumentText(fileURL: resource.fileURL, relativePath: resource.relativePath)
-        }
-        return try extractSkillPlainText(fileURL: resource.fileURL, relativePath: resource.relativePath)
-    }
-
-    private static func loadResolvedReadableResource(_ resource: ResolvedSkillResource) async throws -> String {
-        if SkillResourcePolicy.isExtractableDocumentPath(resource.relativePath) {
-            return try extractSkillDocumentText(fileURL: resource.fileURL, relativePath: resource.relativePath)
-        }
-        if SkillResourcePolicy.isOCRImagePath(resource.relativePath) {
-            return try await extractSkillImageText(fileURL: resource.fileURL, relativePath: resource.relativePath)
-        }
-        return try extractSkillPlainText(fileURL: resource.fileURL, relativePath: resource.relativePath)
     }
 
     private static func textReadability(fileURL: URL, relativePath: String, size: Int64) -> (isReadable: Bool, reason: String?) {
@@ -607,57 +285,6 @@ public enum SkillStore {
         return canExtractSkillPlainText(data: data, relativePath: relativePath)
             ? (true, nil)
             : (false, NSLocalizedString("非 UTF-8 文本资源，仅列出不读取", comment: "Skill resource unreadable reason"))
-    }
-
-    private static func extractSkillPlainText(fileURL: URL, relativePath: String) throws -> String {
-        let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
-            throw SkillStoreError.saveFailed(
-                String(format: NSLocalizedString("无法读取技能资源：%@", comment: "Skill resource read failure"), relativePath)
-            )
-        }
-        do {
-            return try FileAttachmentTextExtractor().extractText(from: makeAttachment(data: data, relativePath: relativePath))
-        } catch {
-            throw SkillStoreError.saveFailed(error.localizedDescription)
-        }
-    }
-
-    private static func extractSkillDocumentText(fileURL: URL, relativePath: String) throws -> String {
-        let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
-            throw SkillStoreError.saveFailed(
-                String(format: NSLocalizedString("无法读取技能资源：%@", comment: "Skill resource read failure"), relativePath)
-            )
-        }
-        do {
-            return try FileAttachmentTextExtractor().extractText(from: makeAttachment(data: data, relativePath: relativePath))
-        } catch {
-            throw SkillStoreError.saveFailed(error.localizedDescription)
-        }
-    }
-
-    private static func extractSkillImageText(fileURL: URL, relativePath: String) async throws -> String {
-        let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
-            throw SkillStoreError.saveFailed(
-                String(format: NSLocalizedString("无法读取技能资源：%@", comment: "Skill resource read failure"), relativePath)
-            )
-        }
-        guard isRecognizableImageData(data, relativePath: relativePath) else {
-            throw SkillStoreError.saveFailed(NSLocalizedString("非 UTF-8 文本资源，仅列出不读取", comment: "Skill resource unreadable reason"))
-        }
-        do {
-            return try await SystemImageOCRService.recognizeText(in: data)
-        } catch {
-            throw SkillStoreError.saveFailed(error.localizedDescription)
-        }
     }
 
     private static func canExtractSkillPlainText(data: Data, relativePath: String) -> Bool {
@@ -701,51 +328,6 @@ public enum SkillStore {
             }
         }
         return nil
-    }
-
-    private static func normalizedTextLines(_ content: String) -> [String] {
-        let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        return normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    }
-
-    private static func makeResourceChunk(
-        relativePath: String,
-        content: String,
-        startLine: Int,
-        maxLines: Int
-    ) throws -> SkillTextResourceChunk {
-        guard startLine >= 1, maxLines >= 1 else {
-            throw SkillStoreError.saveFailed(NSLocalizedString("分块读取参数无效，请检查 start_line 和 max_lines。", comment: "Skill resource chunk invalid range"))
-        }
-        let lines = normalizedTextLines(content)
-        let totalLines = lines.count
-        guard totalLines > 0 else {
-            return SkillTextResourceChunk(
-                relativePath: relativePath,
-                startLine: 1,
-                endLine: 0,
-                totalLines: 0,
-                hasMore: false,
-                content: ""
-            )
-        }
-        guard startLine <= totalLines else {
-            throw SkillStoreError.saveFailed(NSLocalizedString("分块读取参数无效，请检查 start_line 和 max_lines。", comment: "Skill resource chunk invalid range"))
-        }
-
-        let resolvedMaxLines = min(maxLines, 1000)
-        let startIndex = startLine - 1
-        let endExclusive = min(startIndex + resolvedMaxLines, totalLines)
-        let selected = Array(lines[startIndex..<endExclusive])
-        return SkillTextResourceChunk(
-            relativePath: relativePath,
-            startLine: startLine,
-            endLine: startLine + selected.count - 1,
-            totalLines: totalLines,
-            hasMore: endExclusive < totalLines,
-            content: selected.joined(separator: "\n")
-        )
     }
 
     private static func isRecognizableImageData(_ data: Data, relativePath: String) -> Bool {

@@ -377,21 +377,9 @@ public final class UpdateTimelineManager: ObservableObject {
             updated.rateLimitResetAt = payload.rateLimitResetAt
             updated.status = status(for: updated)
 
-            #if !os(iOS)
-            if shouldClearSummary(from: state, to: updated) {
-                updated.summaryKey = nil
-                updated.summaryText = nil
-                updated.summaryGeneratedAt = nil
-            }
-            #endif
             state = updated
             persistState()
             await notifyUpdateIfNeeded()
-            #if !os(iOS)
-            if autoSummaryEnabled {
-                await generateSummaryIfNeeded()
-            }
-            #endif
         } catch is CancellationError {
             return
         } catch {
@@ -406,57 +394,6 @@ public final class UpdateTimelineManager: ObservableObject {
             reindexCachedTimelineIfNeeded(persist: false)
             persistState()
             Self.logger.error("刷新检查更新失败: \(Self.localizedDescription(for: error), privacy: .public)")
-        }
-    }
-
-    public func generateSummaryIfNeeded() async {
-        let key = summaryKey(for: state)
-        guard state.summaryKey != key || (state.summaryText ?? "").isEmpty else { return }
-        await generateSummary()
-    }
-
-    public func generateSummary() async {
-        applyStartupProbeIfNeeded()
-        if isSummarizing { return }
-        let commits = state.summaryCommits
-        guard !commits.isEmpty else {
-            setError(UpdateTimelineError.emptyTimeline)
-            return
-        }
-        guard state.allowsSummary else { return }
-        let selectedModel = ChatService.shared.selectedModelSubject.value
-        let model = selectedModel?.model.isChatModel == true
-            ? selectedModel
-            : ChatService.shared.activatedChatModels.first
-        guard let model else {
-            setError(UpdateTimelineError.noModelSelected)
-            return
-        }
-
-        isSummarizing = true
-        defer { isSummarizing = false }
-
-        do {
-            let raw = try await ChatService.shared.generateDetachedChatCompletion(
-                systemPrompt: Self.summarySystemPrompt,
-                userPrompt: summaryUserPrompt(for: commits),
-                temperature: 0.35,
-                runnableModel: model,
-                requestSource: .updateTimelineSummary
-            )
-            try Task.checkCancellation()
-            var updated = state
-            updated.summaryKey = summaryKey(for: state)
-            updated.summaryText = raw
-            updated.summaryGeneratedAt = Date()
-            updated.lastErrorMessage = nil
-            state = updated
-            persistState()
-        } catch is CancellationError {
-            return
-        } catch {
-            guard !Task.isCancelled else { return }
-            setError(error)
         }
     }
 
@@ -513,11 +450,6 @@ public final class UpdateTimelineManager: ObservableObject {
                 updated.storedPreviousSHA = current
                 updated.storedCurrentSHA = realSHA
                 updated.notifiedRemoteSHA = nil
-                #if !os(iOS)
-                updated.summaryKey = nil
-                updated.summaryText = nil
-                updated.summaryGeneratedAt = nil
-                #endif
             }
         }
         updated.status = status(for: updated)
@@ -688,90 +620,6 @@ public final class UpdateTimelineManager: ObservableObject {
         #endif
     }
 
-    private func shouldClearSummary(from oldState: UpdateTimelineState, to newState: UpdateTimelineState) -> Bool {
-        summaryKey(for: oldState) != summaryKey(for: newState)
-    }
-
-    private func summaryKey(for state: UpdateTimelineState) -> String {
-        [
-            state.channel.rawValue,
-            state.status.rawValue,
-            state.storedPreviousSHA ?? "",
-            state.storedCurrentSHA ?? "",
-            state.latestRemoteSHA ?? ""
-        ].joined(separator: "|")
-    }
-
-    private func summaryUserPrompt(for commits: [UpdateTimelineCommit]) -> String {
-        let instruction: String
-        switch (state.channel, state.status) {
-        case (.appStore, .updateAvailable):
-            instruction = NSLocalizedString("当前 App Store 版本不是最新。请只简洁说明有可用更新，并提醒用户前往更新，不要展开长篇摘要。", comment: "Update timeline prompt instruction")
-        case (.appStore, .current):
-            instruction = NSLocalizedString("当前 App Store 版本已是正式版最新。请优先详述本次已安装更新带来的变化，再用一小段简要报道 TestFlight/开发分支前瞻动态。", comment: "Update timeline prompt instruction")
-        case (.testFlight, .updateAvailable):
-            instruction = NSLocalizedString("当前 TestFlight 版本不是最新。请总结远端最新提交新增了什么，并引导用户更新。", comment: "Update timeline prompt instruction")
-        case (.testFlight, .current):
-            instruction = NSLocalizedString("当前 TestFlight 版本已是最新。请总结上一个版本到当前版本这个跨度带来的变化。", comment: "Update timeline prompt instruction")
-        default:
-            instruction = NSLocalizedString("请基于这些提交生成简洁清晰的更新摘要。", comment: "Update timeline prompt instruction")
-        }
-
-        let commitContext: String
-        if state.channel == .appStore, state.status == .current {
-            let previewCommits = previewCommitsAfterCurrentInstall()
-            let installedSpanTitle = NSLocalizedString("本次已安装更新跨度:", comment: "Update timeline prompt installed span title")
-            let previewSpanTitle = NSLocalizedString("TestFlight/开发分支前瞻跨度:", comment: "Update timeline prompt preview span title")
-            commitContext = """
-            \(installedSpanTitle)
-            \(commitText(for: commits))
-
-            \(previewSpanTitle)
-            \(previewCommits.isEmpty ? NSLocalizedString("暂无前瞻提交。", comment: "Update timeline prompt no preview commits") : commitText(for: previewCommits))
-            """
-        } else {
-            commitContext = commitText(for: commits)
-        }
-        let outputInstruction = NSLocalizedString("避免逐条复述 SHA，保留重要功能变化、修复和潜在影响。", comment: "Update timeline prompt output instruction")
-        let commitsLabel = NSLocalizedString("Commit", comment: "Update timeline prompt commits label")
-
-        return """
-        \(instruction)
-
-        \(outputInstruction)
-
-        \(commitsLabel):
-        \(commitContext)
-        """
-    }
-
-    private func commitText(for commits: [UpdateTimelineCommit]) -> String {
-        commits.prefix(120).map { commit in
-            let build = commit.inferredBuildNumber.map {
-                String(format: NSLocalizedString("Build %d", comment: "Update timeline prompt build number"), $0)
-            } ?? NSLocalizedString("Build 未知", comment: "Update timeline prompt build unknown")
-            return """
-            - \(commit.shortOID) [\(build)]
-            \(commit.fullMessage)
-            """
-        }.joined(separator: "\n\n")
-    }
-
-    private func previewCommitsAfterCurrentInstall() -> [UpdateTimelineCommit] {
-        guard let current = state.storedCurrentSHA?.lowercased(), !current.isEmpty,
-              let currentIndex = state.cachedCommits.firstIndex(where: { $0.oid.lowercased().hasPrefix(current) }) else {
-            return []
-        }
-        return Array(state.cachedCommits.prefix(currentIndex))
-    }
-
-    private func setError(_ error: Error) {
-        var updated = state
-        updated.lastErrorMessage = localizedDescription(for: error)
-        state = updated
-        persistState()
-    }
-
     private func localizedDescription(for error: Error) -> String {
         Self.localizedDescription(for: error)
     }
@@ -862,8 +710,6 @@ public final class UpdateTimelineManager: ObservableObject {
         return false
     }
 
-    nonisolated private static var summarySystemPrompt: String {
-        NSLocalizedString("你是 ETOS LLM Studio 的更新日志助手。你要从 Git 提交记录中提炼用户能理解的更新摘要，先讲重要变化，再讲修复与细节。不要编造提交里没有的信息。", comment: "Update timeline summary system prompt")
-    }
+
 
 }

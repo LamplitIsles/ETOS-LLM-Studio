@@ -152,49 +152,4 @@ struct ProviderMultiKeyTests {
         }
     }
 
-    @Test("同步识别备注与轮换配置的修改，导入合并保留对应密钥")
-    func syncIncludesKeyConfiguration() {
-        let local = provider()
-        var incoming = local
-        incoming.apiKeyNotes["key-a"] = "新备注"
-        incoming.multiKeyEnabled = false
-        incoming.maximumKeyRetries = 6
-        #expect(SyncEngine.computeProviderContentHash(local) != SyncEngine.computeProviderContentHash(incoming))
-        let result = SyncEngine.mergeProviderConservatively(local, with: incoming, preferIncomingModelCapabilityShape: true)
-        #expect(result.changed)
-        #expect(result.provider.apiKeyNotes == incoming.apiKeyNotes)
-        #expect(!result.provider.multiKeyEnabled)
-        #expect(result.provider.maximumKeyRetries == 6)
-        #expect(result.provider.apiKeys == local.apiKeys)
-    }
-
-    @Test("Gemini 换 Key 后替换视频引用，连续重试仍保留续写正文和工具结果")
-    func geminiVideoRebinding() throws {
-        let messageID = UUID()
-        var request = URLRequest(url: URL(string: "https://example.com/generateContent")!)
-        let parts: [[String: Any]] = [
-            ["file_data": ["file_uri": "files/key-a-video", "mime_type": "video/mp4"]],
-            ["text": "续写正文"],
-            ["functionResponse": ["name": "tool", "response": ["result": "已完成"]] as [String: Any]]
-        ]
-        let payload: [String: Any] = [
-            "contents": [["parts": parts]],
-            "generationConfig": ["temperature": 0.2]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        var previous = [messageID: [FileAttachment(data: Data(), mimeType: "video/mp4", fileName: "video.mp4", remoteFileURI: "files/key-a-video")]]
-        for key in ["key-b", "key-c"] {
-            let updated = [messageID: [FileAttachment(data: Data(), mimeType: "video/mp4", fileName: "video.mp4", remoteFileURI: "files/\(key)-video")]]
-            request = try GeminiVideoRequestRebinding.replacingFileReferences(in: request, previous: previous, updated: updated)
-            let data = try #require(request.httpBody)
-            let payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            let contents = try #require(payload["contents"] as? [[String: Any]])
-            let parts = try #require(contents.first?["parts"] as? [[String: Any]])
-            #expect((parts[0]["file_data"] as? [String: String])?["file_uri"] == "files/\(key)-video")
-            #expect(parts[1]["text"] as? String == "续写正文")
-            #expect(parts[2]["functionResponse"] != nil)
-            #expect((payload["generationConfig"] as? [String: Double])?["temperature"] == 0.2)
-            previous = updated
-        }
-    }
 }

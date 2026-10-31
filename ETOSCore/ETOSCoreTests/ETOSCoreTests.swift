@@ -53,11 +53,7 @@ struct ChatServiceTests {
 
         mockAdapter = MockAPIAdapter()
 
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
-        let mockSession = URLSession(configuration: config)
-
-        chatService = ChatService(adapters: ["openai-compatible": mockAdapter], urlSession: mockSession)
+        chatService = ChatService()
 
         dummyModel = RunnableModel(
             provider: seededProviders[0],
