@@ -8,8 +8,6 @@ let package = Package(
     products: [
         .library(name: "ETOSApp", targets: ["ETOSApp"]),
         .library(name: "ETOSShare", targets: ["ETOSShare"]),
-        .library(name: "ETOSWidgets", targets: ["ETOSWidgets"]),
-        .library(name: "ETOSWorkspaceProvider", targets: ["ETOSWorkspaceProvider"]),
     ],
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.20"),
@@ -56,28 +54,6 @@ let package = Package(
             // xtool's extension wrapper has no source references to plist principal classes.
             linkerSettings: [.unsafeFlags([
                 "-Xlinker", "-u", "-Xlinker", "_OBJC_CLASS_$__TtC9ETOSShare19ShareViewController",
-            ], .when(platforms: [.iOS]))]
-        ),
-        .target(
-            name: "ETOSWidgets",
-            dependencies: ["ETOSCore"],
-            path: "ETOS LLM Studio/ETOS Agent Widgets",
-            exclude: ["Info.plist", "ETOS Agent WidgetsDebug.entitlements", "ETOS Agent WidgetsRelease.entitlements", "PrivacyInfo.xcprivacy", "Assets.xcassets", "ar.lproj", "en.lproj", "es.lproj", "fr.lproj", "ja.lproj", "ru.lproj", "zh-Hans.lproj", "zh-Hant-HK.lproj"],
-            swiftSettings: [.enableUpcomingFeature("MemberImportVisibility")],
-            // WidgetKit's @main entry point differs from xtool's NSExtensionMain default.
-            linkerSettings: [.unsafeFlags([
-                "-Xlinker", "-u", "-Xlinker", "_main",
-                "-Xlinker", "-e", "-Xlinker", "_main",
-            ], .when(platforms: [.iOS]))]
-        ),
-        .target(
-            name: "ETOSWorkspaceProvider",
-            dependencies: ["ETOSCore"],
-            path: "ETOS LLM Studio/ETOS Workspace Provider",
-            exclude: ["Info.plist", "ETOS_Workspace_Provider.entitlements", "PrivacyInfo.xcprivacy", "ar.lproj", "en.lproj", "es.lproj", "fr.lproj", "ja.lproj", "ru.lproj", "zh-Hans.lproj", "zh-Hant-HK.lproj"],
-            swiftSettings: [.enableUpcomingFeature("MemberImportVisibility")],
-            linkerSettings: [.unsafeFlags([
-                "-Xlinker", "-u", "-Xlinker", "_OBJC_CLASS_$__TtC21ETOSWorkspaceProvider21FileProviderExtension",
             ], .when(platforms: [.iOS]))]
         ),
     ],

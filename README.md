@@ -1,6 +1,6 @@
-> **客户端裁剪与构建迁移中**：本分支移除了 Watch、本地模型、内嵌 Linux、长期记忆、世界书、本地聊天历史和客户端跨会话协作，保留 macOS 工程以及 iOS 原生设备能力和权限审批源码；旧聊天暂不能调用这些原生设备工具。ETOS 不配置或连接 MCP；iOS CFL 文字聊天接入已实现，真实服务、设备运行和部署尚未验证。N5 工作树的 iPhone App 与三个扩展已通过本地打包检查，但尚未验证 Apple 签名或 macOS 构建。旧聊天的回答重试、重写及不确定结果的自动重发暂时关闭。下方为裁剪前的历史功能说明，不代表当前分支功能。
+> **客户端裁剪与构建迁移中**：本分支移除了 Watch、本地模型、内嵌 Linux、长期记忆、世界书、本地聊天历史和客户端跨会话协作，保留 macOS 工程以及 iOS 原生设备能力和权限审批源码；旧聊天暂不能调用这些原生设备工具。ETOS 不配置或连接 MCP；iOS CFL 文字聊天接入已实现，真实服务、设备运行和部署尚未验证。N5 工作树的 iPhone App 与分享扩展已通过本地打包检查，但尚未验证 Apple 签名或 macOS 构建。旧聊天的回答重试、重写及不确定结果的自动重发暂时关闭。下方为裁剪前的历史功能说明，不代表当前分支功能。
 
-N5 开发构建使用现有 Swift、xtool、Darwin SDK 与项目缓存，运行 `swiftpm/build-iphone.sh <AppIdentifierPrefix>`；前缀由使用者显式提供。脚本构建 App、Share、Widget 和 Workspace Provider，编译资源、进行本地 ad-hoc 签名并检查权限与资源哈希。这不等同于 Apple provisioning、真机安装或 TestFlight 验收。
+N5 开发构建使用现有 Swift、xtool、Darwin SDK 与项目缓存，运行 `swiftpm/build-iphone.sh <AppIdentifierPrefix>`；前缀由使用者显式提供。脚本构建 App 和 Share 扩展，编译资源、进行本地 ad-hoc 签名并检查权限与资源哈希。这不等同于 Apple provisioning、真机安装或 TestFlight 验收。
 
 # ETOS LLM Studio
 

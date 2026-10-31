@@ -66,13 +66,9 @@ PY
 swift build --package-path swiftpm/AssetCompiler --scratch-path .build/etos-tools/assetcompiler -c release --force-resolved-versions
 asset_compiler=.build/etos-tools/assetcompiler/release/ETOSAssetCompiler
 "$asset_compiler" 'ETOS LLM Studio/ETOS LLM Studio iOS App/Assets.xcassets' "$app"
-"$asset_compiler" 'ETOS LLM Studio/ETOS Agent Widgets/Assets.xcassets' "$app/PlugIns/ETOSWidgets.appex" \
-    --empty-widget-catalog .build/etos-tools/assets/widget-catalog.xcassets
 
 "$tool_dir/rcodesign" --config-file /dev/null sign --timestamp-url none \
     --entitlements-xml-file "$main_entitlements" \
     --entitlements-xml-file 'PlugIns/ETOSShare.appex:ETOS LLM Studio/ETOS Agent Share/ETOS Agent ShareDebug.entitlements' \
-    --entitlements-xml-file 'PlugIns/ETOSWidgets.appex:ETOS LLM Studio/ETOS Agent Widgets/ETOS Agent WidgetsDebug.entitlements' \
-    --entitlements-xml-file 'PlugIns/ETOSWorkspaceProvider.appex:ETOS LLM Studio/ETOS Workspace Provider/ETOS_Workspace_Provider.entitlements' \
     "$app"
 python3 swiftpm/verify-iphone-bundle.py "$app" "$main_entitlements" "$app_identifier_prefix"

@@ -371,7 +371,6 @@ public enum StorageUtility {
     }
 
     private static func invalidateRelatedCaches(for url: URL) {
-        ETOSSharedWorkspaceFiles.notifyChange()
         let skillDirectory = getDirectory(for: .skills).standardizedFileURL.path
         let targetPath = url.standardizedFileURL.path
         let isSkillPath = targetPath == skillDirectory || targetPath.hasPrefix(skillDirectory + "/")

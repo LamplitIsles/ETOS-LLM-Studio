@@ -39,7 +39,7 @@ iPhone 开发构建。显式提供适用于该构建的 App ID 前缀（不带�
 swiftpm/build-iphone.sh <AppIdentifierPrefix>
 ```
 
-脚本构建 iPhone 主 App 和 Share、Widget、Workspace Provider 三个扩展，
+脚本构建 iPhone 主 App 和 Share 扩展，
 编译资源，进行本地 ad-hoc 签名并检查权限和资源完整性。本分支已有 N5
 本地打包检查证据；这不证明 Apple 签名或 provisioning、设备安装或运行、
 实际功能，以及 macOS 构建已通过。macOS 的 Xcode 工程保留，尚未验证构建。

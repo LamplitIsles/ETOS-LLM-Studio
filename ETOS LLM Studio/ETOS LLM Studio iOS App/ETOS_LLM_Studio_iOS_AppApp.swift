@@ -79,7 +79,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
                     appLockWindowPresenter.install()
                     updateTimelineManager.activateOnLaunchIfNeeded()
                     triggerFeedbackRefreshOnLaunchIfNeeded()
-                    SystemFileProviderDomainManager.activate()
                 }
                 .onChange(of: appConfig.performanceTelemetryEnabled) { _, enabled in
                     Task {

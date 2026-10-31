@@ -4,9 +4,6 @@
 // ============================================================================
 
 import Foundation
-#if os(iOS)
-import ActivityKit
-#endif
 
 public enum ETOSSystemEntryConstants {
     public static let appGroupIdentifier = "group.com.ericterminal.els"
@@ -18,7 +15,6 @@ public enum ETOSSystemEntryConstants {
 public struct ETOSSharedStorageLayout: Sendable {
     public let container: URL
     public let inbox: URL
-    public let runSnapshots: URL
     public let shared: URL
     public let exports: URL
     public let receipts: URL
@@ -27,7 +23,6 @@ public struct ETOSSharedStorageLayout: Sendable {
     public init(container: URL) {
         self.container = container
         inbox = container.appendingPathComponent("Inbox", isDirectory: true)
-        runSnapshots = container.appendingPathComponent("RunSnapshots", isDirectory: true)
         shared = container.appendingPathComponent("Shared", isDirectory: true)
         exports = container.appendingPathComponent("Exports", isDirectory: true)
         receipts = container.appendingPathComponent("Receipts", isDirectory: true)
@@ -41,25 +36,14 @@ public struct ETOSSharedStorageLayout: Sendable {
     }
 
     public func prepare(fileManager: FileManager = .default) throws {
-        for directory in [inbox, runSnapshots, shared, exports, receipts, staging] {
+        for directory in [inbox, shared, exports, receipts, staging] {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
     }
 }
 
-/// File Provider 与测试共享同一套相对路径边界，避免不同入口各自解释 `..` 或隐藏目录。
+/// Validate filenames used by the shared inbox.
 public enum ETOSSharedWorkspacePathValidator {
-    public static func components(for relativePath: String) throws -> [String] {
-        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        guard !components.isEmpty,
-              components.count <= 64,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-              components[0] == "Shared" || components[0] == "Exports" else {
-            throw CocoaError(.fileReadInvalidFileName)
-        }
-        return components
-    }
-
     public static func fileName(_ name: String) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -240,89 +224,6 @@ public enum ETOSInboxStore {
     }
 }
 
-public enum ETOSTaskSnapshotStatus: String, Codable, Sendable {
-    case queued
-    case running
-    case waitingForApproval = "waiting_for_approval"
-    case waitingForInput = "waiting_for_input"
-    case completed
-    case failed
-    case cancelled
-}
-
-/// 只含锁屏和小组件可安全展示的信息，不保存提示词、工具参数或私人数据。
-public struct ETOSRunSnapshot: Codable, Equatable, Identifiable, Sendable {
-    public let id: UUID
-    public let sessionID: UUID
-    public let title: String
-    public let status: ETOSTaskSnapshotStatus
-    public let currentToolDisplayName: String?
-    public let startedAt: Date
-    public let updatedAt: Date
-    public let requiresApp: Bool
-
-    public var isTerminal: Bool {
-        status == .completed || status == .failed || status == .cancelled
-    }
-
-    /// 生成状态失去更新后有明确失效时间，避免异常退出留下永久推荐卡片。
-    public func smartStackRelevanceInterval(now: Date = Date()) -> DateInterval? {
-        let end = updatedAt.addingTimeInterval(
-            isTerminal ? ReplyActivityDismissalPolicy.terminalVisibilityDuration : 8 * 60 * 60
-        )
-        guard end > now else { return nil }
-        return DateInterval(start: min(startedAt, updatedAt), end: end)
-    }
-
-    public init(
-        id: UUID,
-        sessionID: UUID,
-        title: String,
-        status: ETOSTaskSnapshotStatus,
-        currentToolDisplayName: String? = nil,
-        startedAt: Date,
-        updatedAt: Date = Date(),
-        requiresApp: Bool = false
-    ) {
-        self.id = id
-        self.sessionID = sessionID
-        self.title = String(title.prefix(80))
-        self.status = status
-        self.currentToolDisplayName = currentToolDisplayName.map { String($0.prefix(80)) }
-        self.startedAt = startedAt
-        self.updatedAt = updatedAt
-        self.requiresApp = requiresApp
-    }
-}
-
-public struct ETOSWidgetSnapshot: Codable, Equatable, Sendable {
-    public let updatedAt: Date
-    public let recentRuns: [ETOSRunSnapshot]
-    public let dailyPulseTitle: String?
-
-    public init(
-        updatedAt: Date = Date(),
-        recentRuns: [ETOSRunSnapshot],
-        dailyPulseTitle: String? = nil
-    ) {
-        self.updatedAt = updatedAt
-        self.recentRuns = Array(recentRuns.prefix(5))
-        self.dailyPulseTitle = dailyPulseTitle.map { String($0.prefix(80)) }
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case updatedAt, recentRuns, dailyPulseTitle
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
-        recentRuns = Array(try container.decode([ETOSRunSnapshot].self, forKey: .recentRuns).prefix(5))
-        dailyPulseTitle = try container.decodeIfPresent(String.self, forKey: .dailyPulseTitle)
-            .map { String($0.prefix(80)) }
-    }
-}
-
 public enum ETOSSystemEntryRequestKind: String, Codable, Sendable {
     case appIntent
     case shareExtension = "share_extension"
@@ -416,31 +317,3 @@ public enum ETOSSystemEntryURL {
         return components.url!
     }
 }
-
-#if os(iOS)
-public struct ETOSAgentActivityAttributes: ActivityAttributes {
-    public struct ContentState: Codable, Hashable {
-        public let status: ETOSTaskSnapshotStatus
-        public let currentToolDisplayName: String?
-        public let requiresApp: Bool
-
-        public init(status: ETOSTaskSnapshotStatus, currentToolDisplayName: String?, requiresApp: Bool) {
-            self.status = status
-            self.currentToolDisplayName = currentToolDisplayName.map { String($0.prefix(80)) }
-            self.requiresApp = requiresApp
-        }
-    }
-
-    public let runID: UUID
-    public let sessionID: UUID
-    public let title: String
-    public let startedAt: Date
-
-    public init(runID: UUID, sessionID: UUID, title: String, startedAt: Date) {
-        self.runID = runID
-        self.sessionID = sessionID
-        self.title = String(title.prefix(80))
-        self.startedAt = startedAt
-    }
-}
-#endif

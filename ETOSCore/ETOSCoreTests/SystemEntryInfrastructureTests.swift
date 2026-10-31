@@ -16,46 +16,10 @@ struct SystemEntryInfrastructureTests {
         ))
     }
 
-    @Test("工作区路径拒绝越界与保留目录")
+    @Test("分享文件名拒绝越界")
     func workspacePathBoundary() throws {
-        #expect(try ETOSSharedWorkspacePathValidator.components(for: "Shared/项目/资料.txt") == ["Shared", "项目", "资料.txt"])
-        #expect(try ETOSSharedWorkspacePathValidator.components(for: "Exports/result.json") == ["Exports", "result.json"])
-        #expect(throws: Error.self) {
-            _ = try ETOSSharedWorkspacePathValidator.components(for: "Shared/../Inbox/request.json")
-        }
-        #expect(throws: Error.self) {
-            _ = try ETOSSharedWorkspacePathValidator.components(for: "Inbox/request.json")
-        }
         #expect(throws: Error.self) {
             _ = try ETOSSharedWorkspacePathValidator.fileName("../secret.txt")
-        }
-    }
-
-    @Test("共享快照写入原子文件并限制公开条目数量")
-    func sharedSnapshotRoundTrip() throws {
-        let root = temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let layout = ETOSSharedStorageLayout(container: root)
-        try layout.prepare()
-        let runs = (0..<8).map { index in
-            ETOSRunSnapshot(
-                id: UUID(),
-                sessionID: UUID(),
-                title: String(repeating: "任", count: 120),
-                status: .running,
-                startedAt: Date(timeIntervalSince1970: TimeInterval(index))
-            )
-        }
-        let snapshot = ETOSWidgetSnapshot(recentRuns: runs)
-        let destination = layout.runSnapshots.appendingPathComponent("widget.json")
-
-        try ETOSSharedFileStore.write(snapshot, to: destination)
-        let restored = try ETOSSharedFileStore.read(ETOSWidgetSnapshot.self, from: destination)
-
-        #expect(restored.recentRuns.count == 5)
-        #expect(restored.recentRuns.allSatisfy { $0.title.count == 80 })
-        #expect(throws: Error.self) {
-            _ = try ETOSSharedFileStore.read(ETOSWidgetSnapshot.self, from: destination, maximumBytes: 1)
         }
     }
 

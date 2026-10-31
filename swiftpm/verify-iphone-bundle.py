@@ -99,14 +99,10 @@ def main():
     bundles = {
         app: Path(sys.argv[2]),
         app / "PlugIns/ETOSShare.appex": root / "ETOS LLM Studio/ETOS Agent Share/ETOS Agent ShareDebug.entitlements",
-        app / "PlugIns/ETOSWidgets.appex": root / "ETOS LLM Studio/ETOS Agent Widgets/ETOS Agent WidgetsDebug.entitlements",
-        app / "PlugIns/ETOSWorkspaceProvider.appex": root / "ETOS LLM Studio/ETOS Workspace Provider/ETOS_Workspace_Provider.entitlements",
     }
     expected_ids = {
         app: "com.ericterminal.els",
         app / "PlugIns/ETOSShare.appex": "com.ericterminal.els.share",
-        app / "PlugIns/ETOSWidgets.appex": "com.ericterminal.els.widgets",
-        app / "PlugIns/ETOSWorkspaceProvider.appex": "com.ericterminal.els.workspace-provider",
     }
     baseline = plistlib.loads((root / "ETOS LLM Studio/ETOS LLM Studio iOS App/ETOS LLM Studio iOS App.entitlements").read_bytes())
     effective = plistlib.loads(bundles[app].read_bytes())
@@ -118,7 +114,7 @@ def main():
         if isinstance(value, dict): return {key: expand(item) for key, item in value.items()}
         return value
     require(effective == expand(baseline), "main entitlements differ from the expanded project entitlements")
-    require(set((app / "PlugIns").glob("*.appex")) == set(expected_ids) - {app}, "unexpected extension bundles")
+    require(set((app / "PlugIns").iterdir()) == set(expected_ids) - {app}, "unexpected PlugIns contents")
     app_info = plistlib.loads((app / "Info.plist").read_bytes())
     verify_keychain_metadata(app_info, effective, prefix)
     print(f"main keychain access group: {effective['keychain-access-groups'][0]}")
@@ -133,8 +129,7 @@ def main():
         for framework in (bundle / "Frameworks").glob("*.framework"):
             require_nested_seals(bundle, framework)
             verify_executable(framework)
-    for bundle in [app, app / "PlugIns/ETOSWidgets.appex"]:
-        require((bundle / "Assets.car").read_bytes().startswith(b"BOMStore"), f"{bundle}: invalid asset catalog")
+    require((app / "Assets.car").read_bytes().startswith(b"BOMStore"), f"{app}: invalid asset catalog")
     app_assets = (app / "Assets.car").read_bytes()
     require(b"AppIconDisplay" in app_assets and b"AccentColor" in app_assets,
             "app asset catalog is missing named app assets")

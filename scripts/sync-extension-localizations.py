@@ -13,9 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_ROOT = ROOT / "ETOS LLM Studio"
 EXTENSIONS = {
     "ETOS Agent Watch Widgets": "ETOS LLM Studio Watch App",
-    "ETOS Agent Widgets": "ETOS LLM Studio iOS App",
     "ETOS Agent Share": "ETOS LLM Studio iOS App",
-    "ETOS Workspace Provider": "ETOS LLM Studio iOS App",
 }
 # 扩展会调用此文件中的共享存储和入口模型；其中新增的提示也必须进入扩展文案。
 SHARED_SOURCES = [ROOT / "ETOSCore/ETOSCore/System/SystemEntrySharedModels.swift"]

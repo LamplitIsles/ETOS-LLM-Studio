@@ -4,7 +4,7 @@
 // ETOS LLM Studio
 //
 // Linux 系统、Home 与工作区保留在 Documents/Linux；Shared 与 Exports 进入
-// App Group，供主 App、扩展和 Files 中的 File Provider 使用同一份内容。
+// App Group，供主 App 的 Linux 工作区共享文件和导出使用。
 // ============================================================================
 
 import Foundation
@@ -461,8 +461,6 @@ public actor LocalLinuxStorageManager {
     }
 
     nonisolated func scheduleWorkspaceSizeRefresh(_ workspace: LocalAgentWorkspace) async {
-        // Shell/PTY 即使失败也可能已经写入 Shared；同步不依赖工作区统计能否落库。
-        ETOSSharedWorkspaceFiles.notifyChange()
         guard let directory = try? hostURL(for: workspace),
               let persist = Persistence.makeLocalAgentWorkspaceSizeWriter() else { return }
         await workspaceSizeRefresher.schedule(workspace, directory: directory, persist: persist)
@@ -513,7 +511,6 @@ public actor LocalLinuxStorageManager {
         if let enumerationError { throw enumerationError }
         try Task.checkCancellation()
         completed = true
-        ETOSSharedWorkspaceFiles.notifyChange()
         return archiveURL
     }
 
