@@ -53,7 +53,7 @@ struct MacAppearanceProfileEditor: View {
                 }.disabled(!available || !model.canEdit || draft.isWorking)
             }
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 520, minHeight: 560)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 520, minHeight: 560)
         .interactiveDismissDisabled(model.isSaving)
     }
 

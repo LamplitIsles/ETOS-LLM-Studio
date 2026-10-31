@@ -145,7 +145,7 @@ private struct MacSlashCommandEditor: View {
                     .string("prompt", label: NSLocalizedString("提示词", comment: ""), allowsEmpty: false, get: { draft.prompt }, set: { draft.prompt = $0 })
                 ])
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 580, minHeight: 460)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 580, minHeight: 460)
         .interactiveDismissDisabled(model.isWorking)
     }
 }
@@ -182,7 +182,7 @@ private struct MacSlashCommandDeletionView: View {
                 title: NSLocalizedString("删除", comment: ""), documents: [GuideDocumentReference(id: "slash-commands", title: "Quick Commands")],
                 isActive: available, settings: [.readOnly("command", label: NSLocalizedString("激活指令", comment: ""), value: { .string(target.command?.invocation ?? "") })])
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 420, minHeight: 240)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 420, minHeight: 240)
         .interactiveDismissDisabled(model.isWorking)
     }
 }

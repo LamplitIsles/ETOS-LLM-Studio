@@ -13,7 +13,7 @@ extension SyncEngine {
     // MARK: - 打包导出
 
     /// 根据同步选项构建完整同步包
-    /// 包含每日脉冲时，异步调用方应先等待 DailyPulseManager.flushPendingPersistence()。
+    /// 包含每日脉冲时，异步调用方应先等待 DailyPulsePersistenceQueue.shared.flush()。
     public static func buildPackage(
         options: SyncOptions,
         userDefaults: UserDefaults = .standard

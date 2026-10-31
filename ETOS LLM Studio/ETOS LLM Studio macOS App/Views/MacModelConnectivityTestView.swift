@@ -79,7 +79,7 @@ struct MacModelConnectivityTestView: View {
             .guideSettingsPageContext(id: GuidePageID(rawValue: "mac-model-test-\(model.source.id)"), title: NSLocalizedString("模型测试", comment: ""),
                 documents: [GuideDocumentReference(id: "provider-model-basics", title: "Provider and Model Basics"), GuideDocumentReference(id: "macos-workspace", title: "macOS Workspace")], settings: guideSettings)
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 580, minHeight: 520)
         .task {
             guard workspace.canRunModelTests, let service = workspace.service else { dismiss(); return }

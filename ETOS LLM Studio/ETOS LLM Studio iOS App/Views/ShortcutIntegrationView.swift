@@ -463,9 +463,7 @@ private struct ShortcutToolDetailView: View {
                     }
 
                     Button {
-                        Task {
-                            await manager.regenerateDescriptionWithLLM(for: tool.id)
-                        }
+                        manager.regenerateDescription(for: tool.id)
                     } label: {
                         Label(NSLocalizedString("重新生成", comment: ""), systemImage: "arrow.clockwise")
                     }

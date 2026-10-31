@@ -67,7 +67,7 @@ struct MacOfficialDataPreviewView: View {
         }
         .frame(minWidth: 560, minHeight: 500)
         .interactiveDismissDisabled(model.working)
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
     }
 
     @ViewBuilder private func modelNames(_ title: String, _ names: [String]) -> some View {

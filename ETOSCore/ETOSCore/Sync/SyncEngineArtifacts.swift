@@ -38,7 +38,7 @@ extension SyncEngine {
         } else {
             for run in incomingRuns.sorted(by: { $0.generatedAt < $1.generatedAt }) {
                 if let existingIndex = localRuns.firstIndex(where: { $0.dayKey == run.dayKey }) {
-                    let merged = DailyPulseManager.mergeRun(local: localRuns[existingIndex], incoming: run)
+                    let merged = Self.mergeRun(local: localRuns[existingIndex], incoming: run)
                     if merged == localRuns[existingIndex] {
                         skipped += 1
                         continue
@@ -51,9 +51,9 @@ extension SyncEngine {
                 localRuns.append(run)
                 imported += 1
             }
-            let trimmedRuns = DailyPulseManager.trimmedRuns(
+            let trimmedRuns = Self.trimmedRuns(
                 localRuns,
-                limit: DailyPulseManager.persistedRetentionLimit
+                limit: Self.dailyPulseRunRetentionLimit
             )
             Persistence.saveDailyPulseRuns(trimmedRuns)
         }
@@ -70,10 +70,10 @@ extension SyncEngine {
             var localHistory = Persistence.loadDailyPulseFeedbackHistory()
             let original = localHistory
             for event in incomingHistory.sorted(by: { $0.createdAt < $1.createdAt }) {
-                localHistory = DailyPulseManager.appendingFeedbackEvent(
+                localHistory = Self.appendingFeedbackEvent(
                     event,
                     to: localHistory,
-                    limit: DailyPulseManager.feedbackHistoryRetentionLimit
+                    limit: Self.dailyPulseFeedbackRetentionLimit
                 )
             }
             Persistence.saveDailyPulseFeedbackHistory(localHistory)
@@ -115,10 +115,10 @@ extension SyncEngine {
             var localSignals = Persistence.loadDailyPulseExternalSignals()
             let original = localSignals
             for signal in incomingSignals.sorted(by: { $0.capturedAt < $1.capturedAt }) {
-                localSignals = DailyPulseManager.appendingExternalSignal(
+                localSignals = Self.appendingExternalSignal(
                     signal,
                     to: localSignals,
-                    limit: DailyPulseManager.externalSignalRetentionLimit
+                    limit: Self.dailyPulseSignalRetentionLimit
                 )
             }
             Persistence.saveDailyPulseExternalSignals(localSignals)
@@ -150,7 +150,7 @@ extension SyncEngine {
                     }
                     return false
                 }) {
-                    let merged = DailyPulseManager.mergeTask(local: localTasks[existingIndex], incoming: task)
+                    let merged = Self.mergeTask(local: localTasks[existingIndex], incoming: task)
                     if merged == localTasks[existingIndex] {
                         skipped += 1
                     } else {
@@ -162,7 +162,7 @@ extension SyncEngine {
                     imported += 1
                 }
             }
-            let sortedTasks = DailyPulseManager.sortedTasks(localTasks)
+            let sortedTasks = Self.sortedTasks(localTasks)
             Persistence.saveDailyPulseTasks(sortedTasks)
             if sortedTasks == original {
                 skipped += incomingTasks.count
@@ -170,6 +170,176 @@ extension SyncEngine {
         }
 
         return (imported, skipped)
+    }
+
+    nonisolated static let dailyPulseRunRetentionLimit = 14
+    nonisolated static let dailyPulseFeedbackRetentionLimit = 120
+    nonisolated static let dailyPulseSignalRetentionLimit = 40
+    nonisolated static let taskRetentionLimit = 80
+
+    internal nonisolated static func trimmedRuns(_ runs: [DailyPulseRun], limit: Int) -> [DailyPulseRun] {
+        runs.sorted(by: { $0.generatedAt > $1.generatedAt }).prefix(max(1, limit)).map { $0 }
+    }
+
+    internal nonisolated static func sortedTasks(_ tasks: [DailyPulseTask]) -> [DailyPulseTask] {
+        tasks
+            .sorted { lhs, rhs in
+                if lhs.isCompleted != rhs.isCompleted {
+                    return !lhs.isCompleted && rhs.isCompleted
+                }
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+            .prefix(Self.taskRetentionLimit)
+            .map { $0 }
+    }
+
+    internal nonisolated static func trimmedExternalSignals(_ signals: [DailyPulseExternalSignal], limit: Int) -> [DailyPulseExternalSignal] {
+        signals
+            .sorted(by: { $0.capturedAt > $1.capturedAt })
+            .prefix(max(1, limit))
+            .map { $0 }
+    }
+
+    internal nonisolated static func mergeRun(local: DailyPulseRun, incoming: DailyPulseRun) -> DailyPulseRun {
+        let base = incoming.generatedAt >= local.generatedAt ? incoming : local
+        let secondary = incoming.generatedAt >= local.generatedAt ? local : incoming
+
+        let mergedCards = base.cards.map { baseCard in
+            guard let matchingSecondary = secondary.cards.first(where: {
+                areTopicsSimilar($0.title, baseCard.title) ||
+                areTopicsSimilar(topicText(for: $0), topicText(for: baseCard))
+            }) else {
+                return baseCard
+            }
+
+            var merged = baseCard
+            merged.feedback = mergedFeedback(base: baseCard.feedback, incoming: matchingSecondary.feedback)
+            if merged.savedSessionID == nil {
+                merged.savedSessionID = matchingSecondary.savedSessionID
+            }
+            return merged
+        }
+
+        return DailyPulseRun(
+            id: base.id,
+            dayKey: base.dayKey,
+            generatedAt: max(base.generatedAt, secondary.generatedAt),
+            headline: base.headline,
+            cards: mergedCards,
+            sourceDigest: base.sourceDigest
+        )
+    }
+
+    internal nonisolated static func appendingFeedbackEvent(
+        _ event: DailyPulseFeedbackEvent,
+        to history: [DailyPulseFeedbackEvent],
+        limit: Int
+    ) -> [DailyPulseFeedbackEvent] {
+        var updated = history
+        if let existingIndex = updated.firstIndex(where: {
+            $0.dayKey == event.dayKey
+                && areTopicsSimilar($0.topicHint, event.topicHint)
+                && $0.action == event.action
+        }) {
+            updated[existingIndex] = event
+        } else {
+            updated.insert(event, at: 0)
+        }
+
+        return Array(
+            updated
+                .sorted(by: { $0.createdAt > $1.createdAt })
+                .prefix(max(1, limit))
+        )
+    }
+
+    internal nonisolated static func appendingExternalSignal(
+        _ signal: DailyPulseExternalSignal,
+        to history: [DailyPulseExternalSignal],
+        limit: Int
+    ) -> [DailyPulseExternalSignal] {
+        var updated = history
+        if let existingIndex = updated.firstIndex(where: {
+            $0.source == signal.source
+                && areTopicsSimilar($0.title, signal.title)
+        }) {
+            if signal.capturedAt >= updated[existingIndex].capturedAt {
+                updated[existingIndex] = signal
+            }
+        } else {
+            updated.insert(signal, at: 0)
+        }
+
+        return trimmedExternalSignals(updated, limit: limit)
+    }
+
+    internal nonisolated static func mergeTask(local: DailyPulseTask, incoming: DailyPulseTask) -> DailyPulseTask {
+        let base = incoming.updatedAt >= local.updatedAt ? incoming : local
+        let secondary = incoming.updatedAt >= local.updatedAt ? local : incoming
+
+        var merged = base
+        if merged.completedAt == nil {
+            merged.completedAt = secondary.completedAt
+        }
+        if merged.details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.details = secondary.details
+        }
+        if merged.suggestedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.suggestedPrompt = secondary.suggestedPrompt
+        }
+        return merged
+    }
+
+    private nonisolated static func mergedFeedback(base: DailyPulseCardFeedback, incoming: DailyPulseCardFeedback) -> DailyPulseCardFeedback {
+        let priority: [DailyPulseCardFeedback: Int] = [
+            .none: 0,
+            .liked: 1,
+            .disliked: 2,
+            .hidden: 3
+        ]
+        return (priority[incoming] ?? 0) > (priority[base] ?? 0) ? incoming : base
+    }
+
+    internal nonisolated static func topicText(for card: DailyPulseCard) -> String {
+        "\(card.title) \(card.summary)"
+    }
+
+    internal nonisolated static func areTopicsSimilar(_ lhs: String, _ rhs: String) -> Bool {
+        let left = topicFingerprint(lhs)
+        let right = topicFingerprint(rhs)
+        guard !left.isEmpty, !right.isEmpty else { return false }
+        if left == right || left.contains(right) || right.contains(left) {
+            return true
+        }
+
+        let leftSet = Set(left)
+        let rightSet = Set(right)
+        guard !leftSet.isEmpty, !rightSet.isEmpty else { return false }
+        let overlap = leftSet.intersection(rightSet).count
+        let union = leftSet.union(rightSet).count
+        guard union > 0 else { return false }
+        return Double(overlap) / Double(union) >= 0.72
+    }
+
+    internal nonisolated static func topicFingerprint(_ text: String) -> String {
+        let lowered = text.folding(options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive], locale: Locale(identifier: "zh_CN"))
+        let filteredScalars = lowered.unicodeScalars.filter { scalar in
+            CharacterSet.alphanumerics.contains(scalar) || isCJK(scalar)
+        }
+        let filtered = String(String.UnicodeScalarView(filteredScalars))
+        return String(filtered.prefix(48))
+    }
+
+    private nonisolated static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - AppStorage

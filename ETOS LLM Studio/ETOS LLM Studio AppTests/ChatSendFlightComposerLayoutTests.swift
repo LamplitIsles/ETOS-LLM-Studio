@@ -11,120 +11,9 @@ struct ChatSendFlightComposerLayoutTests {
     enum Scenario: CaseIterable, Sendable {
         case expandedFirstLine
         case longDraft
-        case attachment
     }
 
-    enum UpperContent: CaseIterable, Sendable {
-        case audio
-        case suggestions
-    }
-
-    @Test("键盘高度预算内附件和建议不与展开编辑器重叠", arguments: ["capsule", "adaptive", "card"], UpperContent.allCases)
-    func expandedComposerKeepsUpperContentVisible(style: String, upperContent: UpperContent) async throws {
-        let config = AppConfigStore.shared
-        await config.waitForPersistentStoreLoaded()
-        let originalStyle = config.chatComposerStyle
-        let originalBackground = config.currentBackgroundImage
-        let originalSlashCommands = config.enableSlashCommands
-        config.chatComposerStyle = style
-        config.enableSlashCommands = true
-        do {
-            defer {
-                config.chatComposerStyle = originalStyle
-                config.currentBackgroundImage = originalBackground
-                config.enableSlashCommands = originalSlashCommands
-            }
-            let service = ChatService()
-            await service.waitForInitialPersistenceStateIfNeeded()
-            let viewModel = ChatViewModel(chatService: service)
-            await viewModel.globalSystemPromptReloadTask?.value
-            await viewModel.conversationMemoryReloadTask?.value
-            viewModel.cancellables.removeAll()
-            // 有效的单声道 PCM，避免播放器失败提示改变待验证音频卡的布局。
-            var audioData = Data([
-                0x52, 0x49, 0x46, 0x46, 0x64, 0x06, 0, 0,
-                0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
-                0x10, 0, 0, 0, 1, 0, 1, 0, 0x40, 0x1f, 0, 0,
-                0x80, 0x3e, 0, 0, 2, 0, 0x10, 0,
-                0x64, 0x61, 0x74, 0x61, 0x40, 0x06, 0, 0
-            ])
-            audioData.append(Data(repeating: 0, count: 1600))
-            let audio = AudioAttachment(data: audioData, mimeType: "audio/wav", format: "wav", fileName: "布局试听.wav")
-            if upperContent == .audio { viewModel.pendingAudioAttachment = audio }
-            let draft = upperContent == .audio
-                ? (1...8).map { "第 \($0) 行：附件与正文同时保留，缩短的编辑器仍能阅读所有输入。" }.joined(separator: "\n")
-                : "/"
-            let controller = ChatSendFlightController()
-            let sources = ChatSendFlightSources()
-            let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-            let window = UIWindow(windowScene: scene)
-            window.frame = CGRect(x: 0, y: 0, width: 402, height: 500)
-            let host = UIHostingController(rootView: ComposerHost(
-                viewModel: viewModel, controller: controller, sources: sources,
-                draft: draft, startsExpanded: style != "card", availableHeight: 360
-            ))
-            window.rootViewController = host
-            window.isHidden = false
-            host.view.frame = window.bounds
-            host.view.layoutIfNeeded()
-            let surface = UIView(frame: window.bounds)
-            surface.isUserInteractionEnabled = false
-            window.addSubview(surface)
-            defer {
-                controller.cancel()
-                window.isHidden = true
-                window.rootViewController = nil
-            }
-            // 只等待真实挂载和异步字体/音频准备，不以强制布局推动最终断言。
-            let deadline = ContinuousClock.now + .seconds(5)
-            var audioCapture: ChatSendFlightCapture?
-            while ContinuousClock.now < deadline {
-                if upperContent == .audio {
-                    audioCapture = sources.capture(in: surface, ids: [.audio(audio.id)]).first
-                }
-                if editor(in: host.view, containing: draft) != nil,
-                   let outer = controller.composerAnchor,
-                   let content = controller.composerContentAnchor,
-                   outer.window === window, content.window === window,
-                   outer.bounds.height > content.bounds.height + 40,
-                   upperContent != .audio || audioCapture != nil {
-                    break
-                }
-                try await Task.sleep(for: .milliseconds(20))
-            }
-            let editor = try #require(editor(in: host.view, containing: draft))
-            let outer = try #require(controller.composerAnchor)
-            let content = try #require(controller.composerContentAnchor)
-            let outerFrame = outer.convert(outer.bounds, to: surface)
-            let contentFrame = content.convert(content.bounds, to: surface)
-            let editorFrame = editor.convert(editor.bounds, to: surface)
-            #expect(outerFrame.height <= 360.5)
-            #expect(outerFrame.minY >= host.view.safeAreaInsets.top - 0.5)
-            #expect(contentFrame.minY > outerFrame.minY + 40)
-            #expect(editorFrame.minY >= contentFrame.minY - 0.5)
-            #expect(editorFrame.maxY <= contentFrame.maxY + 0.5)
-            #expect(contentFrame.maxY <= outerFrame.maxY + 0.5)
-            if upperContent == .audio {
-                let capture = try #require(audioCapture)
-                #expect(capture.frame.minY >= outerFrame.minY - 0.5)
-                #expect(capture.frame.maxY < contentFrame.minY)
-                if style != "card" {
-                    let textView = try #require(editor as? UITextView)
-                    #expect(textView.isScrollEnabled)
-                    #expect(textView.contentSize.height > textView.bounds.height)
-                }
-            } else {
-                // 至少保留一整行建议及兄弟间距，不能只把未显示的建议状态算作成功。
-                #expect(contentFrame.minY - outerFrame.minY >= 60 - 0.5)
-            }
-        } catch {
-            await config.flushPendingWrites()
-            throw error
-        }
-        await config.flushPendingWrites()
-    }
-
-    @Test("真实输入框展开和附件都限制来源离场边界", arguments: ["capsule", "adaptive", "card"], Scenario.allCases)
+    @Test("真实输入框展开时限制来源离场边界", arguments: ["capsule", "adaptive", "card"], Scenario.allCases)
     func realComposerBoundsDriveDeparture(style: String, scenario: Scenario) async throws {
         let config = AppConfigStore.shared
         await config.waitForPersistentStoreLoaded()
@@ -136,30 +25,20 @@ struct ChatSendFlightComposerLayoutTests {
                 config.chatComposerStyle = originalStyle
                 config.currentBackgroundImage = originalBackground
             }
-            let service = ChatService()
-            await service.waitForInitialPersistenceStateIfNeeded()
-            let viewModel = ChatViewModel(chatService: service)
-            await viewModel.globalSystemPromptReloadTask?.value
-            await viewModel.conversationMemoryReloadTask?.value
-            viewModel.cancellables.removeAll()
-
             let draft: String
             switch scenario {
             case .expandedFirstLine: draft = "展开框首行"
             case .longDraft: draft = (1...80).map { "第 \($0) 行：真实滚动片段。" }.joined(separator: "\n")
-            case .attachment: draft = ""
             }
-            let file = FileAttachment(data: Data("边界".utf8), mimeType: "text/plain", fileName: "边界测试.txt")
-            if scenario == .attachment { viewModel.pendingFileAttachments = [file] }
-            let sourceID: ChatSendPresentationSource = scenario == .attachment ? .file(file.id) : .text
+            let sourceID: ChatSendPresentationSource = .text
             let controller = ChatSendFlightController()
             let sources = ChatSendFlightSources()
             let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
             let window = UIWindow(windowScene: scene)
             window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
             let host = UIHostingController(rootView: ComposerHost(
-                viewModel: viewModel, controller: controller, sources: sources,
-                draft: draft, startsExpanded: style != "card" && scenario != .attachment
+                controller: controller, sources: sources,
+                draft: draft, startsExpanded: style != "card"
             ))
             window.rootViewController = host
             window.isHidden = false
@@ -220,11 +99,7 @@ struct ChatSendFlightComposerLayoutTests {
             #expect(departure.maxY <= contentFrame.minY + 0.5)
             #expect(capture.frame.maxY > departure.maxY + 1)
 
-            if scenario == .attachment {
-                // 附件处在实际输入框上方；只移动旧锚点到输入框会重新得到零离场位移。
-                #expect(capture.frame.maxY <= contentFrame.minY + 0.5)
-                #expect(departure.maxY <= capture.frame.minY + 0.5)
-            } else if style != "card" {
+            if style != "card" {
                 #expect(abs(outerFrame.height - 66) < 1)
                 #expect(contentFrame.minY < outerFrame.minY - 80)
                 #expect(editor.bounds.height > 100)
@@ -277,7 +152,6 @@ struct ChatSendFlightComposerLayoutTests {
 
 @MainActor
 private struct ComposerHost: View {
-    @ObservedObject var viewModel: ChatViewModel
     let controller: ChatSendFlightController
     let sources: ChatSendFlightSources
     let draft: String
@@ -292,18 +166,17 @@ private struct ComposerHost: View {
                 // 复用生产的占位与 overlay，不用 UIView 人为指定输入框高度。
                 VStack(spacing: 0) {
                     TelegramMessageComposer(
-                        submissionState: viewModel.sendSubmissionState,
                         sendFlightController: controller,
-                        text: .constant(draft), isRequestControlsExpanded: .constant(false),
-                        localAgentMode: .constant(.chat), sendAction: { false }, stopAction: {},
-                        slashCommandAction: { _ in }, focus: $focused,
+                        text: .constant(draft),
+                        sendAction: { false }, stopAction: {},
+                        focus: $focused,
                         availableHeight: availableHeight,
+                        cflState: CFLComposerState(canSend: true, isSubmitting: false, isResponding: false),
                         isExpandedComposer: startsExpanded
                     )
                 }
                 .background(ChatSendFlightLayoutAnchor(controller: controller, region: .composer))
             }
-            .environmentObject(viewModel)
             .environment(\.chatSendFlightSources, sources)
     }
 }

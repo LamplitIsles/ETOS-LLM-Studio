@@ -18,6 +18,7 @@ import SwiftMath
 struct ETIOSMarkdownImageProvider: ImageProvider {
     let textColor: ETIOSMathColorComponents
     let fontScale: Double
+    var remoteImagesEnabled = true
 
     @ViewBuilder
     func makeImage(url: URL?) -> some View {
@@ -27,8 +28,10 @@ struct ETIOSMarkdownImageProvider: ImageProvider {
                 textColor: textColor,
                 fontScale: fontScale
             )
-        } else {
+        } else if remoteImagesEnabled {
             DefaultImageProvider.default.makeImage(url: url)
+        } else {
+            Image(systemName: "photo")
         }
     }
 }
@@ -36,10 +39,14 @@ struct ETIOSMarkdownImageProvider: ImageProvider {
 struct ETIOSMarkdownInlineImageProvider: InlineImageProvider {
     let textColor: ETIOSMathColorComponents
     let fontScale: Double
+    var remoteImagesEnabled = true
 
     func image(with url: URL, label: String) async throws -> Image {
         guard let request = ETNativeMathMarkdownCodec.request(from: url) else {
-            return try await DefaultInlineImageProvider.default.image(with: url, label: label)
+            if remoteImagesEnabled {
+                return try await DefaultInlineImageProvider.default.image(with: url, label: label)
+            }
+            return Image(systemName: "photo")
         }
 
         guard let data = await ETIOSMathImageRenderer.imageData(for: request, textColor: textColor, fontScale: fontScale),

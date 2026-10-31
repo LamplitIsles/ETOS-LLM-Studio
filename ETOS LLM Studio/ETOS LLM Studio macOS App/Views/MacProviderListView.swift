@@ -184,7 +184,7 @@ private struct MacProviderEditor: View {
                 ])
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 560, minHeight: 600)
         .onDisappear { testPreparation?.cancel() }
         .onChange(of: workspace.isRestoringData) { _, restoring in if restoring { testPreparation?.cancel(); dismiss() } }

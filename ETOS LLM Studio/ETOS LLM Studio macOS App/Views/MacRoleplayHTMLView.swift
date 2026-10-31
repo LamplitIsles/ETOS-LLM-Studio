@@ -41,7 +41,7 @@ private struct MacRoleplayHTMLCard: View {
                     }
                 }
             }
-            .modifier(MacGuideInspector())
+            .modifier(MacAppLockOverlayModifier())
             .frame(minWidth: 520, minHeight: 420)
         }
         .onChange(of: runtime.epoch) { _, _ in showsActions = false }

@@ -37,7 +37,7 @@ struct MacRequestControlImportView: View {
                     .readOnly("read_only", label: NSLocalizedString("应用方式", comment: ""), value: { .bool(true) })
                 ])
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 480, minHeight: 400)
         .task {
             let providers = workspace.providers, excluded = modelID

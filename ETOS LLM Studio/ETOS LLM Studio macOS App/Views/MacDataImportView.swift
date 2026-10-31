@@ -96,13 +96,10 @@ struct MacDataImportView: View {
         .sheet(item: $model.confirmation) { confirmation in
             MacDataImportConfirmationView(model: model, confirmation: confirmation)
         }
-        .sheet(item: $model.snapshotFile) { file in
-            MacSnapshotRestoreSheet(file: file) { model.snapshotFile = nil }
-        }
         .guideSettingsPageContext(id: GuidePageID(rawValue: "mac-data-import-\(model.revision)"),
             title: NSLocalizedString("导入数据", comment: ""), documents: Self.documents,
             isActive: available && visible && !model.isPreparing && !model.isPanelOpen && !model.isImporting
-                && model.confirmation == nil && model.snapshotFile == nil,
+                && model.confirmation == nil,
             settings: guideSettings)
     }
 
@@ -174,7 +171,7 @@ private struct MacDataImportConfirmationView: View {
                     .readOnly("native_confirmation_required", label: NSLocalizedString("确认导入", comment: ""), value: { .bool(true) })
                 ])
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 560, minHeight: 400)
     }
 }

@@ -92,7 +92,7 @@ struct MacRoleplayPersonaEditor: View {
                 ])
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .interactiveDismissDisabled(saving)
         .onChange(of: workspace.isRestoringData) { _, restoring in if restoring { dismiss() } }
         .frame(minWidth: 520, minHeight: 500)

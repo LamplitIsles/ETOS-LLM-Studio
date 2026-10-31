@@ -3,8 +3,17 @@ import UIKit
 import ETOSCore
 
 struct ChatSendFlightTarget: Hashable {
+    static let coordinateSpace = "chatFlight"
     let flightID: UUID
     let source: ChatSendPresentationSource
+}
+
+struct FlightTargetRectKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $0.union($1) })
+    }
 }
 
 /// 内容因布局版本重建时，交接承载层仍保留；清除发送目标也不改变正文身份。
@@ -22,7 +31,7 @@ struct ChatSendFlightContentModifier: ViewModifier {
                     GeometryReader { proxy in
                         ChatSendFlightTargetAnchor(target: target).preference(
                             key: FlightTargetRectKey.self,
-                            value: [layoutIdentity.messageID: proxy.frame(in: .named(ChatView.flightCoordinateSpace))]
+                            value: [layoutIdentity.messageID: proxy.frame(in: .named(ChatSendFlightTarget.coordinateSpace))]
                         )
                     }
                     .allowsHitTesting(false)

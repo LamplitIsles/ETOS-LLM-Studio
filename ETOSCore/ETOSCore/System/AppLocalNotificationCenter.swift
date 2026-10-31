@@ -6,7 +6,7 @@
 // 功能特性:
 // - 统一接管本地通知 delegate，避免多处覆盖导致路由失效
 // - 提供通知权限查询、申请和通用通知投递入口
-// - 负责解析 Daily Pulse 通知点击并广播页面跳转事件
+// - 忽略历史 Daily Pulse 通知，并路由仍支持的通知
 // ============================================================================
 
 import Foundation
@@ -16,14 +16,8 @@ import Combine
 import UserNotifications
 
 public extension Notification.Name {
-    /// 请求当前设备直接打开 Daily Pulse 页面。
-    static let requestOpenDailyPulse = Notification.Name("com.ETOS.dailyPulse.requestOpen")
-    /// 请求当前设备直接进入 Daily Pulse 对应会话并填入继续聊提示词。
-    static let requestContinueDailyPulseChat = Notification.Name("com.ETOS.dailyPulse.requestContinueChat")
     /// 请求当前设备直接打开反馈页面（可附带工单号）。
     static let requestOpenFeedback = Notification.Name("com.ETOS.feedback.requestOpen")
-    /// 请求当前设备直接打开指定聊天会话。
-    static let requestOpenChatSession = Notification.Name("com.ETOS.chat.requestOpenSession")
     /// 请求当前设备直接打开隐藏日记页面。
     static let requestOpenAchievementJournal = Notification.Name("com.ETOS.achievementJournal.requestOpen")
     /// 请求当前设备直接打开检查更新页面。
@@ -33,58 +27,18 @@ public extension Notification.Name {
 public enum AppLocalNotificationRoute: String, Sendable {
     case dailyPulse
     case feedback
-    case chatSession
     case achievementJournal
     case updateTimeline
 }
 
-public struct AppLocalNotificationDailyPulseContinuation: Sendable, Equatable {
-    public let sessionID: UUID
-    public let prompt: String
-
-    public init(sessionID: UUID, prompt: String) {
-        self.sessionID = sessionID
-        self.prompt = prompt
-    }
-}
-
-public struct AppLocalNotificationDailyPulseSelection: Sendable, Equatable {
-    public let runID: UUID
-    public let cardID: UUID
-
-    public init(runID: UUID, cardID: UUID) {
-        self.runID = runID
-        self.cardID = cardID
-    }
-}
-
 private let appLocalNotificationRouteUserInfoKey = "route"
-private let appLocalNotificationKindUserInfoKey = "kind"
-private let appLocalNotificationDayKeyUserInfoKey = "dayKey"
-private let appLocalNotificationRunIDUserInfoKey = "runID"
-private let appLocalNotificationCardIDUserInfoKey = "cardID"
 private let appLocalNotificationIssueNumberUserInfoKey = "issue_number"
-private let appLocalNotificationSessionIDUserInfoKey = "session_id"
 private let appLocalNotificationAchievementIDUserInfoKey = "achievement_id"
 private let appLocalNotificationSuppressWhenForegroundUserInfoKey = "suppress_when_foreground"
-private let appLocalNotificationChatReplyIdentifierPrefix = "chat.reply.finished"
-private let appLocalNotificationChatReplyKind = "reply_finished"
-private let appLocalNotificationDailyPulseReminderCategoryIdentifier = "dailyPulse.reminder"
-private let appLocalNotificationDailyPulseReadyCategoryIdentifier = "dailyPulse.ready"
-private let appLocalNotificationDailyPulseOpenActionIdentifier = "dailyPulse.action.open"
-private let appLocalNotificationDailyPulseLikeActionIdentifier = "dailyPulse.action.like"
-private let appLocalNotificationDailyPulseSaveActionIdentifier = "dailyPulse.action.save"
-private let appLocalNotificationDailyPulseContinueActionIdentifier = "dailyPulse.action.continue"
-private let appLocalNotificationDailyPulseTaskActionIdentifier = "dailyPulse.action.task"
 
 private struct AppLocalNotificationPayload: Sendable {
     let route: AppLocalNotificationRoute?
-    let dayKey: String?
-    let runID: UUID?
-    let cardID: UUID?
     let issueNumber: Int?
-    let sessionID: UUID?
-    let isChatReply: Bool
     let suppressWhenForeground: Bool
 
     init(userInfo: [AnyHashable: Any]) {
@@ -93,24 +47,14 @@ private struct AppLocalNotificationPayload: Sendable {
         } else {
             route = nil
         }
-        dayKey = userInfo[appLocalNotificationDayKeyUserInfoKey] as? String
-        runID = (userInfo[appLocalNotificationRunIDUserInfoKey] as? String).flatMap(UUID.init(uuidString:))
-        cardID = (userInfo[appLocalNotificationCardIDUserInfoKey] as? String).flatMap(UUID.init(uuidString:))
         issueNumber = AppLocalNotificationPayload.parseIssueNumber(from: userInfo)
-        sessionID = (userInfo[appLocalNotificationSessionIDUserInfoKey] as? String).flatMap(UUID.init(uuidString:))
-        isChatReply = route == .chatSession
-            && userInfo[appLocalNotificationKindUserInfoKey] as? String == appLocalNotificationChatReplyKind
         suppressWhenForeground = (userInfo[appLocalNotificationSuppressWhenForegroundUserInfoKey] as? Bool)
             ?? (userInfo[appLocalNotificationSuppressWhenForegroundUserInfoKey] as? NSNumber)?.boolValue
             ?? false
     }
 
-    func shouldPresentWhileForeground(currentSessionID: UUID?) -> Bool {
-        guard !suppressWhenForeground else { return false }
-        if isChatReply, let sessionID {
-            return sessionID != currentSessionID
-        }
-        return true
+    func shouldPresentWhileForeground() -> Bool {
+        !suppressWhenForeground
     }
 
     private static func parseIssueNumber(from userInfo: [AnyHashable: Any]) -> Int? {
@@ -133,18 +77,7 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
 
     @Published public private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published public private(set) var pendingRoute: AppLocalNotificationRoute?
-    @Published public private(set) var pendingDailyPulseContinuation: AppLocalNotificationDailyPulseContinuation?
-    @Published public private(set) var pendingDailyPulseSelection: AppLocalNotificationDailyPulseSelection?
-#if os(macOS)
-    @Published public private(set) var pendingDailyPulseRequests: [DailyPulseNotificationRequest] = []
-    public var macCurrentSessionID: UUID?
-
-    public func consumeDailyPulseRequest() -> DailyPulseNotificationRequest? {
-        pendingDailyPulseRequests.isEmpty ? nil : pendingDailyPulseRequests.removeFirst()
-    }
-#endif
     @Published public private(set) var pendingFeedbackIssueNumber: Int?
-    @Published public private(set) var pendingChatSessionID: UUID?
 
     private var didConfigure = false
     private nonisolated static var isRunningUnitTests: Bool {
@@ -160,7 +93,6 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         didConfigure = true
         guard !Self.isRunningUnitTests else { return }
         UNUserNotificationCenter.current().delegate = self
-        registerNotificationCategories()
         Task {
             await refreshAuthorizationStatus()
         }
@@ -214,51 +146,7 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         }
     }
 
-    @discardableResult
-    public func postChatReplyFinishedNotification(
-        sessionID: UUID,
-        sessionName: String?,
-        snippet: String,
-        messageID: UUID
-    ) async -> Bool {
-        guard await requestAuthorizationIfNeeded() else { return false }
-
-        let content = UNMutableNotificationContent()
-        content.title = NSLocalizedString("AI 回复已完成", comment: "Background reply notification title")
-        if let sessionName, !sessionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            content.body = String(
-                format: NSLocalizedString(
-                    "会话“%@”已收到新回复：%@",
-                    comment: "Background reply notification body with session name"
-                ),
-                sessionName,
-                snippet
-            )
-        } else {
-            content.body = String(
-                format: NSLocalizedString(
-                    "已收到新回复：%@",
-                    comment: "Background reply notification body without session name"
-                ),
-                snippet
-            )
-        }
-        content.sound = .default
-        content.threadIdentifier = appLocalNotificationChatReplyIdentifierPrefix
-        content.userInfo = Self.chatReplyFinishedUserInfo(sessionID: sessionID)
-        if #available(iOS 15.0, watchOS 8.0, *) {
-            content.interruptionLevel = .timeSensitive
-            content.relevanceScore = 1.0
-        }
-
-        let identifier = Self.chatReplyNotificationIdentifierPrefix(sessionID: sessionID)
-            + ".\(messageID.uuidString)"
-        return await addNotificationRequest(
-            UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        )
-    }
-
-    /// 与聊天回复共用通知权限和前台横幅；通知正文不包含服务端响应或存储凭据。
+    /// 通知正文不包含服务端响应或存储凭据。
     @discardableResult
     public func postSnapshotUploadFinishedNotification(operationID: UUID, succeeded: Bool) async -> Bool {
         guard await requestAuthorizationIfNeeded() else { return false }
@@ -318,48 +206,9 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         removeDeliveredRequests(withIdentifiers: identifiers)
     }
 
-    /// 查看对应会话后清理回复通知；其他会话完成的通知仍应保留。
-    public func removeChatReplyNotifications(sessionID: UUID) async {
-        let prefix = Self.chatReplyNotificationIdentifierPrefix(sessionID: sessionID)
-        await removePendingRequests(withIdentifierPrefixes: [prefix])
-        await removeDeliveredRequests(withIdentifierPrefixes: [prefix])
-    }
-
-    public nonisolated static func dailyPulseUserInfo(
-        kind: String,
-        dayKey: String? = nil,
-        runID: UUID? = nil,
-        cardID: UUID? = nil
-    ) -> [AnyHashable: Any] {
-        var info: [AnyHashable: Any] = [
-            appLocalNotificationRouteUserInfoKey: AppLocalNotificationRoute.dailyPulse.rawValue,
-            appLocalNotificationKindUserInfoKey: kind
-        ]
-        if let dayKey, !dayKey.isEmpty {
-            info[appLocalNotificationDayKeyUserInfoKey] = dayKey
-        }
-        if let runID {
-            info[appLocalNotificationRunIDUserInfoKey] = runID.uuidString
-        }
-        if let cardID {
-            info[appLocalNotificationCardIDUserInfoKey] = cardID.uuidString
-        }
-        return info
-    }
-
-    public nonisolated static func notificationTargetsDailyPulse(userInfo: [AnyHashable: Any]) -> Bool {
-        guard let route = userInfo[appLocalNotificationRouteUserInfoKey] as? String else { return false }
-        return route == AppLocalNotificationRoute.dailyPulse.rawValue
-    }
-
     public nonisolated static func notificationTargetsFeedback(userInfo: [AnyHashable: Any]) -> Bool {
         guard let route = userInfo[appLocalNotificationRouteUserInfoKey] as? String else { return false }
         return route == AppLocalNotificationRoute.feedback.rawValue
-    }
-
-    public nonisolated static func notificationTargetsChatSession(userInfo: [AnyHashable: Any]) -> Bool {
-        guard let route = userInfo[appLocalNotificationRouteUserInfoKey] as? String else { return false }
-        return route == AppLocalNotificationRoute.chatSession.rawValue
     }
 
     public nonisolated static func notificationTargetsAchievementJournal(userInfo: [AnyHashable: Any]) -> Bool {
@@ -378,20 +227,11 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         ]
     }
 
-    public nonisolated static func chatReplyFinishedUserInfo(sessionID: UUID) -> [AnyHashable: Any] {
-        [
-            appLocalNotificationRouteUserInfoKey: AppLocalNotificationRoute.chatSession.rawValue,
-            appLocalNotificationSessionIDUserInfoKey: sessionID.uuidString,
-            appLocalNotificationKindUserInfoKey: appLocalNotificationChatReplyKind
-        ]
-    }
-
     public nonisolated static func notificationShouldPresentWhileForeground(
-        userInfo: [AnyHashable: Any],
-        currentSessionID: UUID?
+        userInfo: [AnyHashable: Any]
     ) -> Bool {
         AppLocalNotificationPayload(userInfo: userInfo)
-            .shouldPresentWhileForeground(currentSessionID: currentSessionID)
+            .shouldPresentWhileForeground()
     }
 
     public nonisolated static func achievementJournalUserInfo(achievementID: String? = nil) -> [AnyHashable: Any] {
@@ -404,28 +244,10 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         return info
     }
 
-    public nonisolated static func dailyPulseCategoryIdentifier(kind: String) -> String {
-        kind == "reminder"
-            ? appLocalNotificationDailyPulseReminderCategoryIdentifier
-            : appLocalNotificationDailyPulseReadyCategoryIdentifier
-    }
-
     public func consumePendingRoute() -> AppLocalNotificationRoute? {
         let route = pendingRoute
         pendingRoute = nil
         return route
-    }
-
-    public func consumePendingDailyPulseContinuation() -> AppLocalNotificationDailyPulseContinuation? {
-        let continuation = pendingDailyPulseContinuation
-        pendingDailyPulseContinuation = nil
-        return continuation
-    }
-
-    public func consumePendingDailyPulseSelection() -> AppLocalNotificationDailyPulseSelection? {
-        let selection = pendingDailyPulseSelection
-        pendingDailyPulseSelection = nil
-        return selection
     }
 
     public func consumePendingFeedbackIssueNumber() -> Int? {
@@ -434,84 +256,10 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         return issueNumber
     }
 
-    public func consumePendingChatSessionID() -> UUID? {
-        let sessionID = pendingChatSessionID
-        pendingChatSessionID = nil
-        return sessionID
-    }
-
-    private func registerNotificationCategories() {
-        let openAction = UNNotificationAction(
-            identifier: appLocalNotificationDailyPulseOpenActionIdentifier,
-            title: NSLocalizedString("查看", comment: "Daily pulse notification open action"),
-            options: [.foreground]
-        )
-        let likeAction = UNNotificationAction(
-            identifier: appLocalNotificationDailyPulseLikeActionIdentifier,
-            title: NSLocalizedString("喜欢", comment: "Daily pulse notification like action"),
-            options: []
-        )
-        let saveAction = UNNotificationAction(
-            identifier: appLocalNotificationDailyPulseSaveActionIdentifier,
-            title: NSLocalizedString("保存为会话", comment: "Daily pulse notification save action"),
-            options: []
-        )
-        let continueAction = UNNotificationAction(
-            identifier: appLocalNotificationDailyPulseContinueActionIdentifier,
-            title: NSLocalizedString("继续聊", comment: "Daily pulse notification continue action"),
-            options: [.foreground]
-        )
-        let taskAction = UNNotificationAction(
-            identifier: appLocalNotificationDailyPulseTaskActionIdentifier,
-            title: NSLocalizedString("加入任务", comment: "Daily pulse notification add task action"),
-            options: []
-        )
-
-        let reminderCategory = UNNotificationCategory(
-            identifier: appLocalNotificationDailyPulseReminderCategoryIdentifier,
-            actions: [openAction],
-            intentIdentifiers: [],
-            options: []
-        )
-        let readyCategory = UNNotificationCategory(
-            identifier: appLocalNotificationDailyPulseReadyCategoryIdentifier,
-            actions: [likeAction, saveAction, continueAction, taskAction],
-            intentIdentifiers: [],
-            options: []
-        )
-
-        UNUserNotificationCenter.current().setNotificationCategories([reminderCategory, readyCategory])
-    }
-
-    private func dailyPulseTarget(from payload: AppLocalNotificationPayload) -> (runID: UUID, card: DailyPulseCard)? {
-        return DailyPulseManager.shared.notificationTarget(
-            runID: payload.runID,
-            cardID: payload.cardID,
-            dayKey: payload.dayKey
-        )
-    }
-
-    private func openDailyPulseFromNotification(payload: AppLocalNotificationPayload? = nil) {
-        pendingRoute = .dailyPulse
-        if let runID = payload?.runID, let cardID = payload?.cardID {
-            pendingDailyPulseSelection = AppLocalNotificationDailyPulseSelection(
-                runID: runID,
-                cardID: cardID
-            )
-        }
-        NotificationCenter.default.post(name: .requestOpenDailyPulse, object: nil)
-    }
-
     private func openFeedbackFromNotification(payload: AppLocalNotificationPayload) {
         pendingRoute = .feedback
         pendingFeedbackIssueNumber = payload.issueNumber
         NotificationCenter.default.post(name: .requestOpenFeedback, object: nil)
-    }
-
-    private func openChatSessionFromNotification(payload: AppLocalNotificationPayload) {
-        pendingRoute = .chatSession
-        pendingChatSessionID = payload.sessionID
-        NotificationCenter.default.post(name: .requestOpenChatSession, object: nil)
     }
 
     private func openAchievementJournalFromNotification() {
@@ -522,21 +270,6 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
     private func openUpdateTimelineFromNotification() {
         pendingRoute = .updateTimeline
         NotificationCenter.default.post(name: .requestOpenUpdateTimeline, object: nil)
-    }
-
-    private func continueDailyPulseFromNotification(payload: AppLocalNotificationPayload) {
-        guard let target = dailyPulseTarget(from: payload),
-              let session = DailyPulseManager.shared.saveCardAsSession(cardID: target.card.id, runID: target.runID) else {
-            openDailyPulseFromNotification()
-            return
-        }
-
-        ChatService.shared.setCurrentSession(session)
-        pendingDailyPulseContinuation = AppLocalNotificationDailyPulseContinuation(
-            sessionID: session.id,
-            prompt: DailyPulseManager.defaultContinuationPrompt(for: target.card)
-        )
-        NotificationCenter.default.post(name: .requestContinueDailyPulseChat, object: nil)
     }
 
     func handleNotificationResponseUserInfo(
@@ -552,56 +285,14 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         actionIdentifier: String
     ) {
         if payload.route == .dailyPulse {
-            handleDailyPulseAction(
-                actionIdentifier: actionIdentifier,
-                payload: payload
-            )
+            return
         } else if payload.route == .feedback {
             openFeedbackFromNotification(payload: payload)
-        } else if payload.route == .chatSession {
-            openChatSessionFromNotification(payload: payload)
         } else if payload.route == .achievementJournal {
             openAchievementJournalFromNotification()
         } else if payload.route == .updateTimeline {
             openUpdateTimelineFromNotification()
         }
-    }
-
-    private func handleDailyPulseAction(
-        actionIdentifier: String,
-        payload: AppLocalNotificationPayload
-    ) {
-#if os(macOS)
-        let action: DailyPulseNotificationRequest.Action
-        switch actionIdentifier {
-        case UNNotificationDefaultActionIdentifier, appLocalNotificationDailyPulseOpenActionIdentifier: action = .open
-        case appLocalNotificationDailyPulseLikeActionIdentifier: action = .like
-        case appLocalNotificationDailyPulseSaveActionIdentifier: action = .save
-        case appLocalNotificationDailyPulseContinueActionIdentifier: action = .continueChat
-        case appLocalNotificationDailyPulseTaskActionIdentifier: action = .addTask
-        default: return
-        }
-        pendingDailyPulseRequests.append(.init(action: action, runID: payload.runID,
-            cardID: payload.cardID, dayKey: payload.dayKey))
-#else
-        switch actionIdentifier {
-        case UNNotificationDefaultActionIdentifier, appLocalNotificationDailyPulseOpenActionIdentifier:
-            openDailyPulseFromNotification(payload: payload)
-        case appLocalNotificationDailyPulseLikeActionIdentifier:
-            guard let target = dailyPulseTarget(from: payload) else { return }
-            DailyPulseManager.shared.applyFeedback(.liked, cardID: target.card.id, runID: target.runID)
-        case appLocalNotificationDailyPulseSaveActionIdentifier:
-            guard let target = dailyPulseTarget(from: payload) else { return }
-            _ = DailyPulseManager.shared.saveCardAsSession(cardID: target.card.id, runID: target.runID)
-        case appLocalNotificationDailyPulseContinueActionIdentifier:
-            continueDailyPulseFromNotification(payload: payload)
-        case appLocalNotificationDailyPulseTaskActionIdentifier:
-            guard let target = dailyPulseTarget(from: payload) else { return }
-            _ = DailyPulseManager.shared.addTaskFromCard(cardID: target.card.id, runID: target.runID)
-        default:
-            break
-        }
-#endif
     }
 
     private func currentNotificationSettings() async -> UNNotificationSettings {
@@ -612,10 +303,6 @@ public final class AppLocalNotificationCenter: NSObject, ObservableObject {
         }
     }
 
-    private nonisolated static func chatReplyNotificationIdentifierPrefix(sessionID: UUID) -> String {
-        "\(appLocalNotificationChatReplyIdentifierPrefix).\(sessionID.uuidString)"
-    }
-
 }
 
 extension AppLocalNotificationCenter: UNUserNotificationCenterDelegate {
@@ -624,18 +311,7 @@ extension AppLocalNotificationCenter: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         let payload = AppLocalNotificationPayload(userInfo: notification.request.content.userInfo)
-        let shouldPresent = await MainActor.run {
-#if os(macOS)
-            // 冷启动接收通知时数据库可能仍锁定，不能为读取当前会话而初始化 ChatService。
-            return payload.shouldPresentWhileForeground(currentSessionID: AppLocalNotificationCenter.shared.macCurrentSessionID)
-#else
-            // 投递与展示之间用户可能已从 B 切回 A，此时应静默；仍在 B 则展示 A 的完成通知。
-            return payload.shouldPresentWhileForeground(
-                currentSessionID: payload.isChatReply ? ChatService.shared.currentSessionSubject.value?.id : nil
-            )
-#endif
-        }
-        guard shouldPresent else { return [] }
+        guard payload.shouldPresentWhileForeground() else { return [] }
 #if os(iOS) || os(macOS)
         return [.banner, .list, .sound]
 #elseif os(watchOS)
@@ -667,9 +343,7 @@ extension AppLocalNotificationCenter: UNUserNotificationCenterDelegate {
 }
 #else
 public extension Notification.Name {
-    static let requestOpenDailyPulse = Notification.Name("com.ETOS.dailyPulse.requestOpen")
     static let requestOpenFeedback = Notification.Name("com.ETOS.feedback.requestOpen")
-    static let requestOpenChatSession = Notification.Name("com.ETOS.chat.requestOpenSession")
     static let requestOpenAchievementJournal = Notification.Name("com.ETOS.achievementJournal.requestOpen")
     static let requestOpenUpdateTimeline = Notification.Name("com.ETOS.updateTimeline.requestOpen")
 }

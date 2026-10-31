@@ -14,100 +14,6 @@ import ETOSCore
 @MainActor
 struct ChatScrollCoordinatorTests {
 
-    @Test("弹性滚动不会拉开同轮相连气泡")
-    func testChatScrollTransitionKeepsConnectedBubblesTogether() {
-        let standaloneOffset = ChatView.chatScrollTransitionOffset(
-            phaseValue: 0.5,
-            configuredOffset: 32,
-            isEnabled: true,
-            isConnectedToAdjacentBubble: false
-        )
-        #expect(standaloneOffset == 16)
-
-        let connectedOffset = ChatView.chatScrollTransitionOffset(
-            phaseValue: 0.5,
-            configuredOffset: 32,
-            isEnabled: true,
-            isConnectedToAdjacentBubble: true
-        )
-        #expect(connectedOffset == 0)
-
-        let disabledOffset = ChatView.chatScrollTransitionOffset(
-            phaseValue: 0.5,
-            configuredOffset: 32,
-            isEnabled: false,
-            isConnectedToAdjacentBubble: false
-        )
-        #expect(disabledOffset == 0)
-
-        let bottomPinnedStreamingOffset = ChatView.chatScrollTransitionOffset(
-            phaseValue: 0.5,
-            configuredOffset: 32,
-            isEnabled: true,
-            isConnectedToAdjacentBubble: false,
-            isBottomPinnedStreamingBubble: true
-        )
-        #expect(bottomPinnedStreamingOffset == 0)
-
-        let viewportTransitionOffset = ChatView.chatScrollTransitionOffset(
-            phaseValue: 0.5,
-            configuredOffset: 32,
-            isEnabled: true,
-            isConnectedToAdjacentBubble: false,
-            isViewportTransitioning: true
-        )
-        #expect(viewportTransitionOffset == 0)
-
-        let timelineNavigationOffset = ChatView.chatScrollTransitionOffset(
-            phaseValue: 0.5,
-            configuredOffset: 32,
-            isEnabled: true,
-            isConnectedToAdjacentBubble: false,
-            isTimelineNavigationActive: true
-        )
-        #expect(timelineNavigationOffset == 0)
-    }
-
-    @Test("相邻导航跨越懒加载窗口后仍使用同一个短动画")
-    func testAdjacentMessageJumpKeepsShortFinalAnimation() {
-        #expect(ChatView.resolvedMessageJumpDuration(
-            defaultDuration: 0.9,
-            usesAdjacentAnimation: true,
-            isFinalSegment: true
-        ) == 0.28)
-        #expect(ChatView.resolvedMessageJumpDuration(
-            defaultDuration: 0.5,
-            usesAdjacentAnimation: true,
-            isFinalSegment: false
-        ) == 0.5)
-        #expect(ChatView.resolvedMessageJumpDuration(
-            defaultDuration: 0.9,
-            usesAdjacentAnimation: false,
-            isFinalSegment: true
-        ) == 0.9)
-    }
-
-    @Test("相邻目标扩窗可见后只提交最终定位")
-    func testAdjacentWindowShiftSkipsIntermediateAnchorCommand() {
-        #expect(ChatView.shouldUseSingleFinalAdjacentJump(
-            usesAdjacentAnimation: true,
-            targetIsVisibleAfterWindowShift: true
-        ))
-        #expect(!ChatView.shouldUseSingleFinalAdjacentJump(
-            usesAdjacentAnimation: false,
-            targetIsVisibleAfterWindowShift: true
-        ))
-        #expect(!ChatView.shouldUseSingleFinalAdjacentJump(
-            usesAdjacentAnimation: true,
-            targetIsVisibleAfterWindowShift: false
-        ))
-    }
-
-    @MainActor
-    @Test("吸底命令使用消息栈的真实尾部锚点")
-    func testChatBottomScrollTargetsTrueStackEnd() {
-        #expect(ChatView.resolvedBottomScrollTarget == .bottom)
-    }
 
     @MainActor
     @Test("重复目标仍会生成新的单次滚动命令")
@@ -469,41 +375,6 @@ struct ChatScrollCoordinatorTests {
         #expect(!coordinator.chatHistoryViewportAnchorController.isRestoringAnchor)
     }
 
-    @Test("吸底命令在用户接管、抵达底部或超时后释放")
-    func testChatBottomScrollCommandReleaseLifecycle() {
-        #expect(ChatView.shouldReleaseActiveBottomScrollCommand(
-            hasActiveTarget: true,
-            distanceToBottom: 0,
-            isUserInteracting: false,
-            arrivalTolerance: 1
-        ))
-        #expect(!ChatView.shouldReleaseActiveBottomScrollCommand(
-            hasActiveTarget: true,
-            distanceToBottom: 8,
-            isUserInteracting: false,
-            arrivalTolerance: 1
-        ))
-        #expect(ChatView.shouldReleaseActiveBottomScrollCommand(
-            hasActiveTarget: true,
-            distanceToBottom: 8,
-            isUserInteracting: true,
-            arrivalTolerance: 1
-        ))
-        #expect(ChatView.shouldReleaseActiveBottomScrollCommand(
-            hasActiveTarget: true,
-            distanceToBottom: 8,
-            isUserInteracting: false,
-            arrivalTolerance: 1,
-            hasExceededMaximumLifetime: true
-        ))
-        #expect(!ChatView.shouldReleaseActiveBottomScrollCommand(
-            hasActiveTarget: false,
-            distanceToBottom: 0,
-            isUserInteracting: true,
-            arrivalTolerance: 1,
-            hasExceededMaximumLifetime: true
-        ))
-    }
 
     @Test("无位移吸底命令按代次只越过去重边界一次")
     func testActiveBottomCommandForcesMetricsCallback() {
@@ -592,21 +463,6 @@ struct ChatScrollCoordinatorTests {
         ) == -20)
     }
 
-    @Test("只有抵达当前窗口边界时翻页才换入一条历史")
-    func testViewportPageLoadsHistoryOnlyAtWindowEdge() {
-        #expect(ChatView.shouldLoadHistoryBeforeViewportPage(
-            isHistoryBoundaryLoaded: false,
-            distanceToEdge: 0.5
-        ))
-        #expect(!ChatView.shouldLoadHistoryBeforeViewportPage(
-            isHistoryBoundaryLoaded: false,
-            distanceToEdge: 20
-        ))
-        #expect(!ChatView.shouldLoadHistoryBeforeViewportPage(
-            isHistoryBoundaryLoaded: true,
-            distanceToEdge: 0
-        ))
-    }
 
     @MainActor
     @Test("UIKit 滚动桥不会把同一区域内的逐像素移动回写给 SwiftUI")
@@ -774,68 +630,6 @@ struct ChatScrollCoordinatorTests {
         return controller.pendingAdjustment
     }
 
-    @Test("只有贴底的布局变化暂停气泡滚动波浪")
-    func testChatViewportTransitionSuppressionKeepsUserControl() {
-        #expect(ChatView.shouldSuppressScrollTransitionForViewportChange(
-            isLayoutSettling: true,
-            keepsBottomPinned: true,
-            isUserInteracting: false
-        ))
-        #expect(!ChatView.shouldSuppressScrollTransitionForViewportChange(
-            isLayoutSettling: true,
-            keepsBottomPinned: false,
-            isUserInteracting: false
-        ))
-        #expect(!ChatView.shouldSuppressScrollTransitionForViewportChange(
-            isLayoutSettling: true,
-            keepsBottomPinned: true,
-            isUserInteracting: true
-        ))
-        #expect(!ChatView.shouldSuppressScrollTransitionForViewportChange(
-            isLayoutSettling: false,
-            keepsBottomPinned: true,
-            isUserInteracting: false
-        ))
-    }
-
-    @Test("消息版本切换会释放已经消失的滚动目标")
-    func testChatScrollTargetDropsInvisibleMessage() {
-        let visibleMessageID = UUID()
-        let removedMessageID = UUID()
-
-        #expect(ChatView.retainedChatScrollTarget(
-            .message(visibleMessageID),
-            visibleMessageIDs: [visibleMessageID]
-        ) == .message(visibleMessageID))
-        #expect(ChatView.retainedChatScrollTarget(
-            .message(removedMessageID),
-            visibleMessageIDs: [visibleMessageID]
-        ) == nil)
-        #expect(ChatView.retainedChatScrollTarget(
-            .top,
-            visibleMessageIDs: []
-        ) == .top)
-        #expect(ChatView.retainedChatScrollTarget(
-            .bottom,
-            visibleMessageIDs: []
-        ) == .bottom)
-        #expect(ChatView.isChatScrollTargetAvailable(
-            .message(visibleMessageID),
-            visibleMessageIDs: [visibleMessageID]
-        ))
-        #expect(!ChatView.isChatScrollTargetAvailable(
-            .message(removedMessageID),
-            visibleMessageIDs: [visibleMessageID]
-        ))
-        #expect(ChatView.isChatScrollTargetAvailable(
-            .top,
-            visibleMessageIDs: []
-        ))
-        #expect(ChatView.isChatScrollTargetAvailable(
-            .bottom,
-            visibleMessageIDs: []
-        ))
-    }
 
     @Test("新的拖动边沿会抢占任何正在进行的程序滚动")
     func testPanBeganCancelsEveryProgrammaticScrollOwner() {
@@ -897,112 +691,25 @@ struct ChatScrollCoordinatorTests {
         ))
     }
 
-    @Test("时间线首尾按钮同时考虑全局窗口边界和真实距离")
-    func testTimelineEdgeNavigationAvailability() {
-        #expect(ChatView.shouldEnableTimelineEdgeNavigation(
-            isHistoryBoundaryLoaded: false,
-            distanceToEdge: 0
-        ))
-        #expect(ChatView.shouldEnableTimelineEdgeNavigation(
-            isHistoryBoundaryLoaded: true,
-            distanceToEdge: 20
-        ))
-        #expect(!ChatView.shouldEnableTimelineEdgeNavigation(
-            isHistoryBoundaryLoaded: true,
-            distanceToEdge: 0.5
-        ))
-        #expect(ChatView.shouldEnableTimelineBottomNavigation(
-            isLaterHistoryBoundaryLoaded: false,
-            keepsBottomPinned: true,
-            distanceToBottom: 0
-        ))
-        #expect(!ChatView.shouldEnableTimelineBottomNavigation(
-            isLaterHistoryBoundaryLoaded: true,
-            keepsBottomPinned: true,
-            distanceToBottom: 100
-        ))
-    }
-
-    @Test("回底命令必须等新几何快照后才能恢复相邻导航")
-    func testAdjacentNavigationWaitsForFreshBottomSnapshot() {
-        #expect(ChatView.shouldSuspendAdjacentNavigationForBottomArrival(
-            awaitsFreshSnapshot: true,
-            hasProgrammaticScrollOwnership: true,
-            currentSnapshotRevision: 12,
-            baselineSnapshotRevision: 10
-        ))
-        #expect(ChatView.shouldSuspendAdjacentNavigationForBottomArrival(
-            awaitsFreshSnapshot: true,
-            hasProgrammaticScrollOwnership: false,
-            currentSnapshotRevision: 10,
-            baselineSnapshotRevision: 10
-        ))
-        #expect(!ChatView.shouldSuspendAdjacentNavigationForBottomArrival(
-            awaitsFreshSnapshot: true,
-            hasProgrammaticScrollOwnership: false,
-            currentSnapshotRevision: 11,
-            baselineSnapshotRevision: 10
-        ))
-    }
-
-    @Test("显式导航期间暂停自动历史请求")
-    func testExplicitNavigationSuspendsAutomaticHistoryRequests() {
-        #expect(ChatView.shouldSuspendAutomaticHistoryNavigation(
-            hasRetainedTimelineNavigationTarget: false,
-            isMessageJumpInFlight: true,
-            hasPendingHistoryReset: false,
-            hasPendingBottomSnap: false,
-            hasActiveBottomTarget: false,
-            hasPendingOrAppliedTarget: true
-        ))
-        #expect(ChatView.shouldSuspendAutomaticHistoryNavigation(
-            hasRetainedTimelineNavigationTarget: true,
-            isMessageJumpInFlight: false,
-            hasPendingHistoryReset: false,
-            hasPendingBottomSnap: false,
-            hasActiveBottomTarget: false,
-            hasPendingOrAppliedTarget: false
-        ))
-        #expect(!ChatView.shouldSuspendAutomaticHistoryNavigation(
-            hasRetainedTimelineNavigationTarget: false,
-            isMessageJumpInFlight: false,
-            hasPendingHistoryReset: false,
-            hasPendingBottomSnap: false,
-            hasActiveBottomTarget: false,
-            hasPendingOrAppliedTarget: false
-        ))
-    }
-
-    @Test("紧凑聊天视口不会挤入完整四键导航栏")
-    func testExpandedScrollNavigationRequiresVerticalClearance() {
-        #expect(ChatView.canPresentExpandedScrollNavigation(
-            viewportHeight: 240,
-            panelHeight: 188
-        ))
-        #expect(!ChatView.canPresentExpandedScrollNavigation(
-            viewportHeight: 210,
-            panelHeight: 188
-        ))
-    }
 
     @Test("四键导航仅响应聊天区右缘向左横扫")
     func testScrollNavigationEdgeRevealGestureIntent() {
-        #expect(ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+        #expect(ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
             startLocationX: 370,
             viewportWidth: 390,
             translation: CGSize(width: -24, height: 4)
         ))
-        #expect(!ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+        #expect(!ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
             startLocationX: 300,
             viewportWidth: 390,
             translation: CGSize(width: -24, height: 4)
         ))
-        #expect(!ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+        #expect(!ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
             startLocationX: 370,
             viewportWidth: 390,
             translation: CGSize(width: 24, height: 2)
         ))
-        #expect(!ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+        #expect(!ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
             startLocationX: 370,
             viewportWidth: 390,
             translation: CGSize(width: -18, height: 24)

@@ -45,10 +45,3 @@ final class DailyPulsePersistenceQueue {
         }
     }
 }
-
-public extension DailyPulseManager {
-    /// 备份、恢复与桌面退出前等待已经登记的持久化；不主动创建管理器或触发生成。
-    static func flushPendingPersistence() async {
-        await DailyPulsePersistenceQueue.shared.flush()
-    }
-}

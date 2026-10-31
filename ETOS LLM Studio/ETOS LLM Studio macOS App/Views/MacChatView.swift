@@ -25,10 +25,8 @@ struct MacChatView: View {
     @State private var importContext: UUID?
     @State private var isVisible = false
     @State private var editingMessage: MacMessageEditTarget?
-    @State private var rewritingMessage: MacMessageEditTarget?
     @State private var deletingMessage: MacMessageDeletionTarget?
     @State private var showsRequestControls = false
-    @State private var showsBrowser = false
     @State private var linuxJobsTarget: MacLinuxJobsTarget?
     @State private var speechSource: MacSpeechInputSource?
     @State private var transcriptExport: MacTranscriptExportTarget?
@@ -118,8 +116,8 @@ struct MacChatView: View {
         .coordinateSpace(name: MacMessageEntryMotion.coordinateSpace)
         .modifier(MacSessionAchievementTriggers())
         .onAppear { isVisible = true; workspace.setRoleplayHostVisible(true); refreshSlashCommands() }
-        .onDisappear { isVisible = false; sendMotion.cancel(); importing = false; showsBrowser = false; linuxJobsTarget = nil; speechSource = nil; workspace.setRoleplayHostVisible(false); slashComposer.invalidate(); slashDestination = nil; showsSlashModelPicker = false }
-        .onChange(of: workspace.currentSession?.id) { _, _ in sendMotion.cancel(); showsBrowser = false; linuxJobsTarget = nil; speechSource = nil; slashComposer.invalidate(); refreshSlashCommands() }
+        .onDisappear { isVisible = false; sendMotion.cancel(); importing = false; linuxJobsTarget = nil; speechSource = nil; workspace.setRoleplayHostVisible(false); slashComposer.invalidate(); slashDestination = nil; showsSlashModelPicker = false }
+        .onChange(of: workspace.currentSession?.id) { _, _ in sendMotion.cancel(); linuxJobsTarget = nil; speechSource = nil; slashComposer.invalidate(); refreshSlashCommands() }
         .onChange(of: workspace.canManageLocalModels) { _, available in if !available { sendMotion.cancel() }; refreshSlashCommands() }
         .onChange(of: appLock.state) { _, state in if state == .locked { sendMotion.cancel(); slashComposer.invalidate(); slashDestination = nil; showsSlashModelPicker = false } }
         .onChange(of: workspace.draft) { _, _ in refreshSlashCommands(inputChanged: true) }
@@ -165,7 +163,6 @@ struct MacChatView: View {
                 Label(NSLocalizedString("导出对话", comment: ""), systemImage: "square.and.arrow.up")
             }.disabled(!workspace.canManageLocalModels || workspace.currentSession == nil)
         }
-        .sheet(item: $rewritingMessage) { MacMessageRewriteView(target: $0) }
         .sheet(item: $speechSource) { MacSpeechRecorderView(model: workspace.speechInput, source: $0) }
         .sheet(isPresented: $showsRequestControls) { MacRequestRuntimeView(model: workspace.requestControls) }
         .sheet(item: $slashDestination) { MacChatQuickActionSheet(target: $0) }
@@ -175,12 +172,6 @@ struct MacChatView: View {
                 MacLinuxJobsView(isActive: isVisible && workspace.canManageLocalModels, runtime: workspace.linux, sessionID: target.sessionID)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button(NSLocalizedString("关闭", comment: "")) { linuxJobsTarget = nil } } }
             }.frame(minWidth: 620, minHeight: 480)
-        }
-        .sheet(isPresented: $showsBrowser) {
-            NavigationStack {
-                MacBrowserView(sessionID: workspace.currentSession?.id, isTemporary: workspace.isTemporaryChat,
-                               isActive: isVisible && workspace.canManageLocalModels, model: workspace.browser)
-            }
         }
         .confirmationDialog(NSLocalizedString("删除消息", comment: ""), isPresented: Binding(
             get: { deletingMessage != nil }, set: { if !$0 { deletingMessage = nil } }
@@ -209,8 +200,8 @@ struct MacChatView: View {
 
     private var chatGuideActive: Bool {
         guard isVisible, workspace.canManageLocalModels, !showsSessionAnalytics, !importing,
-              editingMessage == nil, transcriptExport == nil, rewritingMessage == nil,
-              deletingMessage == nil, !showsRequestControls, !showsBrowser,
+              editingMessage == nil, transcriptExport == nil,
+              deletingMessage == nil, !showsRequestControls,
               linuxJobsTarget == nil, speechSource == nil, slashDestination == nil, !showsSlashModelPicker else { return false }
         return !workspace.tts.isExportPanelOpen && !workspace.backgrounds.isPresentingMedia && !workspace.fonts.isImportPanelOpen
     }
@@ -283,11 +274,9 @@ struct MacChatView: View {
             case .model: composerFocused = false; showsSlashModelPicker = true
             case .sessions: composerFocused = false; showSessions()
             case .settings: composerFocused = false; openSettings()
-            case .daily: composerFocused = false; workspace.dailyPulse.showsWindow = true
             case .page(let page):
                 composerFocused = false
-                slashDestination = MacChatQuickActionDestination(page: page, sessionID: workspace.currentSession?.id,
-                    isTemporary: workspace.isTemporaryChat)
+                slashDestination = MacChatQuickActionDestination(page: page)
             case .temporary: workspace.slashCommands.actions.temporary(workspace: workspace)
             case .retry: workspace.slashCommands.actions.retry(workspace: workspace)
             case .stop:
@@ -380,9 +369,6 @@ struct MacChatView: View {
                 if workspace.isImportingAttachments { ProgressView().controlSize(.small) }
                 MacChatQuickActionsView()
                     .help(NSLocalizedString("聊天快捷功能", comment: ""))
-                Button { showsBrowser = true } label: { Label(NSLocalizedString("浏览器", comment: ""), systemImage: "safari") }
-                    .disabled(workspace.currentSession == nil || !workspace.canManageLocalModels || workspace.browser.isSuspended)
-                    .help(NSLocalizedString("浏览器", comment: ""))
                 Menu {
                     Button { showsRequestControls = true } label: {
                         Label(NSLocalizedString("聊天控制", comment: ""), systemImage: "slider.horizontal.3")
@@ -616,7 +602,7 @@ private struct MacMessageEditor: View {
             ]) }
         )
           }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .interactiveDismissDisabled(isSaving)
         .frame(minWidth: 500, minHeight: 350)
     }

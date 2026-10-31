@@ -16,11 +16,7 @@ struct ChatQuickActionSelectionTests {
     @Test("临时对话开关使用有无斜线区分状态")
     func temporaryChatStateUsesSlash() {
         #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: false) == "eye")
-        #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: true) == "eye.slash")
-        #expect(ChatQuickAction.temporaryChat.systemImage(
-            isTemporaryChatEnabled: true,
-            memoryMode: .isolated
-        ) == "eye.slash.fill")
+        #expect(ChatQuickAction.temporaryChat.systemImage(isTemporaryChatEnabled: true) == "eye.slash.fill")
     }
 
     @Test("空配置和未知配置回退到全部快捷功能")
@@ -42,21 +38,14 @@ struct ChatQuickActionSelectionTests {
     @Test("多选配置去重并按界面顺序保存")
     func multipleSelectionIsNormalized() {
         let encoded = ChatQuickActionSelection.encode([
-            .agentSkills,
-            .browser,
+            .shortcuts,
+            .settings,
             .usageAnalytics,
-            .agentSkills
+            .shortcuts
         ])
 
-        #expect(encoded == "usageAnalytics,agentSkills,browser")
-        #expect(ChatQuickActionSelection.decode(encoded) == [.usageAnalytics, .agentSkills, .browser])
+        #expect(encoded == "settings,usageAnalytics,shortcuts")
+        #expect(ChatQuickActionSelection.decode(encoded) == [.settings, .usageAnalytics, .shortcuts])
     }
 
-    @Test("快捷文件夹按数量估算自适应网格")
-    func quickActionFolderLayoutAdaptsToContent() {
-        #expect(ChatQuickActionFolderLayout.estimatedColumnCount(actionCount: 4, usesAccessibilitySize: false) == 2)
-        #expect(ChatQuickActionFolderLayout.estimatedColumnCount(actionCount: 5, usesAccessibilitySize: false) == 3)
-        #expect(ChatQuickActionFolderLayout.estimatedColumnCount(actionCount: 5, usesAccessibilitySize: true) == 2)
-        #expect(ChatQuickActionFolderLayout.estimatedRowCount(actionCount: 13, columnCount: 3) == 5)
-    }
 }

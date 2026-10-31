@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 负责 ChatService 的消息写入、更新、转写回填与回复原子化。
+// 负责 ChatService 的消息写入、更新与回复原子化。
 // ============================================================================
 
 import Foundation
@@ -109,69 +109,6 @@ extension ChatService {
             return true
         }
         if let messages { publishMessagesIfCurrentSession(messages, for: resolvedSessionID) }
-    }
-
-    // MARK: - 附件转写
-
-    func handleBackgroundTranscription(audioAttachment: AudioAttachment, placeholder: String, messageID: UUID, sessionID: UUID) async {
-        guard let speechModel = resolveSelectedSpeechModel() else {
-            // 当开启直接发送音频给模型时，后台转文字是可选的增强功能
-            // 没有配置语音模型时只记录日志，不显示错误打扰用户
-            logger.info(" 后台语音转文字跳过: 未配置语音模型。消息将保持为 [语音消息] 显示。")
-            return
-        }
-
-        logger.info("(后台) 正在使用 \(speechModel.model.displayName) 进行语音转文字...")
-
-        do {
-            let rawTranscript = try await transcribeAudio(
-                using: speechModel,
-                audioData: audioAttachment.data,
-                fileName: audioAttachment.fileName,
-                mimeType: audioAttachment.mimeType
-            )
-            let transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            guard !transcript.isEmpty else {
-                // 转写结果为空时静默处理，不显示错误
-                logger.warning("后台语音转文字返回空结果，消息将保持为 [语音消息] 显示。")
-                return
-            }
-
-            await applyTranscriptionResult(
-                transcript,
-                toMessageWithID: messageID,
-                in: sessionID,
-                placeholder: placeholder
-            )
-        } catch {
-            // 后台转文字失败时静默处理，不显示错误打扰用户
-            // 因为音频已经成功发送给模型了，转文字只是可选的UI增强
-            logger.warning("后台语音转文字失败: \(error.localizedDescription)。消息将保持为 [语音消息] 显示。")
-        }
-    }
-
-    func applyTranscriptionResult(_ transcript: String, toMessageWithID messageID: UUID, in sessionID: UUID, placeholder: String) async {
-        let updated = await updateExistingConversationMessage(id: messageID, in: sessionID) { message in
-            guard message.content == placeholder else { return false }
-            message.content = transcript
-            return true
-        }
-        guard updated else {
-            logger.warning("未找到需要更新的语音消息（可能会话已被切换或删除）。")
-            return
-        }
-
-        await MainActor.run {
-            var sessions = chatSessionsSubject.value
-            guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }),
-                  sessions[sessionIndex].name == placeholder else { return }
-            sessions[sessionIndex].name = String(transcript.prefix(20))
-            chatSessionsSubject.send(sessions)
-            if currentSessionSubject.value?.id == sessionID {
-                currentSessionSubject.send(sessions[sessionIndex])
-            }
-        }
     }
 
     // MARK: - 消息生命周期与重试恢复

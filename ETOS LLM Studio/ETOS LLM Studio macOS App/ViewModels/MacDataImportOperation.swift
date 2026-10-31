@@ -2,20 +2,15 @@ import ETOSCore
 import Foundation
 
 enum MacDataImportOperation {
-    case snapshot(URL, password: String?)
     case package(SyncPackage)
 
     func apply(using service: ChatService) async throws -> SyncMergeSummary? {
-        // 数据包与快照共用工作区屏障；磁盘、解码和合并始终离开主执行器。
-        try await Task.detached(priority: .userInitiated) { () async throws -> SyncMergeSummary? in
-            switch self {
-            case .snapshot(let url, let password):
-                try SnapshotRestoreService.restoreSnapshot(from: url, password: password)
-                return nil
-            case .package(let package):
+        switch self {
+        case .package(let package):
+            return await Task.detached(priority: .userInitiated) {
                 return await SyncEngine.apply(package: package, chatService: service)
-            }
-        }.value
+            }.value
+        }
     }
 }
 

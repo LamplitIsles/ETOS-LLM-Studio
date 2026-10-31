@@ -15,7 +15,6 @@ enum AdaptiveComposerPresentation: Equatable {
     case idle
     case editing
     case expandedText
-    case requestControls
     case speech
 }
 
@@ -55,9 +54,6 @@ extension TelegramMessageComposer {
         if inlineSpeechRecorder.phase.isActive {
             return .speech
         }
-        if isRequestControlsExpanded {
-            return .requestControls
-        }
         if isExpandedComposer {
             return .expandedText
         }
@@ -70,7 +66,7 @@ extension TelegramMessageComposer {
     @ViewBuilder
     var adaptiveComposerContent: some View {
         Group {
-            if #available(iOS 26.0, *), viewModel.enableLiquidGlass {
+            if #available(iOS 26.0, *), appConfig.enableLiquidGlass {
                 GlassEffectContainer(spacing: 8) {
                     adaptiveGlassComposerRow
                 }
@@ -79,24 +75,12 @@ extension TelegramMessageComposer {
             }
         }
         .onAppear {
-            adaptiveRefreshRequestControls()
             adaptiveRefreshSendableText()
-        }
-        .onChange(of: viewModel.selectedModel?.id) { _, _ in
-            adaptiveRefreshRequestControls()
         }
     }
 
     private var adaptiveComposerRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if adaptiveShowsAttachmentButton {
-                attachmentMenuButton(size: adaptiveControlSize)
-                    .transition(
-                        accessibilityReduceMotion ? .opacity : .scale(scale: 0.82, anchor: .trailing)
-                            .combined(with: .opacity)
-                    )
-            }
-
             adaptiveCenterContainer(participatesInGlassContainer: false)
 
             if adaptiveShowsInlineActionButton {
@@ -126,18 +110,6 @@ extension TelegramMessageComposer {
     @available(iOS 26.0, *)
     private var adaptiveGlassComposerRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if adaptiveShowsAttachmentButton {
-                attachmentMenuButton(
-                    size: adaptiveControlSize,
-                    participatesInGlassContainer: true
-                )
-                    .glassEffectID("adaptive-attachment", in: adaptiveGlassNamespace)
-                    .transition(
-                        accessibilityReduceMotion ? .opacity : .scale(scale: 0.82, anchor: .trailing)
-                            .combined(with: .opacity)
-                    )
-            }
-
             adaptiveCenterContainer(participatesInGlassContainer: true)
                 .glassEffectID("adaptive-center", in: adaptiveGlassNamespace)
 
@@ -167,15 +139,8 @@ extension TelegramMessageComposer {
         }
     }
 
-    private var adaptiveShowsAttachmentButton: Bool {
-        adaptivePresentation != .expandedText
-            && adaptivePresentation != .requestControls
-            && adaptivePresentation != .speech
-    }
-
     private var adaptiveShowsInlineActionButton: Bool {
         adaptivePresentation != .expandedText
-            && adaptivePresentation != .requestControls
     }
 
     // 多行态改由 overlay 承载发送按钮，避免它参与横向测量并挤窄输入框。
@@ -187,13 +152,11 @@ extension TelegramMessageComposer {
     private func adaptiveCenterContainer(
         participatesInGlassContainer: Bool
     ) -> some View {
-        let cornerRadius = adaptivePresentation == .requestControls
-            ? CGFloat(24)
-            : adaptiveControlSize / 2
+        let cornerRadius = adaptiveControlSize / 2
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
         if #available(iOS 26.0, *),
-           viewModel.enableLiquidGlass,
+           appConfig.enableLiquidGlass,
            participatesInGlassContainer {
             adaptiveCenterForeground(shape: shape)
                 .background(shape.fill(glassOverlayColor))
@@ -212,15 +175,6 @@ extension TelegramMessageComposer {
         shape: RoundedRectangle
     ) -> some View {
         VStack(spacing: 0) {
-            if adaptivePresentation == .requestControls {
-                adaptiveRequestControlsPanel
-                    .transition(accessibilityReduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-
-                Divider()
-                    .padding(.horizontal)
-                    .transition(.opacity)
-            }
-
             if adaptivePresentation == .speech {
                 adaptiveSpeechContent
                     .transition(accessibilityReduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
@@ -234,57 +188,6 @@ extension TelegramMessageComposer {
         .contentShape(shape)
     }
 
-    var adaptiveRequestControlsPanel: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 8) {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(.tint)
-
-                    Text(NSLocalizedString("请求控制", comment: ""))
-                        .etFont(.headline)
-
-                    Spacer()
-
-                    Text(adaptiveModelName)
-                        .etFont(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                if let selectedModel = viewModel.selectedModel {
-                    if adaptiveRequestControls.isEmpty && viewModel.currentSession == nil {
-                        Text(NSLocalizedString("当前模型没有可用的请求控制。", comment: ""))
-                            .etFont(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if !adaptiveRequestControls.isEmpty {
-                        VStack(spacing: 14) {
-                            ChatRequestBodyControlRows(
-                                runnableModel: selectedModel,
-                                controls: adaptiveRequestControls
-                            )
-                        }
-                    }
-                } else {
-                    Text(NSLocalizedString("请先激活一个聊天模型。", comment: ""))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding()
-        }
-        .scrollIndicators(.hidden)
-        .frame(height: adaptiveRequestControlsPanelHeight)
-    }
-
-    private var adaptiveRequestControlsPanelHeight: CGFloat {
-        let maximumHeight = min(UIScreen.main.bounds.height * 0.38, 340)
-        let estimatedContentHeight = 82 + CGFloat(adaptiveRequestControls.count) * 68
-        return min(maximumHeight, max(124, estimatedContentHeight))
-    }
-
     private var adaptiveInputStrip: some View {
         let targetHeight = adaptivePresentation == .expandedText
             ? adaptiveExpandedInputHeight
@@ -294,11 +197,6 @@ extension TelegramMessageComposer {
             adaptiveTextEditor
 
             HStack(spacing: 0) {
-                if adaptiveShowsRequestControlsButton {
-                    adaptiveRequestControlsButton
-                        .transition(accessibilityReduceMotion ? .opacity : .scale(scale: 0.8).combined(with: .opacity))
-                }
-
                 Spacer(minLength: 0)
 
                 if adaptiveShowsSpeechButton {
@@ -309,8 +207,7 @@ extension TelegramMessageComposer {
             .frame(height: adaptiveControlSize, alignment: .top)
         }
         .frame(minHeight: adaptiveControlSize, idealHeight: targetHeight, maxHeight: targetHeight)
-        .animation(adaptiveComposerAnimation, value: adaptiveShowsRequestControlsButton)
-        .animation(adaptiveComposerAnimation, value: viewModel.enableSpeechInput)
+        .animation(adaptiveComposerAnimation, value: composerSupportsSpeech)
     }
 
     private var adaptiveTextEditor: some View {
@@ -341,26 +238,15 @@ extension TelegramMessageComposer {
                     .allowsHitTesting(false)
             }
         }
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                if isRequestControlsExpanded {
-                    adaptiveBeginEditing()
-                }
-            }
-        )
-    }
-
-    var adaptiveShowsRequestControlsButton: Bool {
-        !adaptiveRequestControls.isEmpty && adaptivePresentation != .expandedText
     }
 
     private var adaptiveShowsSpeechButton: Bool {
-        viewModel.enableSpeechInput && adaptivePresentation != .expandedText
+        composerSupportsSpeech && adaptivePresentation != .expandedText
     }
 
     // 只为实际显示的内置按钮预留边距，多行态把横向空间完整还给正文。
     private var adaptiveTextLeadingInset: CGFloat {
-        adaptiveShowsRequestControlsButton ? adaptiveControlSize : compactTextEdgeInset
+        compactTextEdgeInset
     }
 
     private var adaptiveTextTrailingInset: CGFloat {
@@ -376,22 +262,6 @@ extension TelegramMessageComposer {
         )
         let rawHeight = UIScreen.main.bounds.height * 0.3
         return max(160 * fontScale, min(rawHeight, 360 * fontScale))
-    }
-
-    private var adaptiveRequestControlsButton: some View {
-        Button(action: adaptiveToggleRequestControls) {
-            Image(systemName: "slider.horizontal.3")
-                .etFont(.system(size: 15, weight: .semibold))
-                .foregroundStyle(
-                    adaptivePresentation == .requestControls
-                        ? Color.accentColor
-                        : TelegramColors.attachButtonColor
-                )
-                .frame(width: adaptiveControlSize, height: adaptiveControlSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(ComposerPressButtonStyle())
-        .accessibilityLabel(NSLocalizedString("请求控制", comment: ""))
     }
 
     private var adaptiveSpeechButton: some View {
@@ -521,7 +391,7 @@ extension TelegramMessageComposer {
         .buttonStyle(
             ComposerPressButtonStyle(
                 usesSystemGlassFeedback: participatesInGlassContainer
-                    && viewModel.enableLiquidGlass
+                    && appConfig.enableLiquidGlass
             )
         )
         .disabled(adaptiveActionIsDisabled)
@@ -540,7 +410,6 @@ extension TelegramMessageComposer {
             .frame(width: size, height: size)
         let emphasizesAction = (isSending && !adaptiveHasContent)
             || adaptiveHasContent
-            || (viewModel.canQuickRetryLatestMessage && !inlineSpeechRecorder.phase.isActive)
 
         if embeddedInCard {
             label
@@ -552,7 +421,7 @@ extension TelegramMessageComposer {
                     }
                 }
         } else if #available(iOS 26.0, *),
-           viewModel.enableLiquidGlass,
+           appConfig.enableLiquidGlass,
            participatesInGlassContainer {
             label
                 .background(Circle().fill(adaptiveGlassActionFill))
@@ -570,47 +439,31 @@ extension TelegramMessageComposer {
             return Color.red.opacity(0.85 * 0.82)
         }
         if adaptiveHasContent {
-            let fill = adaptiveRecognizedSlashCommand != nil || viewModel.canSendMessage
+            let fill = composerCanSend
                 ? TelegramColors.sendButtonColor
                 : Color.primary.opacity(0.12)
             return fill.opacity(0.82)
-        }
-        if viewModel.canQuickRetryLatestMessage,
-           !inlineSpeechRecorder.phase.isActive {
-            return TelegramColors.sendButtonColor.opacity(0.82)
         }
         return glassOverlayColor
     }
 
     private var adaptiveHasContent: Bool {
         adaptiveHasSendableText
-            || viewModel.pendingAudioAttachment != nil
-            || !viewModel.pendingImageAttachments.isEmpty
-            || !viewModel.pendingFileAttachments.isEmpty
     }
 
     private var adaptiveActionIconName: String {
         if isSending && !adaptiveHasContent {
             return "stop.fill"
         }
-        if adaptiveHasContent {
-            return "arrow.up"
-        }
-        if viewModel.canQuickRetryLatestMessage, !inlineSpeechRecorder.phase.isActive {
-            return "arrow.clockwise"
-        }
         return "arrow.up"
     }
 
     private var adaptiveActionForegroundColor: Color {
-        if isSending && !adaptiveHasContent
-            || (viewModel.canQuickRetryLatestMessage
-                && !adaptiveHasContent
-                && !inlineSpeechRecorder.phase.isActive) {
+        if isSending && !adaptiveHasContent {
             return .white
         }
         if adaptiveHasContent {
-            return adaptiveRecognizedSlashCommand != nil || viewModel.canSendMessage
+            return composerCanSend
                 ? .white
                 : Color.primary.opacity(0.55)
         }
@@ -623,13 +476,10 @@ extension TelegramMessageComposer {
             actionCircleBackground(fill: Color.red.opacity(0.85))
         } else if adaptiveHasContent {
             actionCircleBackground(
-                fill: viewModel.canSendMessage
-                    || adaptiveRecognizedSlashCommand != nil
+                fill: composerCanSend
                     ? TelegramColors.sendButtonColor
                     : Color.primary.opacity(0.12)
             )
-        } else if viewModel.canQuickRetryLatestMessage, !inlineSpeechRecorder.phase.isActive {
-            actionCircleBackground(fill: TelegramColors.sendButtonColor)
         } else {
             glassCircleBackground
         }
@@ -639,30 +489,20 @@ extension TelegramMessageComposer {
         if isSendActionPending {
             return true
         }
+        if adaptiveHasContent {
+            return !composerCanSend
+        }
         if inlineSpeechRecorder.phase.isActive, !isSending {
             return true
         }
-        return !isSending
-            && adaptiveHasContent
-            && adaptiveRecognizedSlashCommand == nil
-            && !viewModel.canSendMessage
+        return false
     }
 
     private var adaptiveActionAccessibilityLabel: String {
         if isSending && !adaptiveHasContent {
             return NSLocalizedString("停止生成", comment: "")
         }
-        if viewModel.canQuickRetryLatestMessage,
-           !adaptiveHasContent,
-           !inlineSpeechRecorder.phase.isActive {
-            return NSLocalizedString("重试", comment: "")
-        }
         return NSLocalizedString("发送", comment: "")
-    }
-
-    private var adaptiveModelName: String {
-        viewModel.selectedModel?.model.displayName
-            ?? NSLocalizedString("选择模型", comment: "")
     }
 
     private var adaptiveSpeechDuration: String {
@@ -670,28 +510,8 @@ extension TelegramMessageComposer {
         return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 
-    func adaptiveToggleRequestControls() {
-        let willExpand = !isRequestControlsExpanded
-        if willExpand {
-            adaptiveRefreshRequestControls()
-        }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(adaptiveComposerAnimation) {
-            focus.wrappedValue = false
-            isExpandedComposer = false
-            isRequestControlsExpanded = willExpand
-        }
-    }
-
-    private func adaptiveCloseRequestControls() {
-        withAnimation(adaptiveComposerAnimation) {
-            isRequestControlsExpanded = false
-        }
-    }
-
     private func adaptiveBeginEditing() {
         withAnimation(adaptiveComposerAnimation) {
-            isRequestControlsExpanded = false
             focus.wrappedValue = true
         }
     }
@@ -699,7 +519,6 @@ extension TelegramMessageComposer {
     func adaptiveStartSpeechInput() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(adaptiveComposerAnimation) {
-            isRequestControlsExpanded = false
             isExpandedComposer = false
             focus.wrappedValue = false
         }
@@ -711,9 +530,6 @@ extension TelegramMessageComposer {
             stopAction()
         } else if adaptiveHasContent {
             adaptiveSubmitContent()
-        } else if viewModel.canQuickRetryLatestMessage {
-            adaptiveCloseRequestControls()
-            viewModel.quickRetryLatestMessage()
         } else {
             adaptiveBeginEditing()
         }
@@ -737,25 +553,9 @@ extension TelegramMessageComposer {
     }
 
     private func adaptiveSubmitContent() {
-        guard adaptiveRecognizedSlashCommand != nil || viewModel.canSendMessage else { return }
-        if let command = adaptiveRecognizedSlashCommand {
-            adaptiveCloseRequestControls()
-            performSelectedSlashCommand(command)
-        } else if sendAction() {
-            adaptiveCloseRequestControls()
-            // 捕获已消费草稿，在同一发送事件交接输入状态，不等后续 onChange 再收起空框。
+        guard composerCanSend else { return }
+        if sendAction() {
             isExpandedComposer = false
-            adaptiveHasSendableText = false
-        }
-    }
-
-    private func adaptiveRefreshRequestControls() {
-        let controls = viewModel.selectedModel?.model.requestBodyControls.filter(\.isEnabled) ?? []
-        adaptiveRequestControls = controls
-        if controls.isEmpty, isRequestControlsExpanded {
-            withAnimation(adaptiveComposerAnimation) {
-                isRequestControlsExpanded = false
-            }
         }
     }
 

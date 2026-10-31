@@ -13,9 +13,7 @@ extension ThirdPartyImportService {
         let rootURL: URL
         if isDirectory(fileURL) {
             guard let foundURL = findETOSPackageFile(inDirectory: fileURL) else {
-                throw ThirdPartyImportError.unsupportedBackupFormat(
-                    reason: NSLocalizedString("未在目录中找到 ETOS 可识别的 .elsbackup 快照或 JSON 导出包。", comment: "ETOS import missing export package")
-                )
+                throw ThirdPartyImportError.noImportableContent
             }
             rootURL = foundURL
         } else {
@@ -23,14 +21,11 @@ extension ThirdPartyImportService {
         }
 
         if isETOSSnapshotFile(rootURL) {
-            let request = try SnapshotRestoreRequest(copying: rootURL)
-            throw request
+            throw ThirdPartyImportError.invalidJSON
         }
 
         if isLikelyCompressedBackup(rootURL) {
-            throw ThirdPartyImportError.unsupportedBackupFormat(
-                reason: NSLocalizedString("ETOS 数据包支持 .elsbackup 快照和旧版 .json 导出，请不要选择 .zip / .bak。", comment: "ETOS import compressed backup unsupported")
-            )
+            throw ThirdPartyImportError.invalidJSON
         }
 
         guard let data = try? Data(contentsOf: rootURL) else {
@@ -41,9 +36,7 @@ extension ThirdPartyImportService {
         }
 
         guard let package = try? SyncPackageTransferService.decodePackage(from: data) else {
-            throw ThirdPartyImportError.unsupportedBackupFormat(
-                reason: NSLocalizedString("文件不是可识别的 ETOS 数据包或 .elsbackup 快照。", comment: "ETOS import unrecognized package")
-            )
+            throw ThirdPartyImportError.noImportableContent
         }
         guard !package.options.isEmpty else {
             throw ThirdPartyImportError.noImportableContent
@@ -59,17 +52,9 @@ extension ThirdPartyImportService {
             options: [.skipsHiddenFiles]
         )
 
-        var firstSnapshot: URL?
         var firstJSON: URL?
         while let fileURL = enumerator?.nextObject() as? URL {
             if isDirectory(fileURL) { continue }
-            if isETOSSnapshotFile(fileURL) {
-                if fileURL.lastPathComponent.hasPrefix("ETOS-Snapshot-") {
-                    return fileURL
-                }
-                firstSnapshot = firstSnapshot ?? fileURL
-                continue
-            }
             guard fileURL.pathExtension.lowercased() == "json" else { continue }
             if fileURL.lastPathComponent.hasPrefix("ETOS-数据导出-") {
                 firstJSON = fileURL
@@ -78,7 +63,7 @@ extension ThirdPartyImportService {
             firstJSON = firstJSON ?? fileURL
         }
 
-        return firstSnapshot ?? firstJSON
+        return firstJSON
     }
 
     static func isETOSSnapshotFile(_ fileURL: URL) -> Bool {

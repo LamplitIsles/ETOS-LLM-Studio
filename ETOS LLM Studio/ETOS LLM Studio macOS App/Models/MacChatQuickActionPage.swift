@@ -1,22 +1,16 @@
 import ETOSCore
 import Foundation
 
-/// 其余四种入口分别使用原生临时聊天菜单、Settings 窗口和已有脉冲/压缩工作表。
+/// 其余入口使用原生临时聊天菜单和 Settings 窗口。
 enum MacChatQuickActionPage: String, CaseIterable, Identifiable, Sendable {
-    case toolCenter, usageAnalytics, agentSkills, shortcuts
-    case roleplay, extendedFeatures, browser, localTerminal
+    case usageAnalytics, shortcuts, extendedFeatures, localTerminal
     var id: String { rawValue }
-    var requiresSession: Bool { self == .browser }
 
     var action: ChatQuickAction {
         switch self {
-        case .toolCenter: .toolCenter
         case .usageAnalytics: .usageAnalytics
-        case .agentSkills: .agentSkills
         case .shortcuts: .shortcuts
-        case .roleplay: .roleplay
         case .extendedFeatures: .extendedFeatures
-        case .browser: .browser
         case .localTerminal: .localTerminal
         }
     }
@@ -25,6 +19,4 @@ enum MacChatQuickActionPage: String, CaseIterable, Identifiable, Sendable {
 struct MacChatQuickActionDestination: Identifiable {
     let id = UUID()
     let page: MacChatQuickActionPage
-    let sessionID: UUID?
-    let isTemporary: Bool
 }

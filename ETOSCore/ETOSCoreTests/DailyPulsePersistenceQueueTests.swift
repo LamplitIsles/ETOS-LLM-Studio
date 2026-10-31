@@ -104,25 +104,6 @@ struct DailyPulsePersistenceQueueTests {
         await queue.flush()
         #expect(recorder.values == [1, 2])
     }
-
-    @Test("等待设置就绪保留现有时间标识与已通知日期")
-    func existingDeliverySettingsRemainCompatible() async throws {
-        // 沿用显式 suite 的历史测试入口，不访问用户数据库或申请通知权限。
-        let suite = "DailyPulsePersistenceQueueTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let times = [DailyPulseDeliveryTime(hour: 9, minute: 15), DailyPulseDeliveryTime(hour: 20, minute: 0)]
-        let data = try JSONEncoder().encode(times)
-        defaults.set(String(decoding: data, as: UTF8.self), forKey: "dailyPulse.delivery.times")
-        defaults.set(true, forKey: "dailyPulse.delivery.reminderEnabled")
-        defaults.set("2026-10-08", forKey: "dailyPulse.delivery.lastReadyDayKey")
-        let coordinator = DailyPulseDeliveryCoordinator(defaults: defaults)
-        await coordinator.waitForSettingsLoad()
-        #expect(!coordinator.isLoading)
-        #expect(coordinator.deliveryTimes == times)
-        #expect(coordinator.reminderEnabled)
-        #expect(coordinator.lastReadyDayKey == "2026-10-08")
-    }
 }
 
 /// 测试队列的实际执行顺序；锁只保护极小内存记录，不在主线程等待后台任务。

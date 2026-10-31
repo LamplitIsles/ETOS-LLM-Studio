@@ -97,7 +97,7 @@ struct MacSessionLibrarySidebar: View {
                 .readOnly("temporary_chat", label: NSLocalizedString("临时对话", comment: ""), value: { .bool(workspace.isTemporaryChat) })
             ]
         )
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
     }
 
     private func countedLabel(_ title: String, symbol: String, count: Int) -> some View {

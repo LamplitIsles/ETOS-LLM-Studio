@@ -8583,6 +8583,7 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 "会话已不存在，内容未发送。" = "La conversación ya no existe. El contenido no se ha enviado.";
 "会话已切换，请查看原会话后再继续。" = "La conversación ha cambiado. Revisa la conversación original antes de continuar.";
 "此功能暂不可用。" = "Esta función no está disponible temporalmente.";
+"分享的内容暂时无法发送到聊天。" = "El contenido compartido aún no se puede enviar al chat.";
 "该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。" = "Esta solicitud ya está registrada, pero su resultado es desconocido. Revisa la conversación antes de continuar.";
 "内容已添加到当前会话，发送结果请在应用中查看。" = "El contenido se añadió a la conversación actual. Consulta el resultado en la aplicación.";
 "工具执行结果未知" = "Resultado de la herramienta desconocido";
@@ -8605,3 +8606,50 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 "还没有积累到可复用的外部信号历史。" = "Aún no hay historial reutilizable de señales externas.";
 "支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。" = "Admite sesiones OpenMinis de iOS/Android en JSON/ZIP, Provider JSON y Skill ZIP. Selecciona las habilidades para importarlas; no se ejecutan scripts ni se instalan dependencias.";
 "自动删除只作用于以后删除的会话。" = "La eliminación automática solo se aplica a las conversaciones que se eliminen a partir de ahora.";
+
+
+/* CFL chat */
+"无法保存聊天状态。" = "No se pudo guardar el estado del chat.";
+"无法确认文字是否已保存在本机。请先检查保存状态。" = "No se pudo confirmar que el texto se guardara en este dispositivo. Comprueba su estado.";
+"文字已保存在本机，请在下方处理。" = "El texto está guardado en este dispositivo. Revísalo abajo.";
+"文字未发送，可以继续编辑。" = "El texto no se ha enviado. Puedes seguir editándolo.";
+"当前回复已结束。" = "La respuesta ya ha terminado.";
+"连接已断开，请等待重新连接。" = "Conexión interrumpida. Esperando para reconectar.";
+"连接被拒绝，请检查服务设置。" = "Conexión rechazada. Comprueba la configuración del servicio.";
+"请检查文字内容和长度。" = "Comprueba el contenido y la longitud del mensaje.";
+"无法读取服务返回的数据。" = "No se pudieron leer los datos devueltos por el servicio.";
+"会话已改变，请检查文字状态。" = "La conversación ha cambiado. Comprueba el estado del mensaje.";
+"操作未完成，请稍后再试。" = "La acción no se completó. Inténtalo más tarde.";
+"加载更早的消息" = "Cargar mensajes anteriores";
+"还没有消息。" = "Todavía no hay mensajes.";
+"连接设置" = "Configuración de conexión";
+"移除此记录？" = "¿Eliminar este registro?";
+"检查状态" = "Comprobar estado";
+"停止回复" = "Detener respuesta";
+"请先设置连接地址。" = "Configura primero una dirección de conexión.";
+"正在回复" = "Respondiendo";
+"正在连接…" = "Conectando…";
+"连接已断开，正在重连。" = "Conexión interrumpida. Reconectando…";
+"输入消息" = "Escribe un mensaje";
+"属于其他会话" = "De otra conversación";
+"复制到输入框" = "Copiar al cuadro de texto";
+"移除此记录" = "Eliminar registro";
+"输入框已有文字，请先处理。" = "El cuadro de texto ya contiene texto. Atiéndelo primero.";
+"发送结果尚未确认，请勿重复发送。" = "El envío no está confirmado. No lo vuelvas a enviar todavía.";
+"文字尚未发送。" = "El texto aún no se ha enviado.";
+"已接收，等待显示消息。" = "Recibido; esperando a que aparezca el mensaje.";
+"发送失败，可以复制文字后重新编辑。" = "Falló el envío. Copia el texto para editarlo de nuevo.";
+"请输入不含路径或凭据的 HTTPS 地址。" = "Introduce una dirección HTTPS sin ruta ni credenciales.";
+"服务地址" = "Dirección del servicio";
+"请使用仅限可信网络访问的服务地址。" = "Usa una dirección del servicio accesible solo en una red de confianza.";
+
+"重新连接" = "Reconectar";
+"连接已断开。" = "Conexión interrumpida.";
+
+"会话：%@" = "Conversación: %@";
+"切换到此服务" = "Cambiar a este servicio";
+
+"支持导入旧版 ETOS JSON 数据包。" = "Importa paquetes de datos JSON de versiones anteriores de ETOS.";
+"使用系统语音识别，确认后将文字放入输入框。" = "Usa el reconocimiento de voz del sistema y añade el texto al campo de entrada tras confirmarlo.";
+"当前聊天暂不支持发送文件或图片。" = "Este chat aún no admite el envío de archivos o imágenes.";
+"预览会读取分享链接并在本地生成描述，不会运行快捷指令。" = "La vista previa lee los enlaces compartidos y genera descripciones localmente, sin ejecutar atajos.";

@@ -230,26 +230,6 @@ struct GeminiInteractionsAdapterTests {
         #expect(!AppLogRedactor.sanitizeResponseBodyForLog(stream, exposesMessageFields: false).contains("private-signature"))
     }
 
-    @Test("向导真实流式消费保留签名，零参数工具无需等待参数分片")
-    func guideStreamRetainsNativeSteps() async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [GeminiInteractionsGuideURLProtocol.self]
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-        let service = ChatService(urlSession: session)
-        let model = runnable(baseURL: "https://interactions.test/v1")
-        let message = try await service.generateGuideChatCompletion(
-            messages: [ChatMessage(role: .user, content: "查看当前页面")],
-            tools: [.init(name: "inspect_page", description: "读取页面", parameters: .dictionary(["type": .string("object")]))],
-            runnableModel: model, onContentDelta: { _ in }
-        )
-        #expect(message.toolCalls?.first?.arguments == "{}")
-        let replay = try #require(adapter.replaySteps(for: message))
-        #expect(replay.first?["signature"] as? String == "guide-signature")
-        #expect(replay.last?["id"] as? String == "guide-call")
-        #expect((replay.last?["arguments"] as? [String: String])?.isEmpty == true)
-    }
-
     @Test("基础地址保留网关版本，模型列表不过滤仅支持新协议的模型")
     func discoveryAndAuthentication() throws {
         for (base, path) in [("https://generativelanguage.googleapis.com", "/v1/interactions"),
@@ -343,35 +323,4 @@ struct GeminiInteractionsAdapterTests {
         #expect(updated.models.first?.apiFormatOverride == "gemini-interactions")
         #expect(updated.models.first?.inputModalities.contains(.video) == true)
     }
-}
-
-private final class GeminiInteractionsGuideURLProtocol: URLProtocol {
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "interactions.test" }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url,
-              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/event-stream"]) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-            return
-        }
-        let stream = """
-        data: {"event_type":"step.start","index":0,"step":{"type":"thought"}}
-
-        data: {"event_type":"step.delta","index":0,"delta":{"type":"thought_signature","signature":"guide-signature"}}
-
-        data: {"event_type":"step.start","index":1,"step":{"type":"function_call","name":"inspect_page","id":"guide-call"}}
-
-        data: {"event_type":"step.stop","index":1}
-
-        data: {"event_type":"interaction.completed","interaction":{"id":"interaction-guide","status":"requires_action"}}
-
-
-        """
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(stream.utf8))
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }

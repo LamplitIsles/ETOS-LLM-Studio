@@ -92,7 +92,7 @@ struct MacTranscriptExportView: View {
                     .readOnly("up_to_message", label: NSLocalizedString("导出", comment: ""), value: { .bool(target.upToMessageID != nil) })
                 ])
         }
-        .frame(minWidth: 540, minHeight: 480).modifier(MacGuideInspector())
+        .frame(minWidth: 540, minHeight: 480).modifier(MacAppLockOverlayModifier())
         .interactiveDismissDisabled(exporting)
     }
 

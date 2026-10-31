@@ -49,7 +49,7 @@ struct MacTemporaryChatIntroductionView: View {
                 })]
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(width: 420, height: 340)
     }
 }

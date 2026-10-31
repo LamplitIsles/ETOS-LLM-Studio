@@ -95,7 +95,7 @@ struct MacRequestBodyEditor: View {
                     .readOnly("valid", label: NSLocalizedString("配置有效", comment: ""), value: { .bool(!busy && error == nil) })
                 ])
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 580, minHeight: 580)
         .sheet(isPresented: $editsParameters) {
             MacRequestParameterEditor(pageID: GuidePageID(rawValue: "mac-request-body-\(modelID)-parameters"), parameters: draft.parameters,

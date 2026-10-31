@@ -133,6 +133,16 @@ public final class AppConfigStore: ObservableObject {
     @Published public var cloudSyncAutoSyncEnabled: Bool { didSet { write(.cloudSyncAutoSyncEnabled, cloudSyncAutoSyncEnabled) } }
     @Published public var syncBackupS3Enabled: Bool { didSet { write(.syncBackupS3Enabled, syncBackupS3Enabled) } }
     @Published public var syncBackupUploadEndpoint: String { didSet { write(.syncBackupUploadEndpoint, syncBackupUploadEndpoint) } }
+    @Published public var cflHTTPSOrigin: String {
+        didSet {
+            guard let origin = CFLHTTPSOrigin.normalized(cflHTTPSOrigin) else {
+                cflHTTPSOrigin = oldValue
+                return
+            }
+            if cflHTTPSOrigin != origin { cflHTTPSOrigin = origin }
+            write(.cflHTTPSOrigin, origin)
+        }
+    }
     @Published public var syncBackupS3Region: String { didSet { write(.syncBackupS3Region, syncBackupS3Region) } }
     @Published public var syncBackupS3Bucket: String { didSet { write(.syncBackupS3Bucket, syncBackupS3Bucket) } }
     @Published public var syncBackupS3KeyPrefix: String { didSet { write(.syncBackupS3KeyPrefix, syncBackupS3KeyPrefix) } }
@@ -508,6 +518,7 @@ public final class AppConfigStore: ObservableObject {
         cloudSyncAutoSyncEnabled = Self.boolValue(.cloudSyncAutoSyncEnabled, userDefaults: userDefaults)
         syncBackupS3Enabled = Self.boolValue(.syncBackupS3Enabled, userDefaults: userDefaults)
         syncBackupUploadEndpoint = Self.textValue(.syncBackupUploadEndpoint, userDefaults: userDefaults)
+        cflHTTPSOrigin = CFLHTTPSOrigin.normalized((initialValues[.cflHTTPSOrigin]?.anyValue as? String) ?? "") ?? ""
         syncBackupS3Region = Self.textValue(.syncBackupS3Region, userDefaults: userDefaults)
         syncBackupS3Bucket = Self.textValue(.syncBackupS3Bucket, userDefaults: userDefaults)
         syncBackupS3KeyPrefix = Self.textValue(.syncBackupS3KeyPrefix, userDefaults: userDefaults)

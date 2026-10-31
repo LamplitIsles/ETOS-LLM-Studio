@@ -377,17 +377,21 @@ public final class UpdateTimelineManager: ObservableObject {
             updated.rateLimitResetAt = payload.rateLimitResetAt
             updated.status = status(for: updated)
 
+            #if !os(iOS)
             if shouldClearSummary(from: state, to: updated) {
                 updated.summaryKey = nil
                 updated.summaryText = nil
                 updated.summaryGeneratedAt = nil
             }
+            #endif
             state = updated
             persistState()
             await notifyUpdateIfNeeded()
+            #if !os(iOS)
             if autoSummaryEnabled {
                 await generateSummaryIfNeeded()
             }
+            #endif
         } catch is CancellationError {
             return
         } catch {
@@ -509,9 +513,11 @@ public final class UpdateTimelineManager: ObservableObject {
                 updated.storedPreviousSHA = current
                 updated.storedCurrentSHA = realSHA
                 updated.notifiedRemoteSHA = nil
+                #if !os(iOS)
                 updated.summaryKey = nil
                 updated.summaryText = nil
                 updated.summaryGeneratedAt = nil
+                #endif
             }
         }
         updated.status = status(for: updated)

@@ -44,7 +44,7 @@ struct MacToolWidgetView: View {
                     }
                 }
             }
-            .modifier(MacGuideInspector())
+            .modifier(MacAppLockOverlayModifier())
             .frame(minWidth: 520, minHeight: 420)
         }
     }

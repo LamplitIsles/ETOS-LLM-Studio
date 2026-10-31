@@ -10,7 +10,6 @@ import SwiftUI
 import ETOSCore
 
 struct ExtendedFeaturesView: View {
-    @EnvironmentObject private var viewModel: ChatViewModel
     @ObservedObject private var achievementCenter = AchievementCenter.shared
     @State private var isShowingIntroDetails = false
 
@@ -20,8 +19,7 @@ struct ExtendedFeaturesView: View {
                 settingsIntroCard(
                     title: NSLocalizedString("拓展功能", comment: "Extended features intro title"),
                     summary: NSLocalizedString("这里集中放置进阶能力、调试入口与跨平台工具集成。", comment: "Extended features intro summary"),
-                    details: NSLocalizedString("拓展功能说明正文", comment: "Extended features intro details")
-                        + "\n\n" + NSLocalizedString("batch.entry.description", value: "Open Batch Tasks to send independent requests together and retrieve results later. The provider must support the Batch API.", comment: "批量任务入口说明"),
+                    details: NSLocalizedString("拓展功能说明正文", comment: "Extended features intro details"),
                     isExpanded: $isShowingIntroDetails
                 )
             }
@@ -45,31 +43,6 @@ struct ExtendedFeaturesView: View {
                 }
             } footer: {
                 Text(NSLocalizedString("用简短命令快速打开聊天操作和设置页面。", comment: "Slash commands entry footer"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
-                    BatchTasksView()
-                } label: {
-                    SettingsListIconLabel("batch.title", icon: .batch)
-                }
-                .accessibilityIdentifier("batch.tasks.entry")
-            } footer: {
-                Text(NSLocalizedString("batch.help.summary", value: "Send independent requests together and collect their results later.", comment: "批量介绍摘要"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
-                    BackgroundGenerationSettingsView()
-                } label: {
-                    SettingsListIconLabel("后台生成", icon: .backgroundGeneration)
-                }
-            } footer: {
-                Text(NSLocalizedString("减少切换 App 后长回复中断。", comment: "后台生成入口说明"))
                     .etFont(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -100,49 +73,12 @@ struct ExtendedFeaturesView: View {
 
             Section {
                 NavigationLink {
-                    ImageGenerationFeatureView()
-                        .environmentObject(viewModel)
-                } label: {
-                    SettingsListIconLabel("图片相册", icon: .imageGeneration)
-                }
-            } footer: {
-                Text(NSLocalizedString("查看当前会话中助手返回的图片。", comment: "图片相册入口说明"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
-                    LocalDebugView()
-                } label: {
-                    SettingsListIconLabel("远程文件访问", icon: .remoteFiles)
-                }
-            } footer: {
-                Text(NSLocalizedString("通过局域网远程访问和管理 Documents 目录，方便命令行工具操作。", comment: "远程文件访问入口说明"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
                     StorageManagementView()
                 } label: {
                     SettingsListIconLabel("存储管理", icon: .storage)
                 }
             } footer: {
                 Text(NSLocalizedString("管理本地模型、文件与缓存占用。", comment: "存储管理入口说明"))
-                    .etFont(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                NavigationLink {
-                    ThirdPartyImportView()
-                } label: {
-                    SettingsListIconLabel("导入数据", icon: .importData)
-                }
-            } footer: {
-                Text(NSLocalizedString("支持导入 ETOS 数据包，也可从 Cherry Studio 等来源迁移。", comment: "导入数据入口说明"))
                     .etFont(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -160,13 +96,13 @@ struct ExtendedFeaturesView: View {
         .guideSettingsPageContext(
             id: "settings-extended-features",
             title: NSLocalizedString("拓展功能", comment: "拓展功能向导上下文标题"),
-            documents: [GuideDocumentReference(id: "settings-extended", title: "Extended Features")] + BatchGuideSupport.documents,
+            documents: [GuideDocumentReference(id: "settings-extended", title: "Extended Features")],
             isActive: !isShowingIntroDetails,
             settings: [
                 .readOnly("available_sections", label: NSLocalizedString("可用功能入口", comment: "向导设置字段"), value: {
                     .array([
-                        "slash_commands", "batch_tasks", "background_generation", "app_lock", "feedback", "local_models",
-                        "image_gallery", "remote_files", "storage", "data_import", "connection_exceptions"
+                        "slash_commands", "app_lock", "feedback", "local_models",
+                        "remote_files", "storage", "connection_exceptions"
                     ].map(JSONValue.string))
                 })
             ]
@@ -209,7 +145,7 @@ struct ExtendedFeaturesView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .guideSettingsPageContext(
                     id: "settings-extended-introduction", title: title,
-                    documents: [GuideDocumentReference(id: "settings-extended", title: "Extended Features")] + BatchGuideSupport.documents,
+                    documents: [GuideDocumentReference(id: "settings-extended", title: "Extended Features")],
                     settings: [.readOnly("read_only", label: NSLocalizedString("使用说明", comment: ""), value: { .bool(true) })]
                 )
             }

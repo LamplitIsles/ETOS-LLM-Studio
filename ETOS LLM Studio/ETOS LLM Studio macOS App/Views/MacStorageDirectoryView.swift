@@ -75,7 +75,7 @@ struct MacStorageDirectoryView: View {
                 if file.isSQLite { MacStorageSQLiteView(file: file, isActive: active) }
                 else { MacStorageFilePreviewView(file: file, isActive: active) }
             }
-            .modifier(MacGuideInspector()).frame(minWidth: 680, minHeight: 500)
+            .modifier(MacAppLockOverlayModifier()).frame(minWidth: 680, minHeight: 500)
         }
         .guideSettingsPageContext(id: GuidePageID(rawValue: "mac-storage-directory-\(location.id)-\(model.revision)"),
             title: NSLocalizedString("文件", comment: ""), documents: [GuideDocumentReference(id: "storage-management", title: "Storage Management")],

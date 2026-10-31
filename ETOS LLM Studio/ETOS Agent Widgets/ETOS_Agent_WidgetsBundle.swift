@@ -13,7 +13,6 @@ struct ETOS_Agent_WidgetsBundle: WidgetBundle {
     var body: some Widget {
         ETOSNewAgentWidget()
         ETOSRecentTasksWidget()
-        ETOSDailyPulseWidget()
         ETOS_Agent_WidgetsLiveActivity()
     }
 }

@@ -28,9 +28,7 @@ extension ShortcutToolManager {
                 await progress(ShortcutPreparationProgress(completed: index, total: initial.tools.count, currentName: candidate.name))
                 var tool = await self.enrichToolWithDeepScanIfNeeded(candidate)
                 try Task.checkCancellation()
-                tool.generatedDescription = await ChatService.shared.generateShortcutToolDescription(
-                    toolName: tool.name, metadata: tool.metadata, source: tool.source
-                ) ?? self.makeGeneratedDescription(for: tool)
+                tool.generatedDescription = self.makeGeneratedDescription(for: tool)
                 try Task.checkCancellation()
                 prepared.append(tool)
             }
@@ -45,9 +43,9 @@ extension ShortcutToolManager {
     public func prepareDescriptionInBackground(for tool: ShortcutToolDefinition) async throws -> String {
         let task = Task.detached(priority: .utility) {
             try Task.checkCancellation()
-            let generated = await ChatService.shared.generateShortcutToolDescription(toolName: tool.name, metadata: tool.metadata, source: tool.source)
+            let generated = self.makeGeneratedDescription(for: tool)
             try Task.checkCancellation()
-            return generated ?? self.makeGeneratedDescription(for: tool)
+            return generated
         }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }

@@ -65,7 +65,7 @@ struct MacRoleplayRegexEditor: View {
                 settings: guideSettings
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .interactiveDismissDisabled(saving)
         .onChange(of: workspace.isRestoringData) { _, restoring in if restoring { dismiss() } }
         .frame(minWidth: 560, minHeight: 600)

@@ -50,7 +50,7 @@ struct MacWorkspaceView: View {
                 }
         }
         .navigationSplitViewStyle(.balanced)
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
     }
 
     private var presentedContent: some View {
@@ -78,8 +78,7 @@ struct MacWorkspaceView: View {
             }
         }
         .networkConnectionApprovalHost(isEnabled: workspace.canManageLocalModels)
-        .modifier(MacDailyPulseHost(model: workspace.dailyPulse))
-        .modifier(MacFeedbackNotificationHost(dailyPulse: workspace.dailyPulse, isBlocked: sessionToEdit != nil || sessionToRoleplay != nil || sessionToAnalyze != nil || sessionToDelete != nil))
+        .modifier(MacFeedbackNotificationHost(isBlocked: sessionToEdit != nil || sessionToRoleplay != nil || sessionToAnalyze != nil || sessionToDelete != nil))
         .modifier(MacAppInformationHost())
         .overlay { if appLock.state == .locked { AppLockOverlayView() } }
     }

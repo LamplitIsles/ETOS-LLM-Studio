@@ -122,7 +122,7 @@ struct MacModelEditor: View {
                 settings: guideSettings
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 500, minHeight: 600)
         .interactiveDismissDisabled(isBusy)
         .onDisappear { saveTask?.cancel() }

@@ -14,12 +14,8 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
     case model
     case sessions
     case settings
-    case tools
-    case daily
     case usage
-    case skills
     case shortcuts
-    case roleplay
     case features
     case temporary
     case retry
@@ -36,14 +32,8 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
         switch self {
         case .sessions:
             return ["history"]
-        case .tools:
-            return ["tool"]
-        case .daily:
-            return ["pulse"]
         case .usage:
             return ["stats"]
-        case .skills:
-            return ["skill"]
         case .features:
             return ["extensions"]
         case .temporary:
@@ -63,18 +53,10 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "历史会话管理"
         case .settings:
             return "设置"
-        case .tools:
-            return "工具中心"
-        case .daily:
-            return "每日脉冲"
         case .usage:
             return "用量统计"
-        case .skills:
-            return "Agent Skills"
         case .shortcuts:
             return "快捷指令工具集成"
-        case .roleplay:
-            return "角色扮演与酒馆兼容"
         case .features:
             return "拓展功能"
         case .temporary:
@@ -98,18 +80,10 @@ public enum ChatSlashCommand: String, CaseIterable, Hashable, Identifiable, Send
             return "clock"
         case .settings:
             return "gearshape"
-        case .tools:
-            return "wrench"
-        case .daily:
-            return "sparkles"
         case .usage:
             return "chart.bar"
-        case .skills:
-            return "star"
         case .shortcuts:
             return "bolt"
-        case .roleplay:
-            return "theatermasks"
         case .features:
             return "ellipsis.circle"
         case .temporary:

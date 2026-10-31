@@ -11,9 +11,6 @@ import Foundation
 import ETOSCore
 
 enum SettingsNavigationDestination: Hashable, Identifiable {
-    case modelManagement
-    case dailyPulse
-    case dailyPulseCard(runID: UUID, cardID: UUID)
     case feedbackCenter
     case feedbackIssue(issueNumber: Int)
     case achievementJournal
@@ -21,12 +18,6 @@ enum SettingsNavigationDestination: Hashable, Identifiable {
 
     var id: String {
         switch self {
-        case .modelManagement:
-            return "modelManagement"
-        case .dailyPulse:
-            return "dailyPulse"
-        case .dailyPulseCard(let runID, let cardID):
-            return "dailyPulseCard-\(runID.uuidString)-\(cardID.uuidString)"
         case .feedbackCenter:
             return "feedbackCenter"
         case .feedbackIssue(let issueNumber):
@@ -40,11 +31,9 @@ enum SettingsNavigationDestination: Hashable, Identifiable {
 }
 
 private enum CoreSettingsNavigationDestination: Hashable {
-    case modelManagement
-    case conversation
-    case output
+    case connection
+    case speechOutput
     case display
-    case sync
 }
 
 struct SettingsCoreGridLayout: Equatable {
@@ -76,11 +65,10 @@ struct SettingsView: View {
     )
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @EnvironmentObject private var viewModel: ChatViewModel
+    @EnvironmentObject private var cflModel: CFLConversationModel
     @ObservedObject private var announcementManager = AnnouncementManager.shared
-    @ObservedObject private var pulseManager = DailyPulseManager.shared
-    @ObservedObject private var deliveryCoordinator = DailyPulseDeliveryCoordinator.shared
     @ObservedObject private var appConfig = AppConfigStore.shared
+    @ObservedObject private var background = ChatBackgroundModel.shared
     @Binding private var requestedDestination: SettingsNavigationDestination?
     @State private var coreSettingsDestination: CoreSettingsNavigationDestination?
     @State private var settingsResearchTask: Task<Void, Never>?
@@ -99,43 +87,10 @@ struct SettingsView: View {
             }
 
             Section(NSLocalizedString("拓展能力", comment: "设置拓展能力分组")) {
-                let speechModelBinding = Binding<RunnableModel?>(
-                    get: { viewModel.selectedSpeechModel },
-                    set: { viewModel.setSelectedSpeechModel($0) }
-                )
-                NavigationLink {
-                    ToolCenterView()
-                        .environmentObject(viewModel)
-                } label: {
-                    SettingsListIconLabel("工具中心", icon: .toolCenter)
-                }
-
-                NavigationLink {
-                    DailyPulseView()
-                        .environmentObject(viewModel)
-                } label: {
-                    HStack(spacing: 8) {
-                        settingsListIcon(.dailyPulse)
-                        Text(NSLocalizedString("每日脉冲", comment: "每日脉冲入口标题"))
-                        Spacer()
-                        if let status = dailyPulseEntryStatusText {
-                            Text(status)
-                                .etFont(.caption)
-                                .foregroundStyle(pulseManager.hasUnviewedTodayRun ? .blue : .secondary)
-                        }
-                    }
-                }
-
                 NavigationLink {
                     UsageAnalyticsView()
                 } label: {
                     SettingsListIconLabel("用量统计", icon: .usageAnalytics)
-                }
-
-                NavigationLink {
-                    AgentSkillsView()
-                } label: {
-                    SettingsListIconLabel("Agent Skills", icon: .agentSkills)
                 }
 
                 NavigationLink {
@@ -145,48 +100,24 @@ struct SettingsView: View {
                 }
 
                 NavigationLink {
-                    RoleplaySettingsView().environmentObject(viewModel)
-                } label: {
-                    SettingsListIconLabel("角色扮演与酒馆兼容", icon: .roleplay)
-                }
-
-                NavigationLink {
                     SpeechInputSettingsView(
-                        enableSpeechInput: $viewModel.enableSpeechInput,
-                        selectedSpeechModel: speechModelBinding,
-                        sendSpeechAsAudio: $viewModel.sendSpeechAsAudio,
+                        enableSpeechInput: $appConfig.enableSpeechInput,
                         audioRecordingFormat: Binding(
-                            get: { viewModel.audioRecordingFormat },
-                            set: { viewModel.audioRecordingFormat = $0 }
-                        ),
-                        speechModels: viewModel.speechModels
+                            get: { AudioRecordingFormat(rawValue: appConfig.audioRecordingFormat) ?? .aac },
+                            set: { appConfig.audioRecordingFormat = $0.rawValue }
+                        )
                     )
                 } label: {
                     SettingsListIconLabel("语音输入", icon: .speechInput)
                 }
 
                 NavigationLink {
-                    BrowserAgentFeatureView(sessionID: viewModel.currentSession?.id)
-                } label: {
-                    SettingsListIconLabel("Browser Agent", icon: .browserAgent)
-                }
-
-                NavigationLink {
                     ExtendedFeaturesView()
-                        .environmentObject(viewModel)
                 } label: {
                     SettingsListIconLabel("拓展功能", icon: .extendedFeatures)
                 }
             }
 
-            Section(NSLocalizedString("帮助", comment: "设置帮助分组")) {
-                NavigationLink {
-                    GuideSettingsView()
-                        .environmentObject(viewModel)
-                } label: {
-                    SettingsListIconLabel("页面向导", icon: .guide)
-                }
-            }
             // MARK: - 公告通知 Section
             if announcementManager.shouldShowInSettings {
                 Section(NSLocalizedString("系统公告", comment: "系统公告分组")) {
@@ -216,80 +147,43 @@ struct SettingsView: View {
             }
         }
         .navigationTitle(NSLocalizedString("设置", comment: "设置页标题"))
-        .guidePageContext(
-            descriptor: GuidePageDescriptor(
-                id: "settings-root",
-                title: NSLocalizedString("设置", comment: "设置页向导上下文标题"),
-                documents: [GuideDocumentReference(id: "guide-overview", title: "Guide Overview"),
-                    GuideDocumentReference(id: "settings-extended", title: "Extended Features")]
-            ),
-            isFallback: true,
-            snapshot: {
-                GuidePageSnapshot(fields: [
-                    "provider_count": GuideSnapshotField(
-                        label: NSLocalizedString("提供商数量", comment: "设置页向导快照字段"),
-                        value: .int(viewModel.providers.count),
-                        access: .readOnly
-                    ),
-                    "selected_model": GuideSnapshotField(
-                        label: NSLocalizedString("当前模型", comment: "设置页向导快照字段"),
-                        value: .string(viewModel.selectedModel?.model.displayName ?? ""),
-                        access: .readOnly
-                    )
-                ])
-            }
-        )
         .onAppear {
             scheduleSettingsResearchAchievementIfNeeded()
         }
         .onDisappear {
             cancelSettingsResearchAchievementTask()
         }
-        .onChange(of: viewModel.enableMarkdown) { _, isEnabled in
-            if !isEnabled, viewModel.enableAdvancedRenderer {
-                viewModel.enableAdvancedRenderer = false
+        .onChange(of: appConfig.enableMarkdown) { _, isEnabled in
+            if !isEnabled, appConfig.enableAdvancedRenderer {
+                appConfig.enableAdvancedRenderer = false
             }
         }
         .navigationDestination(item: $coreSettingsDestination) { destination in
             switch destination {
-            case .modelManagement:
-                ProviderListView()
-                    .environmentObject(viewModel)
-            case .conversation:
-                advancedSettingsView(destination: .conversation)
-            case .output:
-                advancedSettingsView(destination: .output)
+            case .connection:
+                CFLConnectionSettingsView(model: cflModel)
+            case .speechOutput:
+                TTSSettingsView()
             case .display:
                 DisplaySettingsView(
-                    enableMarkdown: $viewModel.enableMarkdown,
-                    enableBackground: $viewModel.enableBackground,
-                    backgroundBlur: $viewModel.backgroundBlur,
-                    backgroundOpacity: $viewModel.backgroundOpacity,
-                    enableAutoRotateBackground: $viewModel.enableAutoRotateBackground,
-                    currentBackgroundImage: $viewModel.currentBackgroundImage,
-                    backgroundContentMode: $viewModel.backgroundContentMode,
-                    enableLiquidGlass: $viewModel.enableLiquidGlass,
-                    enableChatTopBlurFade: $viewModel.enableChatTopBlurFade,
-                    enableAdvancedRenderer: $viewModel.enableAdvancedRenderer,
-                    enableAutoReasoningPreview: $viewModel.enableAutoReasoningPreview,
-                    enableNoBubbleUI: $viewModel.enableNoBubbleUI,
-                    allBackgrounds: viewModel.backgroundImages
+                    enableMarkdown: $appConfig.enableMarkdown,
+                    enableBackground: $background.enableBackground,
+                    backgroundBlur: $background.backgroundBlur,
+                    backgroundOpacity: $background.backgroundOpacity,
+                    enableAutoRotateBackground: $background.enableAutoRotateBackground,
+                    currentBackgroundImage: $background.currentBackgroundImage,
+                    backgroundContentMode: $background.backgroundContentMode,
+                    enableLiquidGlass: $appConfig.enableLiquidGlass,
+                    enableChatTopBlurFade: $appConfig.enableChatTopBlurFade,
+                    enableAdvancedRenderer: $appConfig.enableAdvancedRenderer,
+                    enableAutoReasoningPreview: $appConfig.enableAutoReasoningPreview,
+                    enableNoBubbleUI: $appConfig.enableNoBubbleUI,
+                    allBackgrounds: background.backgroundImages
                 )
-            case .sync:
-                DeviceSyncSettingsView()
             }
         }
         .navigationDestination(item: $requestedDestination) { destination in
             switch destination {
-            case .modelManagement:
-                ProviderListView()
-                    .environmentObject(viewModel)
-            case .dailyPulse:
-                DailyPulseView()
-                    .environmentObject(viewModel)
-            case .dailyPulseCard(let runID, let cardID):
-                DailyPulseView(initialRunID: runID, initialCardID: cardID)
-                    .environmentObject(viewModel)
             case .feedbackCenter:
                 FeedbackCenterView()
             case .feedbackIssue(let issueNumber):
@@ -314,33 +208,21 @@ struct SettingsView: View {
 
         return LazyVGrid(columns: columns) {
             coreSettingsButton(
-                titleKey: "模型管理",
-                icon: .providerManagement,
-                destination: .modelManagement,
+                titleKey: "连接设置",
+                icon: .connection,
+                destination: .connection,
                 preferredHeight: layout.preferredCardHeight
             )
             coreSettingsButton(
-                titleKey: "会话",
-                icon: .conversationSettings,
-                destination: .conversation,
-                preferredHeight: layout.preferredCardHeight
-            )
-            coreSettingsButton(
-                titleKey: "输出",
-                icon: .outputSettings,
-                destination: .output,
+                titleKey: "语音朗读（TTS）",
+                icon: .speechOutput,
+                destination: .speechOutput,
                 preferredHeight: layout.preferredCardHeight
             )
             coreSettingsButton(
                 titleKey: "背景与视觉",
                 icon: .display,
                 destination: .display,
-                preferredHeight: layout.preferredCardHeight
-            )
-            coreSettingsButton(
-                titleKey: "同步与备份",
-                icon: .sync,
-                destination: .sync,
                 preferredHeight: layout.preferredCardHeight
             )
         }
@@ -416,50 +298,53 @@ struct SettingsView: View {
         settingsResearchTask = nil
     }
 
-    private var dailyPulseEntryStatusText: String? {
-        if pulseManager.isPreparingTodayPulse {
-            return NSLocalizedString("准备中", comment: "每日脉冲准备中状态")
-        }
-        if pulseManager.hasUnviewedTodayRun {
-            return NSLocalizedString("今日待查看", comment: "每日脉冲今日未查看状态")
-        }
-        if pulseManager.todayRun != nil {
-            return NSLocalizedString("今日已生成", comment: "每日脉冲今日已生成状态")
-        }
-        if pulseManager.tomorrowRun != nil {
-            return NSLocalizedString("明日已准备", comment: "每日脉冲明日已准备状态")
-        }
-        if deliveryCoordinator.reminderEnabled {
-            return String(
-                format: NSLocalizedString("%d 张卡片", comment: "Daily Pulse configured card count"),
-                deliveryCoordinator.deliveryTimes.count
-            )
-        }
-        return nil
-    }
+}
 
-    private func advancedSettingsView(
-        destination: ModelAdvancedSettingsDestination
-    ) -> ModelAdvancedSettingsView {
-        ModelAdvancedSettingsView(
-            aiTemperature: $viewModel.aiTemperature,
-            aiTopP: $viewModel.aiTopP,
-            aiTemperatureEnabled: $viewModel.aiTemperatureEnabled,
-            aiTopPEnabled: $viewModel.aiTopPEnabled,
-            maxChatHistory: $viewModel.maxChatHistory,
-            lazyLoadMessageCount: $viewModel.lazyLoadMessageCount,
-            enableStreaming: $viewModel.enableStreaming,
-            enableResponseSpeedMetrics: $viewModel.enableResponseSpeedMetrics,
-            enableOpenAIStreamIncludeUsage: $viewModel.enableOpenAIStreamIncludeUsage,
-            enableAutoSessionNaming: $viewModel.enableAutoSessionNaming,
-            enableReasoningSummary: $viewModel.enableReasoningSummary,
-            currentSession: $viewModel.currentSession,
-            includeSystemTimeInPrompt: $viewModel.includeSystemTimeInPrompt,
-            systemTimeInjectionPosition: $viewModel.systemTimeInjectionPosition,
-            enablePeriodicTimeLandmark: $viewModel.enablePeriodicTimeLandmark,
-            periodicTimeLandmarkIntervalMinutes: $viewModel.periodicTimeLandmarkIntervalMinutes,
-            destination: destination
-        )
+private struct CFLConnectionSettingsView: View {
+    @ObservedObject var model: CFLConversationModel
+    @ObservedObject private var config = AppConfigStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var originDraft = ""
+    @State private var invalidOrigin = false
+    @State private var isReady = false
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("https://", text: $originDraft)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if invalidOrigin {
+                    Text(NSLocalizedString("请输入不含路径或凭据的 HTTPS 地址。", comment: "CFL invalid origin"))
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text(NSLocalizedString("服务地址", comment: "CFL origin"))
+            } footer: {
+                Text(NSLocalizedString("请使用仅限可信网络访问的服务地址。", comment: "CFL trusted network"))
+            }
+            .disabled(!isReady)
+        }
+        .navigationTitle(NSLocalizedString("连接设置", comment: "CFL connection settings"))
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(NSLocalizedString("保存", comment: "Save")) {
+                    guard let origin = CFLHTTPSOrigin.normalized(originDraft), !origin.isEmpty else {
+                        invalidOrigin = true
+                        return
+                    }
+                    Task { await model.connect(origin: origin) }
+                    dismiss()
+                }
+                .disabled(!isReady || model.busy || model.uncertain != nil)
+            }
+        }
+        .task {
+            await config.waitForPersistentStoreLoaded()
+            originDraft = config.cflHTTPSOrigin
+            isReady = true
+        }
     }
 }
 
@@ -469,13 +354,14 @@ struct SettingsListIcon {
 }
 
 extension SettingsListIcon {
+    static let connection = SettingsListIcon(systemName: "network", backgroundColor: .blue)
+    static let speechOutput = SettingsListIcon(systemName: "speaker.wave.2", backgroundColor: .purple)
     static let chatQuickAction = SettingsListIcon(systemName: "ellipsis.circle", backgroundColor: .indigo)
     static let slashCommands = SettingsListIcon(systemName: "terminal", backgroundColor: .indigo)
     static let providerManagement = SettingsListIcon(systemName: "cube", backgroundColor: .orange)
     static let conversationSettings = SettingsListIcon(systemName: "bubble.left.and.bubble.right", backgroundColor: .indigo)
     static let promptSettings = SettingsListIcon(systemName: "text.quote", backgroundColor: .purple)
     static let outputSettings = SettingsListIcon(systemName: "waveform", backgroundColor: .blue)
-    static let toolCenter = SettingsListIcon(systemName: "wrench", backgroundColor: .teal)
     static let dailyPulse = SettingsListIcon(systemName: "sparkles", backgroundColor: .yellow)
     static let usageAnalytics = SettingsListIcon(systemName: "chart.bar", backgroundColor: .cyan)
     static let batch = SettingsListIcon(systemName: "tray.full", backgroundColor: .blue)
@@ -497,7 +383,6 @@ extension SettingsListIcon {
     static let about = SettingsListIcon(systemName: "info.circle", backgroundColor: .gray)
     static let achievementJournal = SettingsListIcon(systemName: "star", backgroundColor: .yellow)
     static let feedback = SettingsListIcon(systemName: "bubble", backgroundColor: .blue)
-    static let remoteFiles = SettingsListIcon(systemName: "folder", backgroundColor: .gray)
     static let storage = SettingsListIcon(systemName: "archivebox", backgroundColor: .teal)
     static let importData = SettingsListIcon(systemName: "arrow.down", backgroundColor: .green)
     static let conversationMemory = SettingsListIcon(systemName: "person", backgroundColor: .mint)

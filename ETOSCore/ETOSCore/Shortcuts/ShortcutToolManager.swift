@@ -34,22 +34,7 @@ public final class ShortcutToolManager: ObservableObject {
 
     @Published public internal(set) var tools: [ShortcutToolDefinition] = []
     @Published public private(set) var lastImportSummary: ShortcutImportSummary?
-    @Published public private(set) var lastExecutionResult: ShortcutToolExecutionResult? {
-        didSet {
-            guard let lastExecutionResult else { return }
-            DailyPulseManager.shared.appendExternalSignal(
-                DailyPulseExternalSignal(
-                    source: .shortcutResult,
-                    title: lastExecutionResult.toolName,
-                    preview: lastExecutionResult.success
-                        ? (lastExecutionResult.result ?? NSLocalizedString("执行成功，但没有返回可展示内容。", comment: "Shortcut tool empty success signal preview"))
-                        : (lastExecutionResult.errorMessage ?? NSLocalizedString("执行失败，但没有返回详细错误。", comment: "Shortcut tool empty failure signal preview")),
-                    capturedAt: lastExecutionResult.finishedAt,
-                    isFailure: !lastExecutionResult.success
-                )
-            )
-        }
-    }
+    @Published public private(set) var lastExecutionResult: ShortcutToolExecutionResult?
     @Published public private(set) var lastErrorMessage: String?
     @Published public private(set) var lastOfficialTemplateStatusMessage: String?
     @Published public private(set) var lastOfficialTemplateRunSucceeded: Bool?
@@ -212,19 +197,6 @@ public final class ShortcutToolManager: ObservableObject {
         persistCurrentTools()
     }
 
-    public func regenerateDescriptionWithLLM(for id: UUID) async {
-        guard let index = tools.firstIndex(where: { $0.id == id }) else { return }
-        let tool = tools[index]
-        let generated = await ChatService.shared.generateShortcutToolDescription(
-            toolName: tool.name,
-            metadata: tool.metadata,
-            source: tool.source
-        ) ?? makeGeneratedDescription(for: tool)
-        tools[index].generatedDescription = generated
-        tools[index].updatedAt = Date()
-        persistCurrentTools()
-    }
-
     public func deleteTool(id: UUID) {
         tools.removeAll { $0.id == id }
         persistCurrentTools()
@@ -367,13 +339,8 @@ public final class ShortcutToolManager: ObservableObject {
                     updateImportProgress(currentName: tool.name, increment: 0)
                     tool = await enrichToolWithDeepScanIfNeeded(tool)
                     try ensureImportNotCancelled()
-                    let generated = await ChatService.shared.generateShortcutToolDescription(
-                        toolName: tool.name,
-                        metadata: tool.metadata,
-                        source: tool.source
-                    ) ?? tool.generatedDescription
+                    tool.generatedDescription = makeGeneratedDescription(for: tool)
                     try ensureImportNotCancelled()
-                    tool.generatedDescription = generated
                     tool.updatedAt = Date()
                     nextTools[index] = tool
                     updateImportProgress(currentName: nil, increment: 1)

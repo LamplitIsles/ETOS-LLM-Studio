@@ -110,7 +110,7 @@ struct MacChatExecutionPreview: View {
                 }
                 .navigationTitle(mode.displayName)
                 .toolbar { Button(NSLocalizedString("关闭", comment: "")) { details = false } }
-            }.frame(minWidth: 560, minHeight: 400).modifier(MacGuideInspector())
+            }.frame(minWidth: 560, minHeight: 400).modifier(MacAppLockOverlayModifier())
         }
     }
 

@@ -22,12 +22,10 @@ struct MessageActionSheet: View {
     let displayCurrentVersionIndex: Int
     let canRetry: Bool
     let canPrefill: Bool
-    let canRewrite: Bool
     let allMessages: [ChatMessage]
     let providers: [Provider]
     @ObservedObject var ttsManager: TTSManager
     let onEdit: (ChatMessage) -> Void
-    let onRewrite: (ChatMessage) -> Void
     let onRetry: (ChatMessage) -> Void
     let onPrefill: (ChatMessage) -> Void
     let onShowFullError: (String) -> Void
@@ -41,7 +39,6 @@ struct MessageActionSheet: View {
     let onConvertMarkdownImages: (ChatMessage) -> Void
     let onRetryVideoAnalysis: (ChatMessage, String) async throws -> VideoAnalysisResult
     let onAskAI: (String, ChatMessage) -> Void
-    let onRewriteSelection: (MessageRewriteSelectionTarget, ChatMessage) -> Void
     let onSelectMultiple: (ChatMessage) -> Void
     let onJumpToMessage: (Int) -> Bool
 
@@ -130,14 +127,6 @@ struct MessageActionSheet: View {
                         }
                     }
 
-                    if canRewrite {
-                        Button {
-                            onRewrite(message)
-                        } label: {
-                            Label(NSLocalizedString("重写", comment: "Rewrite message action"), systemImage: "wand.and.stars")
-                        }
-                    }
-
                     if canRetry {
                         Button {
                             onRetry(message)
@@ -179,12 +168,7 @@ struct MessageActionSheet: View {
                     }
 
                     NavigationLink {
-                        MessageTextSelectionView(
-                            message: message,
-                            onRewriteSelection: canRewrite ? { target in
-                                onRewriteSelection(target, message)
-                            } : nil
-                        ) { selectedText in
+                        MessageTextSelectionView(message: message) { selectedText in
                             onAskAI(selectedText, message)
                         }
                     } label: {
@@ -687,234 +671,5 @@ struct MessageVersionRow: View {
             Image(systemName: isCurrent ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
         }
-    }
-}
-
-/// 会话信息弹窗，展示基础状态与唯一标识
-struct SessionPickerInfoSheet: View {
-    let payload: SessionPickerInfoPayload
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section(NSLocalizedString("会话概览", comment: "")) {
-                    LabeledContent(NSLocalizedString("名称", comment: "")) {
-                        Text(payload.session.name)
-                    }
-                    LabeledContent(NSLocalizedString("状态", comment: "")) {
-                        Text(payload.isCurrent ? NSLocalizedString("当前会话", comment: "") : NSLocalizedString("历史会话", comment: ""))
-                            .foregroundStyle(payload.isCurrent ? Color.accentColor : Color.secondary)
-                    }
-                    LabeledContent(NSLocalizedString("消息数量", comment: "")) {
-                        Text(String(format: NSLocalizedString("%d 条", comment: ""), payload.messageCount))
-                    }
-                }
-
-                Section(NSLocalizedString("唯一标识", comment: "")) {
-                    Text(payload.session.id.uuidString)
-                        .etFont(.footnote.monospaced())
-                        .textSelection(.enabled)
-                }
-            }
-            .navigationTitle(NSLocalizedString("会话信息", comment: ""))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(NSLocalizedString("完成", comment: "")) { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-struct SessionPickerRow: View {
-    let session: ChatSession
-    let isCurrent: Bool
-    let isRunning: Bool
-    let isEditing: Bool
-    @Binding var draftName: String
-    let searchSummary: String?
-    let tags: [SessionTag]
-
-    let onCommit: (String) -> Void
-    let onSelect: () -> Void
-    let onRename: () -> Void
-    let onBranch: (Bool) -> Void
-    let onDeleteLastMessage: () -> Void
-    let onDelete: () -> Void
-    let onCancelRename: () -> Void
-    let onInfo: () -> Void
-    let onExport: (ChatTranscriptExportFormat, Bool, Bool) -> Void
-
-    @FocusState private var focused: Bool
-    @State private var showsUsageAnalytics = false
-
-    var body: some View {
-        SessionRowCard(isCurrent: isCurrent) {
-            rowContent
-        }
-        .contextMenu {
-            contextMenuContent
-        }
-        .sheet(isPresented: $showsUsageAnalytics) {
-            NavigationStack {
-                SessionUsageAnalyticsView(sessionID: session.id, sessionName: session.name)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var rowContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if isEditing {
-                TextField(NSLocalizedString("会话名称", comment: ""), text: $draftName)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focused)
-                    .onSubmit {
-                        commit()
-                    }
-                    .onAppear { focused = true }
-
-                HStack {
-                    Button(NSLocalizedString("保存", comment: "")) {
-                        commit()
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button(NSLocalizedString("取消", comment: "")) {
-                        onCancelRename()
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(.top, 4)
-            } else {
-                SessionListRowContentBody(
-                    title: session.name,
-                    subtitle: sessionPickerSubtitle,
-                    footnote: nil,
-                    tags: tags,
-                    isCurrent: isCurrent,
-                    isRunning: isRunning
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onSelect()
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var contextMenuContent: some View {
-        Button {
-            showsUsageAnalytics = true
-        } label: {
-            Label(NSLocalizedString("session_usage.title", value: "Conversation Analytics", comment: "会话分析统计入口"), systemImage: "chart.bar.xaxis")
-        }
-
-        Button {
-            onSelect()
-        } label: {
-            Label(NSLocalizedString("切换到此会话", comment: ""), systemImage: "checkmark.circle")
-        }
-
-        Button {
-            onRename()
-        } label: {
-            Label(NSLocalizedString("重命名", comment: ""), systemImage: "pencil")
-        }
-
-        Button {
-            onBranch(false)
-        } label: {
-            Label(NSLocalizedString("创建提示词分支", comment: ""), systemImage: "arrow.branch")
-        }
-
-        Button {
-            onBranch(true)
-        } label: {
-            Label(NSLocalizedString("复制历史创建分支", comment: ""), systemImage: "arrow.triangle.branch")
-        }
-
-        Button {
-            onDeleteLastMessage()
-        } label: {
-            Label(NSLocalizedString("删除最后一条消息", comment: ""), systemImage: "delete.backward")
-        }
-
-        Button {
-            onInfo()
-        } label: {
-            Label(NSLocalizedString("查看会话信息", comment: ""), systemImage: "info.circle")
-        }
-
-        Menu {
-            sessionExportReasoningMenu(includeReasoning: true)
-            sessionExportReasoningMenu(includeReasoning: false)
-        } label: {
-            Label(NSLocalizedString("导出会话", comment: ""), systemImage: "square.and.arrow.up")
-        }
-
-        Button(role: .destructive) {
-            onDelete()
-        } label: {
-            Label(NSLocalizedString("删除会话", comment: ""), systemImage: "trash")
-        }
-    }
-
-    @ViewBuilder
-    private func sessionExportReasoningMenu(includeReasoning: Bool) -> some View {
-        Menu(includeReasoning
-            ? NSLocalizedString("包含思考", comment: "")
-            : NSLocalizedString("不包含思考", comment: "")) {
-            Menu(NSLocalizedString("包含系统提示词", comment: "")) {
-                sessionTextExportButtons(includeReasoning: includeReasoning, includeSystemPrompt: true)
-            }
-            Menu(NSLocalizedString("不包含系统提示词", comment: "")) {
-                sessionTextExportButtons(includeReasoning: includeReasoning, includeSystemPrompt: false)
-            }
-            Button {
-                onExport(.png, includeReasoning, false)
-            } label: {
-                Label(NSLocalizedString("PNG", comment: "Export format"), systemImage: "photo")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func sessionTextExportButtons(includeReasoning: Bool, includeSystemPrompt: Bool) -> some View {
-        ForEach([ChatTranscriptExportFormat.pdf, .markdown, .text], id: \.self) { format in
-            Button {
-                onExport(format, includeReasoning, includeSystemPrompt)
-            } label: {
-                Label(format.displayName, systemImage: sessionExportIconName(for: format))
-            }
-        }
-    }
-
-    private func sessionExportIconName(for format: ChatTranscriptExportFormat) -> String {
-        switch format {
-        case .pdf:
-            return "doc.richtext"
-        case .markdown:
-            return "number.square"
-        case .text:
-            return "doc.plaintext"
-        case .png:
-            return "photo"
-        }
-    }
-
-    private var sessionPickerSubtitle: String? {
-        if let searchSummary, !searchSummary.isEmpty {
-            return searchSummary
-        }
-        return nil
-    }
-
-    private func commit() {
-        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        onCommit(trimmed)
     }
 }

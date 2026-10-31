@@ -82,15 +82,6 @@ extension ChatService {
         return activatedVideoAnalysisModels.first { $0.id == identifier }
     }
 
-    func resolveSelectedSpeechModel() -> RunnableModel? {
-        let storedIdentifier = Persistence.readAppConfigText(key: AppConfigKey.speechModelIdentifier.rawValue) ?? ""
-        if !storedIdentifier.isEmpty,
-           let match = activatedSpeechModels.first(where: { $0.id == storedIdentifier }) {
-            return match
-        }
-        return activatedSpeechModels.first
-    }
-
     func orderedRunnableModels(from models: [RunnableModel]) -> [RunnableModel] {
         guard !models.isEmpty else { return [] }
         let currentIDs = models.map(\.id)

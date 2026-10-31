@@ -38,6 +38,7 @@ let package = Package(
             name: "ETOSApp",
             dependencies: [
                 "ETOSCore",
+                .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),

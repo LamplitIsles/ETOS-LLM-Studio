@@ -55,6 +55,6 @@ struct MacSlashCommandModelPicker: View {
                     .readOnly("save_mode", label: NSLocalizedString("编辑方式", comment: ""), value: { .string("immediate") })
                 ])
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 480, minHeight: 280)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 480, minHeight: 280)
     }
 }

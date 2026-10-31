@@ -64,29 +64,25 @@ final class MacLinuxJobsModel: ObservableObject {
 
 enum MacLinuxJobAction: Sendable {
     case job(UUID)
-    case agent(UUID)
     case session(UUID)
     case all
 
     var title: String {
         switch self {
         case .job: NSLocalizedString("停止任务", comment: "")
-        case .agent: NSLocalizedString("停止此 Agent", comment: "")
         case .session: NSLocalizedString("停止此会话的全部任务", comment: "")
         case .all: NSLocalizedString("停止全部本地任务", comment: "")
         }
     }
 
     var confirmation: String {
-        if case .agent = self { return NSLocalizedString("Mac Linux 停止 Agent 确认", comment: "") }
-        return NSLocalizedString("Mac Linux 停止任务确认", comment: "")
+        NSLocalizedString("Mac Linux 停止任务确认", comment: "")
     }
 
     func perform() async {
         let services = await MacLinuxServices.shared.value
         switch self {
         case .job(let id): await services.scheduler.cancel(jobID: id)
-        case .agent(let id): await ChatService.shared.stopConversationRun(id)
         case .session(let id): await services.scheduler.cancel(sessionID: id)
         case .all: await services.scheduler.cancelAll()
         }

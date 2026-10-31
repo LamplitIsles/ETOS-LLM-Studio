@@ -51,7 +51,7 @@ struct MacAppearanceScheduleEditor: View {
                 }.disabled(!available || !model.canEdit)
             }
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 480, minHeight: 380)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 480, minHeight: 380)
         .interactiveDismissDisabled(model.isSaving)
     }
 

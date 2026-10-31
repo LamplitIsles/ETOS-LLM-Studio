@@ -21,13 +21,11 @@ final class MacTTSModel: ObservableObject {
     private var writing: Task<Bool, Never>?
     private var stopping: Task<Void, Never>?
     private var exporting: Task<Void, Never>?
-    private var events: Task<Void, Never>?
     private var reading: Task<Void, Never>?
     private var readID = UUID()
     private var sessionContext = UUID()
     private var sessionID: UUID?
     private var subscriptions = Set<AnyCancellable>()
-    private let tracker = MacTTSAutoPlayTracker()
     private var exportPanel: NSSavePanel?
     private var previewOwner: UUID?
     private var isStarted = false
@@ -50,13 +48,9 @@ final class MacTTSModel: ObservableObject {
     var canEdit: Bool { isLoaded && !isLoading && !isSaving && !isSuspended && !isStopping && AppLockManager.shared.state != .locked }
     var canPlay: Bool { canEdit && !isExporting && !isExportPanelOpen }
 
-    func start(service: ChatService) {
+    func start() {
         guard !isStarted else { return }
         isStarted = true
-        service.sessionRequestStatusSubject.receive(on: DispatchQueue.main).sink { [weak self, weak service] event in
-            guard let self, !isSuspended, !isStopping, service?.currentSessionSubject.value?.id == event.sessionID else { return }
-            receive(event)
-        }.store(in: &subscriptions)
         for name in [NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification] {
             NotificationCenter.default.publisher(for: name).receive(on: DispatchQueue.main).sink { [weak self] _ in
                 self?.player.setApplicationIsInBackground(!NSApplication.shared.isActive)
@@ -175,7 +169,6 @@ final class MacTTSModel: ObservableObject {
     func showSession(_ id: UUID?) {
         guard sessionID != id else { return }
         sessionID = id; sessionContext = UUID()
-        events?.cancel()
         stop(); drainPlayback()
     }
 
@@ -206,25 +199,12 @@ final class MacTTSModel: ObservableObject {
         }
     }
 
-    private func receive(_ event: ChatService.SessionRequestStatusEvent) {
-        let previous = events, context = sessionContext, sessionID = sessionID, tracker = tracker
-        events = Task { [weak self] in
-            await previous?.value
-            guard !Task.isCancelled else { return }
-            let message = await tracker.process(event, context: context, sessionID: sessionID)
-            guard let self, !Task.isCancelled, sessionContext == context, canPlay,
-                  presentation?.snapshot.settings.autoPlayAfterAssistantResponse == true, let message else { return }
-            guard !(player.currentSpeakingMessageID == message.id && player.isSpeaking) else { return }
-            prepareRead(message.content, messageID: message.id)
-        }
-    }
-
     func stopPreview(owner: UUID) { if previewOwner == owner { stop() } }
     func stop() { readID = UUID(); reading?.cancel(); previewOwner = nil; player.stop() }
 
     func suspend() {
         isSuspended = true; epoch = UUID(); sessionContext = UUID()
-        loading?.cancel(); events?.cancel(); stop()
+        loading?.cancel(); stop()
         exportPanel?.cancel(nil); exportPanel = nil; isExportPanelOpen = false
         isLoading = false; presentation = nil; draft = .defaultValue; voices = []; error = nil
         drainPlayback()
@@ -233,12 +213,10 @@ final class MacTTSModel: ObservableObject {
     private func drainPlayback() {
         isStopping = true
         stopID = UUID()
-        let previous = stopping, player = player, id = stopID, pendingEvents = events, tracker = tracker
+        let previous = stopping, player = player, id = stopID
         stopping = Task { [weak self] in
             await previous?.value
             await player.stopAndWait(clearHistory: true)
-            await pendingEvents?.value
-            await tracker.reset()
             guard let self, stopID == id else { return }
             isStopping = false
             if !isSuspended && !isSaving && !isLoaded { reload() }
@@ -248,7 +226,7 @@ final class MacTTSModel: ObservableObject {
     func resume() { isSuspended = false; if !isLoaded && !isLoading && !isSaving && !isStopping { reload() } }
     func waitForPendingOperations() async {
         _ = await writing?.value; await loading?.value; await reading?.value
-        await events?.value; await stopping?.value; await exporting?.value
+        await stopping?.value; await exporting?.value
     }
 
     func exportAudio() {

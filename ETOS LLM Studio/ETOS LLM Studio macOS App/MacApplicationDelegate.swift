@@ -10,7 +10,6 @@ final class MacApplicationDelegate: NSObject, NSApplicationDelegate, ObservableO
     private var pendingOpenRequests: [[URL]] = []
     private var showWorkspace: (@MainActor () -> Void)?
     private var openTasks: [UUID: Task<Void, Never>] = [:]
-    private var pulseNotifications: AnyCancellable?
     private var featureNotifications: AnyCancellable?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -20,18 +19,11 @@ final class MacApplicationDelegate: NSObject, NSApplicationDelegate, ObservableO
                 guard route == .feedback || route == .achievementJournal || route == .updateTimeline, let self, !isTerminating else { return }
                 showWorkspace?()
             }
-        pulseNotifications = AppLocalNotificationCenter.shared.$pendingDailyPulseRequests.receive(on: DispatchQueue.main)
-            .sink { [weak self] requests in
-                guard !requests.isEmpty, let self, !isTerminating else { return }
-                showWorkspace?()
-            }
-
     }
 
     func attach(workspace: MacWorkspaceModel, showWorkspace: @escaping @MainActor () -> Void) {
         self.workspace = workspace; self.showWorkspace = showWorkspace
         if !isTerminating, AppLocalNotificationCenter.shared.pendingRoute == .feedback || AppLocalNotificationCenter.shared.pendingRoute == .achievementJournal || AppLocalNotificationCenter.shared.pendingRoute == .updateTimeline { showWorkspace() }
-        if !isTerminating, !AppLocalNotificationCenter.shared.pendingDailyPulseRequests.isEmpty { showWorkspace() }
         guard !isTerminating, !pendingOpenRequests.isEmpty else { return }
         let pending = pendingOpenRequests
         pendingOpenRequests.removeAll()

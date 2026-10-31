@@ -3,17 +3,14 @@
 // ============================================================================
 // ETOS LLM Studio
 //
-// 接收 HTML 卡片动作，更新变量并把发送、填入和生成请求交给聊天界面。
+// 处理 HTML 卡片的变量、消息及事件动作。
 // ============================================================================
 
 import Foundation
 
 public enum RoleplayBridgeNotification {
-    public static let requestedAction = Notification.Name("com.ETOS.roleplayBridge.requestedAction")
     public static let completedRequest = Notification.Name("com.ETOS.roleplayBridge.completedRequest")
     public static let sessionIDKey = "sessionID"
-    public static let actionKey = "action"
-    public static let textKey = "text"
     public static let eventNameKey = "eventName"
     public static let requestIDKey = "requestID"
     public static let resultKey = "result"
@@ -187,17 +184,6 @@ public enum RoleplayBridgeDispatcher {
                     RoleplayBridgeNotification.eventNameKey: name,
                     RoleplayEventBridge.argumentsKey: payload["value"] as? [Any] ?? [],
                     RoleplayEventBridge.sourceKey: payload["source"] as? String ?? ""
-                ]
-            )
-        case "send_message", "set_input", "generate":
-            NotificationCenter.default.post(
-                name: RoleplayBridgeNotification.requestedAction,
-                object: nil,
-                userInfo: [
-                    RoleplayBridgeNotification.sessionIDKey: sessionID,
-                    RoleplayBridgeNotification.actionKey: action,
-                    RoleplayBridgeNotification.textKey: payload["text"] as? String ?? "",
-                    RoleplayBridgeNotification.eventNameKey: payload["name"] as? String ?? ""
                 ]
             )
         default:

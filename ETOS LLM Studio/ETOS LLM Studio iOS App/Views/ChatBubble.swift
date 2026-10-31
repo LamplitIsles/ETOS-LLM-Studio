@@ -45,6 +45,7 @@ struct ChatBubble: View {
     let hasAutoOpenedPendingToolCall: (String) -> Bool
     let markPendingToolCallAutoOpened: (String) -> Void
     let canRetry: Bool
+    let allowsReadAloud: Bool
     let onRetry: () -> Void
     let onCopy: () -> Void
     let onSwitchToPreviousVersion: () -> Void
@@ -105,6 +106,7 @@ struct ChatBubble: View {
         hasAutoOpenedPendingToolCall: @escaping (String) -> Bool = { _ in false },
         markPendingToolCallAutoOpened: @escaping (String) -> Void = { _ in },
         canRetry: Bool = false,
+        allowsReadAloud: Bool = true,
         onRetry: @escaping () -> Void = {},
         onCopy: @escaping () -> Void = {},
         onSwitchToPreviousVersion: @escaping () -> Void,
@@ -153,6 +155,7 @@ struct ChatBubble: View {
         self.hasAutoOpenedPendingToolCall = hasAutoOpenedPendingToolCall
         self.markPendingToolCallAutoOpened = markPendingToolCallAutoOpened
         self.canRetry = canRetry
+        self.allowsReadAloud = allowsReadAloud
         self.onRetry = onRetry
         self.onCopy = onCopy
         self.onSwitchToPreviousVersion = onSwitchToPreviousVersion

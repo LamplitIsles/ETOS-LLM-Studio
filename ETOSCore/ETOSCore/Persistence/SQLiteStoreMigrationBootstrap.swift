@@ -28,7 +28,6 @@ public final class AppLaunchStateMachine: ObservableObject {
         case idle
         case waitingForDatabaseUnlock
         case preparingPersistence
-        case warmingServices
         case ready
     }
 
@@ -75,25 +74,9 @@ public final class AppLaunchStateMachine: ObservableObject {
                 return
             }
             await MainActor.run {
-                self?.phase = .warmingServices
-            }
-
-            let warmupSignpost = TelemetrySignpost.begin(.serviceWarmup)
-            await Task.detached(priority: .userInitiated) {
-                _ = ChatService.shared
-            }.value
-            TelemetrySignpost.end(warmupSignpost)
-
-            guard !Task.isCancelled else {
-                await MainActor.run {
-                    self?.bootstrapTask = nil
-                }
-                return
-            }
-            await MainActor.run {
                 self?.phase = .ready
                 self?.bootstrapTask = nil
-                self?.logger.info("启动状态机已完成持久化与服务预热。")
+                self?.logger.info("启动状态机已完成持久化准备。")
             }
             Persistence.scheduleLaunchBackupPointAfterStartupIfEnabled()
         }

@@ -8506,6 +8506,7 @@
 "会话已不存在，内容未发送。" = "The conversation no longer exists. Your message was not sent.";
 "会话已切换，请查看原会话后再继续。" = "The conversation changed. Check the original conversation before continuing.";
 "此功能暂不可用。" = "This feature is temporarily unavailable.";
+"分享的内容暂时无法发送到聊天。" = "Shared content cannot be sent to chat yet.";
 "该请求已有记录，发送结果尚未确认。请先查看会话，再决定下一步。" = "This request is already recorded, but its result is unknown. Check the conversation before proceeding.";
 "内容已添加到当前会话，发送结果请在应用中查看。" = "Content was added to the current conversation. Check the app for the sending result.";
 "工具执行结果未知" = "Tool result unknown";
@@ -8528,3 +8529,50 @@
 "还没有积累到可复用的外部信号历史。" = "No reusable external signal history has been collected yet.";
 "支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。" = "Supports OpenMinis iOS/Android session JSON/ZIP, Provider JSON and Skill ZIP. Select skills to import; scripts are not run and dependencies are not installed.";
 "自动删除只作用于以后删除的会话。" = "Automatic deletion applies only to conversations deleted from now on.";
+
+
+/* CFL chat */
+"无法保存聊天状态。" = "Unable to save chat state.";
+"无法确认文字是否已保存在本机。请先检查保存状态。" = "Could not confirm the text was saved on this device. Check its status first.";
+"文字已保存在本机，请在下方处理。" = "The text is saved on this device. Review it below.";
+"文字未发送，可以继续编辑。" = "The text was not sent. You can keep editing.";
+"当前回复已结束。" = "The reply has already ended.";
+"连接已断开，请等待重新连接。" = "Disconnected. Waiting to reconnect.";
+"连接被拒绝，请检查服务设置。" = "Connection refused. Check the service settings.";
+"请检查文字内容和长度。" = "Check the message and its length.";
+"无法读取服务返回的数据。" = "Could not read the data returned by the service.";
+"会话已改变，请检查文字状态。" = "The conversation changed. Check the message status.";
+"操作未完成，请稍后再试。" = "The action was not completed. Try again later.";
+"加载更早的消息" = "Load earlier messages";
+"还没有消息。" = "No messages yet.";
+"连接设置" = "Connection settings";
+"移除此记录？" = "Remove this record?";
+"检查状态" = "Check status";
+"停止回复" = "Stop reply";
+"请先设置连接地址。" = "Set a connection address to get started.";
+"正在回复" = "Replying";
+"正在连接…" = "Connecting…";
+"连接已断开，正在重连。" = "Disconnected. Reconnecting…";
+"输入消息" = "Message";
+"属于其他会话" = "From another conversation";
+"复制到输入框" = "Copy to composer";
+"移除此记录" = "Remove record";
+"输入框已有文字，请先处理。" = "The composer already contains text. Handle it first.";
+"发送结果尚未确认，请勿重复发送。" = "Delivery is unconfirmed. Do not send it again yet.";
+"文字尚未发送。" = "The text has not been sent.";
+"已接收，等待显示消息。" = "Received; waiting for the message to appear.";
+"发送失败，可以复制文字后重新编辑。" = "Sending failed. Copy the text to edit it again.";
+"请输入不含路径或凭据的 HTTPS 地址。" = "Enter an HTTPS address without a path or credentials.";
+"服务地址" = "Service address";
+"请使用仅限可信网络访问的服务地址。" = "Use a service address accessible only on a trusted network.";
+
+"重新连接" = "Reconnect";
+"连接已断开。" = "Disconnected.";
+
+"会话：%@" = "Conversation: %@";
+"切换到此服务" = "Switch to this service";
+
+"支持导入旧版 ETOS JSON 数据包。" = "Imports legacy ETOS JSON data packages.";
+"使用系统语音识别，确认后将文字放入输入框。" = "Uses system speech recognition and adds the text to the input after confirmation.";
+"当前聊天暂不支持发送文件或图片。" = "This chat does not support sending files or images yet.";
+"预览会读取分享链接并在本地生成描述，不会运行快捷指令。" = "Preview reads sharing links and generates descriptions locally. It does not run shortcuts.";

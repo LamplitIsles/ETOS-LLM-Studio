@@ -15,7 +15,7 @@ struct MacSessionUsageAnalyticsSheet: View {
                         Button(NSLocalizedString("关闭", comment: "")) { dismiss() }
                     }
                 }
-                .modifier(MacGuideInspector())
+                .modifier(MacAppLockOverlayModifier())
         }
         .frame(minWidth: 480, idealWidth: 560, minHeight: 480, idealHeight: 620)
     }

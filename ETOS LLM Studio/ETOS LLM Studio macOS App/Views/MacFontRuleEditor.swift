@@ -59,7 +59,7 @@ struct MacFontRuleEditor: View {
             let result = await ChatAppearanceTextColorMatcher.isValidRegularExpression(pattern)
             guard !Task.isCancelled else { return }; valid = result
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 520, minHeight: 500)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 520, minHeight: 500)
     }
     private var fields: [GuidePageSetting] {
         var fields: [GuidePageSetting] = [

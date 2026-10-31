@@ -61,7 +61,7 @@ struct MacSessionTagEditor: View {
                 ]
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .interactiveDismissDisabled(isSaving)
         .frame(minWidth: 420, minHeight: 260)
     }

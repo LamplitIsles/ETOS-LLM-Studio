@@ -51,17 +51,6 @@ public enum MCPBuiltInAppToolServer {
         if category == .linux { return [] }
         #endif
 
-        if category == .browser {
-            return BrowserAgentToolDefinitions.all.map { tool in
-                MCPToolDescription(
-                    toolId: tool.name,
-                    description: tool.description,
-                    inputSchema: tool.parameters,
-                    examples: nil
-                )
-            }
-        }
-
         if category == .deviceOperations {
             return includeUnavailablePlatformTools
                 ? MCPNativeDeviceToolDefinitions.descriptions
@@ -115,9 +104,6 @@ public enum MCPBuiltInAppToolServer {
             return .linux
         }
         #endif
-        if BrowserAgentToolDefinitions.contains(toolName) {
-            return .browser
-        }
         if MCPNativeDeviceToolDefinitions.contains(toolName) {
             return .deviceOperations
         }
@@ -172,24 +158,6 @@ public enum MCPBuiltInAppToolServer {
         try await LocalAgentFileToolExecutor.shared.execute(
             toolName: toolName,
             argumentsJSON: argumentsJSON
-        )
-    }
-
-    static func executeBrowserTool(
-        toolName: String,
-        argumentsJSON: String,
-        sourceSessionID: UUID,
-        sourceRunID: UUID,
-        triggeringMessageID: UUID?,
-        toolCallID: String
-    ) async throws -> String {
-        try await BrowserAgentToolExecutor.shared.execute(
-            toolName: toolName,
-            argumentsJSON: argumentsJSON,
-            sessionID: sourceSessionID,
-            runID: sourceRunID,
-            triggeringMessageID: triggeringMessageID,
-            toolCallID: toolCallID
         )
     }
 
@@ -365,40 +333,6 @@ actor MCPBuiltInAppToolServerEngine {
             }
 
             #endif
-
-            if category == .browser {
-                guard let rawSourceSessionID = arguments.removeValue(
-                    forKey: MCPBuiltInAppToolServer.conversationSourceSessionIDArgument
-                ) as? String,
-                      let sourceSessionID = UUID(uuidString: rawSourceSessionID),
-                      let rawRunID = arguments.removeValue(
-                        forKey: MCPBuiltInAppToolServer.localAgentRunIDArgument
-                      ) as? String,
-                      let sourceRunID = UUID(uuidString: rawRunID),
-                      let toolCallID = arguments.removeValue(
-                        forKey: MCPBuiltInAppToolServer.conversationToolCallIDArgument
-                      ) as? String,
-                      !toolCallID.isEmpty else {
-                    throw BrowserAgentError.invalidArguments(
-                        NSLocalizedString("Browser Agent 缺少可信运行上下文。", comment: "Missing trusted Browser Agent context")
-                    )
-                }
-                let triggeringMessageID = (arguments.removeValue(
-                    forKey: MCPBuiltInAppToolServer.localAgentTriggeringMessageIDArgument
-                ) as? String).flatMap(UUID.init(uuidString:))
-                arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentSelectedMCPServerIDsArgument)
-                arguments.removeValue(forKey: MCPBuiltInAppToolServer.localAgentApprovedCommandRuleIDsArgument)
-                argumentsJSON = try prettyPrintedJSON(arguments, prettyPrinted: false)
-                let result = try await MCPBuiltInAppToolServer.executeBrowserTool(
-                    toolName: name,
-                    argumentsJSON: argumentsJSON,
-                    sourceSessionID: sourceSessionID,
-                    sourceRunID: sourceRunID,
-                    triggeringMessageID: triggeringMessageID,
-                    toolCallID: toolCallID
-                )
-                return successToolResult(toolName: name, result: result)
-            }
 
             if category == .file {
                 argumentsJSON = try prettyPrintedJSON(arguments, prettyPrinted: false)

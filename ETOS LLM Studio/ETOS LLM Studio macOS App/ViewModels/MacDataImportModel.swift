@@ -23,7 +23,6 @@ final class MacDataImportModel: ObservableObject {
     @Published private(set) var revision = UUID()
     @Published var credentialsAcknowledged = false
     @Published var confirmation: MacDataImportConfirmation?
-    @Published var snapshotFile: MacSnapshotFile?
     @Published var error: String?
     private weak var workspace: MacWorkspaceModel?
     private var active = false
@@ -31,7 +30,7 @@ final class MacDataImportModel: ObservableObject {
     private var preparation: Task<Void, Never>?
     private var prepared: ThirdPartyImportPreparedResult?
 
-    var canEdit: Bool { active && workspace?.canManageLocalModels == true && !isPreparing && !isImporting && !isPanelOpen && snapshotFile == nil }
+    var canEdit: Bool { active && workspace?.canManageLocalModels == true && !isPreparing && !isImporting && !isPanelOpen }
     var canImport: Bool {
         canEdit && preview != nil && (preview?.fixedScope?.isEmpty == false || !selected.isEmpty) && report == nil
     }
@@ -49,7 +48,6 @@ final class MacDataImportModel: ObservableObject {
             confirmation = nil; credentialsAcknowledged = false
             if discardPreview && !isImporting {
                 clearPreparedState()
-                if !workspace.isRestoringData || AppLockManager.shared.state == .locked { snapshotFile = nil }
             }
         }
     }
@@ -117,12 +115,6 @@ final class MacDataImportModel: ObservableObject {
                 selected = result.1.availableScopes
                 isPreparing = false; preparation = nil
                 revision = UUID()
-            } catch let request as SnapshotRestoreRequest {
-                guard let self, active, workspace?.canManageLocalModels == true, revision == expected,
-                      !Task.isCancelled, !worker.isCancelled else { return }
-                // 请求对象负责临时目录，工作表和已确认的恢复同时持有它。
-                snapshotFile = MacSnapshotFile(url: request.fileURL, restoreRequest: request)
-                isPreparing = false; preparation = nil; revision = UUID()
             } catch {
                 guard let self, revision == expected, !Task.isCancelled else { return }
                 if !(error is CancellationError) { self.error = error.localizedDescription }
@@ -179,11 +171,10 @@ final class MacDataImportModel: ObservableObject {
 
     static func sourceHint(_ source: ThirdPartyImportSource) -> String {
         switch source {
-        case .etosBackup: NSLocalizedString("支持导入 .elsbackup 快照或旧版 ETOS JSON 数据包。", comment: "")
+        case .etosBackup: NSLocalizedString("支持导入旧版 ETOS JSON 数据包。", comment: "")
         case .cherryStudio: NSLocalizedString("支持 Cherry Studio 的 .json 或解压后的备份目录；若是 .zip / .bak，请先解压后再导入。", comment: "")
         case .rikkahub: NSLocalizedString("支持 RikkaHub 的 settings.json（可直接选文件或解压目录，当前先导入提供商配置）。", comment: "")
         case .kelivo: NSLocalizedString("支持 Kelivo 的 settings.json + chats.json（建议选择解压后的目录一次导入）。", comment: "")
-        case .chatgpt: NSLocalizedString("支持 ChatGPT 官方 conversations.json（可直接选文件或包含该文件的目录）。", comment: "")
         case .chatbox: NSLocalizedString("支持 ChatBox 导出的 chatbox-exported-data JSON，可导入提供商配置与会话记录。", comment: "")
         case .openMinis: NSLocalizedString("支持 OpenMinis iOS/Android 会话 JSON/ZIP、Provider JSON 与 Skill ZIP；Skill 需勾选后导入，且不会执行脚本或安装依赖。", comment: "")
         }

@@ -92,7 +92,7 @@ struct MacTTSServiceEditor: View {
             .guideSettingsPageContext(id: GuidePageID(rawValue: "mac-tts-service-\(draft.service.id)-\(sourceEpoch)-\(draft.service.providerKind.rawValue)"),
                 title: NSLocalizedString("编辑语音服务", comment: ""), documents: [GuideDocumentReference(id: "tts", title: "Text to Speech")],
                 isActive: active, settings: guideSettings)
-            .modifier(MacGuideInspector())
+            .modifier(MacAppLockOverlayModifier())
         }
         .frame(minWidth: 560, minHeight: 560)
         .onAppear { visible = true; draft.resume() }

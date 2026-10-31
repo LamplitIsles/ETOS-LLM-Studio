@@ -45,11 +45,6 @@ struct MacLinuxJobsView: View {
                                 }
                             }
                         }
-                        if group.hasActiveJobs, let runID = group.runID {
-                            Button(NSLocalizedString("停止此 Agent", comment: ""), role: .destructive) {
-                                cancellation = MacLinuxJobCancellation(action: .agent(runID))
-                            }.disabled(actions.isWorking)
-                        }
                     } header: { Text(group.title) }
                 }
                 if catalog.activeCount > 0 {

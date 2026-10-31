@@ -82,7 +82,7 @@ struct MacFontRoutesEditor: View {
             MacFontRuleEditor(rule: target.rule, chain: target.chain, assets: original.assets, isActive: available) { draft.setRule($0) }
         }
         .onChange(of: available) { _, value in if !value { editing = nil } }
-        .modifier(MacGuideInspector()).frame(minWidth: 540, minHeight: 560).interactiveDismissDisabled(model.isWorking)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 540, minHeight: 560).interactiveDismissDisabled(model.isWorking)
     }
     private func move(_ id: String, offset: Int) {
         draft.change {

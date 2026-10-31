@@ -76,7 +76,7 @@ struct MacSlashCommandInput: Sendable {
 }
 
 enum MacSlashCommandRoute: Hashable {
-    case new, model, sessions, settings, daily, temporary, retry, stop, clear
+    case new, model, sessions, settings, temporary, retry, stop, clear
     case page(MacChatQuickActionPage)
     init(_ command: ChatSlashCommand) {
         switch command {
@@ -84,16 +84,12 @@ enum MacSlashCommandRoute: Hashable {
         case .model: self = .model
         case .sessions: self = .sessions
         case .settings: self = .settings
-        case .daily: self = .daily
         case .temporary: self = .temporary
         case .retry: self = .retry
         case .stop: self = .stop
         case .clear: self = .clear
-        case .tools: self = .page(.toolCenter)
         case .usage: self = .page(.usageAnalytics)
-        case .skills: self = .page(.agentSkills)
         case .shortcuts: self = .page(.shortcuts)
-        case .roleplay: self = .page(.roleplay)
         case .features: self = .page(.extendedFeatures)
         }
     }

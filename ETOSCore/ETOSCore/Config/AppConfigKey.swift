@@ -276,6 +276,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case configLoaderDownloadOnceCompleted = "com.ETOS.LLM.Studio.download_once.completed"
     case configLoaderToolCapabilityMigrated = "com.ETOS.LLM.Studio.modelCapability.toolCalling.migrated"
     case feedbackAPIBaseURL = "feedback.apiBaseURL"
+    case cflHTTPSOrigin = "cfl.httpsOrigin"
     case guideOverlayEnabled = "guide.overlay.enabled"
     case guidePreferredRoute = "guide.preferredRoute"
     case guidePreferredModelIdentifier = "guide.preferredModelIdentifier"
@@ -490,7 +491,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
             return .bool(false)
         case .configLoaderToolCapabilityMigrated:
             return .bool(false)
-        case .feedbackAPIBaseURL:
+        case .feedbackAPIBaseURL, .cflHTTPSOrigin:
             return .text("")
         case .guideOverlayEnabled:
             return .bool(false)
@@ -682,14 +683,9 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
             return .text([
                 "temporaryChat",
                 "settings",
-                "toolCenter",
-                "dailyPulse",
                 "usageAnalytics",
-                "agentSkills",
                 "shortcuts",
-                "roleplay",
                 "extendedFeatures",
-                "browser",
                 "localTerminal"
             ].joined(separator: ","))
         case .providerDetailGroupByMainstream:
@@ -748,6 +744,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
              .configLoaderDownloadOnceCompleted,
              .configLoaderToolCapabilityMigrated,
              .feedbackAPIBaseURL,
+             .cflHTTPSOrigin,
              .backgroundGenerationKeepAliveEnabled,
              .backgroundGenerationAudioKeepAliveEnabled,
              .backgroundGenerationAudioKeepAliveVolume,

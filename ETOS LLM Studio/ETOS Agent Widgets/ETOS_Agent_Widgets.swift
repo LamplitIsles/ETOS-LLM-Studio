@@ -128,30 +128,6 @@ private struct RecentTasksWidgetView: View {
     }
 }
 
-private struct DailyPulseWidgetView: View {
-    let entry: ETOSWidgetEntry
-
-    var body: some View {
-        Link(destination: URL(string: "etosllmstudio://open/daily-pulse")!) {
-            VStack(alignment: .leading) {
-                Label(NSLocalizedString("Daily Pulse", comment: "Daily Pulse brand name"), systemImage: "sun.max.fill")
-                    .font(.headline)
-                    .foregroundStyle(.orange)
-                Spacer()
-                Text(entry.snapshot.dailyPulseTitle
-                    ?? NSLocalizedString("打开今日脉搏", comment: "Daily Pulse widget fallback"))
-                    .font(.subheadline)
-                    .lineLimit(3)
-                Spacer()
-                Text(NSLocalizedString("在 ETOS 中查看", comment: "Open Daily Pulse widget action"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
 struct ETOSNewAgentWidget: Widget {
     let kind = "ETOSNewAgentWidget"
 
@@ -177,19 +153,5 @@ struct ETOSRecentTasksWidget: Widget {
         .configurationDisplayName(NSLocalizedString("最近 Agent 任务", comment: "Recent tasks widget name"))
         .description(NSLocalizedString("查看最近任务状态并回到对应会话。", comment: "Recent tasks widget description"))
         .supportedFamilies([.systemMedium, .systemLarge])
-    }
-}
-
-struct ETOSDailyPulseWidget: Widget {
-    let kind = "ETOSDailyPulseWidget"
-
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: ETOSWidgetProvider()) { entry in
-            DailyPulseWidgetView(entry: entry)
-                .containerBackground(.fill.tertiary, for: .widget)
-        }
-        .configurationDisplayName(NSLocalizedString("Daily Pulse", comment: "Daily Pulse widget name"))
-        .description(NSLocalizedString("查看今天的 Daily Pulse 摘要。", comment: "Daily Pulse widget description"))
-        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }

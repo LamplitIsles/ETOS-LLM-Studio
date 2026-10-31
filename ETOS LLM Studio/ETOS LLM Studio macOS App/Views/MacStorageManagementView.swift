@@ -111,7 +111,7 @@ struct MacStorageConfirmationView: View {
                     .readOnly("selected_count", label: NSLocalizedString("文件", comment: ""), value: { .int(target.mutation.count) })
                 ])
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 520, minHeight: 320)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 520, minHeight: 320)
         .interactiveDismissDisabled(actions.isWorking)
     }
 }

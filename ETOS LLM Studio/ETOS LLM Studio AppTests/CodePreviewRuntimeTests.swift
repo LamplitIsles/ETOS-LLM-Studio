@@ -8,14 +8,14 @@ import UIKit
 import WebKit
 @testable import ETOS_LLM_Studio_App
 
-@Suite("普通聊天代码预览", .serialized)
+@Suite("Markdown 代码预览", .serialized)
 @MainActor
 struct CodePreviewRuntimeTests {
     enum Scenario: CaseIterable {
-        case basic, advanced, surroundingMath, precedingDollar, fullDocument, streaming
+        case basic, advanced, surroundingMath, precedingDollar, fullDocument, updated
     }
 
-    @Test("普通会话 HTML 代码框可打开并运行网页", arguments: Scenario.allCases)
+    @Test("Markdown HTML 代码框可打开并运行网页", arguments: Scenario.allCases)
     func previewsHTMLCodeBlock(scenario: Scenario) async throws {
         // 仅测试包启用系统的无障碍自动化桥，与 AccessibilitySnapshot/KIF 的测试宿主做法一致。
         // SwiftUI 的环境值不会启动这个桥；退出用例时恢复原状态，正式 App 不使用这些符号。
@@ -35,18 +35,6 @@ struct CodePreviewRuntimeTests {
         setAutomation(1)
         defer { setAutomation(previousAutomation) }
         let advanced = scenario != .basic
-        let config = AppConfigStore.shared
-        // 配置加载与 Markdown 准备均需完成，避免把启动占位或错误渲染分支计为通过。
-        await config.waitForPersistentStoreLoaded()
-        let saved = (config.enableMarkdown, config.enableAdvancedRenderer, config.enableBackground)
-        config.enableMarkdown = true
-        config.enableAdvancedRenderer = advanced
-        config.enableBackground = false
-        defer {
-            config.enableMarkdown = saved.0
-            config.enableAdvancedRenderer = saved.1
-            config.enableBackground = saved.2
-        }
         let fragment = """
         <div id='code-preview-probe' style='margin-top:100px;color:#0759bf'>等待脚本</div>
         <button id='code-action' onclick="this.textContent = '交互成功'">点我</button>
@@ -68,51 +56,23 @@ struct CodePreviewRuntimeTests {
         default:
             content = "前文\n```html\n\(source)\n```\n后文"
         }
-        var message = ChatMessage(role: .assistant, content: scenario == .streaming ? "正在生成网页" : content)
-        let session = ChatSession(id: UUID(), name: "代码预览回归", isTemporary: true)
-        // 角色卡绑定会自动提取 HTML，绕开这次需要验证的普通代码框。
-        #expect(RoleplayStore.shared.binding(sessionID: session.id) == nil)
-        let service = ChatService()
-        let model = ChatViewModel(chatService: service)
-        model.enableMarkdown = true
-        model.enableAdvancedRenderer = advanced
-        model.enableBackground = false
-        service.chatSessionsSubject.send([session])
-        service.currentSessionSubject.send(session)
-        if scenario == .streaming { service.runningSessionIDsSubject.send([session.id]) }
-        service.messagesForSessionSubject.send([message])
+        let preview = CodePreviewContent(content: scenario == .updated ? "正在生成网页" : content)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         let host = UIHostingController(rootView: NavigationStack {
-            ChatView(scrollCoordinator: ChatScrollCoordinator()).environmentObject(model)
+            CodePreviewRenderer(content: preview, advanced: advanced)
         })
         window.rootViewController = host
         window.makeKeyAndVisible()
         host.view.frame = window.bounds
         defer { window.isHidden = true; window.rootViewController = nil }
-        if scenario == .streaming {
-            for _ in 0..<200 {
-                if model.isSendingMessage, model.messages.first?.id == message.id { break }
-                try await Task.sleep(for: .milliseconds(20))
-            }
-            #expect(model.isSendingMessage)
-            message.content = content
-            service.messagesForSessionSubject.send([message])
-            for _ in 0..<200 {
-                if model.messages.first?.message.content == content { break }
-                try await Task.sleep(for: .milliseconds(20))
-            }
-            service.runningSessionIDsSubject.send([])
+        if scenario == .updated {
+            host.view.layoutIfNeeded()
+            await Task.yield()
+            preview.content = content
         }
-        for _ in 0..<400 {
-            if model.preparedMarkdownByMessageID[message.id]?.sourceText == content { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(model.enableMarkdown)
-        #expect(model.enableAdvancedRenderer == advanced)
-        #expect(model.messages.first?.roleplayHTML == nil)
-        let prepared = try #require(model.preparedMarkdownByMessageID[message.id])
+        let prepared = await ETMarkdownPrecomputeWorker.shared.prepare(source: content)
         #expect(prepared.sourceText == content)
         #expect(prepared.containsMathContent == (scenario == .surroundingMath))
         #expect(prepared.mathRenderText.contains(source))
@@ -195,5 +155,31 @@ struct CodePreviewRuntimeTests {
 
     private func webViews(_ view: UIView) -> [WKWebView] {
         (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap { webViews($0) }
+    }
+}
+
+@MainActor
+private final class CodePreviewContent: ObservableObject {
+    @Published var content: String
+
+    init(content: String) { self.content = content }
+}
+
+private struct CodePreviewRenderer: View {
+    @ObservedObject var content: CodePreviewContent
+    let advanced: Bool
+
+    var body: some View {
+        ScrollView {
+            ETAdvancedMarkdownRenderer(
+                content: content.content,
+                preparedContent: nil,
+                enableMarkdown: true,
+                isOutgoing: false,
+                enableAdvancedRenderer: advanced,
+                enableMathRendering: advanced,
+                customTextColor: nil
+            )
+        }
     }
 }

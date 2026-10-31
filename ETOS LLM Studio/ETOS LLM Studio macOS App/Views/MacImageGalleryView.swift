@@ -61,7 +61,7 @@ struct MacImageGalleryView: View {
                 isActive: available, settings: [
                     .readOnly("read_only", label: NSLocalizedString("预览", comment: ""), value: { .bool(true) })
                 ])
-            .modifier(MacGuideInspector())
+            .modifier(MacAppLockOverlayModifier())
         }
         .confirmationDialog(NSLocalizedString("确认删除这张图片？", comment: ""),
             isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {

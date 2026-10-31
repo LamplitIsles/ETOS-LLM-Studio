@@ -17,41 +17,6 @@ struct MacTTSTests {
         #expect(!encoded.contains("private-key")); #expect(!encoded.contains("private.example")); #expect(!encoded.contains("private-instruction"))
     }
 
-    @Test("没有开始事件的历史回复不会朗读，空历史的新回复只交付一次")
-    func requestBoundary() async {
-        let tracker = MacTTSAutoPlayTracker(), session = UUID(), context = UUID()
-        let reply = ChatMessage(role: .assistant, content: "新的回复")
-        #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [reply]), context: context, sessionID: session) == nil)
-        _ = await tracker.process(.init(sessionID: session, status: .started, messages: []), context: context, sessionID: session)
-        #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [reply]), context: context, sessionID: session)?.id == reply.id)
-        #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [reply]), context: context, sessionID: session) == nil)
-    }
-
-    @Test("失败、取消、切换会话和重复原文均不能自动朗读")
-    func invalidCompletions() async {
-        let tracker = MacTTSAutoPlayTracker(), session = UUID(), context = UUID()
-        let reply = ChatMessage(role: .assistant, content: "原有回复")
-        for status in [ChatService.SessionRequestStatus.error, .cancelled] {
-            _ = await tracker.process(.init(sessionID: session, status: .started, messages: []), context: context, sessionID: session)
-            _ = await tracker.process(.init(sessionID: session, status: status, messages: []), context: context, sessionID: session)
-            #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [reply]), context: context, sessionID: session) == nil)
-        }
-        _ = await tracker.process(.init(sessionID: session, status: .started, messages: [reply]), context: context, sessionID: session)
-        #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [reply]), context: context, sessionID: session) == nil)
-        _ = await tracker.process(.init(sessionID: session, status: .started, messages: []), context: context, sessionID: session)
-        #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [reply]), context: UUID(), sessionID: session) == nil)
-    }
-
-    @Test("同一消息重试生成的新正文可以朗读，但其他会话的结束不能领取")
-    func changedVersionAndSession() async {
-        let tracker = MacTTSAutoPlayTracker(), session = UUID(), context = UUID(), id = UUID()
-        let old = ChatMessage(id: id, role: .assistant, content: "旧正文")
-        let replacement = ChatMessage(id: id, role: .assistant, content: "新正文")
-        _ = await tracker.process(.init(sessionID: session, status: .started, messages: [old]), context: context, sessionID: session)
-        #expect(await tracker.process(.init(sessionID: UUID(), status: .finished, messages: [replacement]), context: context, sessionID: session) == nil)
-        #expect(await tracker.process(.init(sessionID: session, status: .finished, messages: [replacement]), context: context, sessionID: session)?.content == "新正文")
-    }
-
     @Test("服务切换保留尚未保存的全局参数，旧页面保存和删除被拒绝")
     @MainActor
     func draftAndEpoch() async {
@@ -99,16 +64,6 @@ struct MacTTSTests {
         #expect(draft.fields.contains(.temperature)); #expect(!draft.fields.contains(.workspace))
         #expect(prepared.advancedSettings.sampleRate == 48_000); #expect(prepared.advancedSettings.bitrate == 256_000)
         draft.cancel()
-    }
-
-    @Test("桌面语音向导说明草稿、自动播放和秘密边界")
-    func guideKnowledge() async throws {
-        let mac = GuideMacWorkspaceKnowledge.document(locale: Locale(identifier: "zh_CN")).content
-        #expect(mac.contains("12 种云端协议")); #expect(mac.contains("已有密钥在向导中只写不可读"))
-        #expect(mac.contains("不因打开历史、取消或失败而播放")); #expect(mac.contains("不能试听、播放、导出、保存或删除服务"))
-        let knowledge = GuideKnowledgeService()
-        let tts = try #require(await knowledge.document(id: "tts"))
-        #expect(tts.content.contains("Mac")); #expect(tts.content.contains("text_selection_mode"))
     }
 
     @MainActor

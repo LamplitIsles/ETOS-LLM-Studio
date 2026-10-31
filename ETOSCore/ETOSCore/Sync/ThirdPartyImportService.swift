@@ -30,7 +30,7 @@ public enum ThirdPartyImportSource: String, CaseIterable, Codable, Sendable {
     public var suggestedFileExtensions: [String] {
         switch self {
         case .etosBackup:
-            return [SnapshotBuilder.fileExtension, "json"]
+            return ["json"]
         case .cherryStudio:
             return ["json", "zip", "bak"]
         case .rikkahub:

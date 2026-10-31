@@ -104,7 +104,7 @@ struct MacRequestRuntimeView: View {
                     return GuideActionExecution(message: NSLocalizedString("聊天控制已保存，将用于后续请求。", comment: ""))
                 })
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 520, minHeight: 480)
         .onChange(of: workspace.isRestoringData) { _, restoring in if restoring { dismiss() } }
     }

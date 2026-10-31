@@ -4,7 +4,7 @@
 // 本地 Agent Runtime 纯逻辑与文件管线测试
 // - 环境变量脱敏与双输出边界
 // - 命令安全规则、存储布局与损坏检测
-// - Linux / Browser 工具协议和 MCP JSON 转换
+// - Linux 工具协议和 MCP JSON 转换
 // ============================================================================
 
 import Foundation
@@ -40,7 +40,6 @@ struct LocalAgentRuntimeTests {
         )
         #expect(!withoutLinux.preparesAgentRun)
         #expect(withoutLinux.includesConversationTools)
-        #expect(withoutLinux.includesBrowserTools)
         #expect(!withoutLinux.includesLocalLinuxTools)
 
         let chat = AgentToolCapabilityPolicy.resolve(
@@ -50,7 +49,6 @@ struct LocalAgentRuntimeTests {
         )
         #expect(!chat.preparesAgentRun)
         #expect(chat.includesConversationTools)
-        #expect(chat.includesBrowserTools)
         #expect(!chat.includesLocalLinuxTools)
 
         let agent = AgentToolCapabilityPolicy.resolve(
@@ -59,7 +57,6 @@ struct LocalAgentRuntimeTests {
             localLinuxEnabled: true
         )
         #expect(agent.includesConversationTools)
-        #expect(agent.includesBrowserTools)
         #if os(macOS)
         #expect(agent.preparesAgentRun)
         #expect(agent.includesLocalLinuxTools)
@@ -75,45 +72,7 @@ struct LocalAgentRuntimeTests {
         )
         #expect(!isolated.preparesAgentRun)
         #expect(!isolated.includesConversationTools)
-        #expect(!isolated.includesBrowserTools)
         #expect(!isolated.includesLocalLinuxTools)
-    }
-
-    @Test("Browser 能力完整时不显示能力检查区域")
-    func completeBrowserCapabilitiesHaveNoMissingItems() {
-        let complete = BrowserAgentCapabilities(
-            platform: "watchOS",
-            isExperimental: true,
-            supportsNavigation: true,
-            supportsSnapshot: true,
-            supportsClick: true,
-            supportsTyping: true,
-            supportsScrolling: true,
-            supportsJavaScript: true,
-            supportsScreenshot: true,
-            supportsDownload: true,
-            supportsUserTakeover: true,
-            supportsIPhoneDelegation: true,
-            notes: []
-        )
-        #expect(complete.unavailableCapabilities.isEmpty)
-
-        let limited = BrowserAgentCapabilities(
-            platform: "watchOS",
-            isExperimental: true,
-            supportsNavigation: true,
-            supportsSnapshot: true,
-            supportsClick: true,
-            supportsTyping: true,
-            supportsScrolling: true,
-            supportsJavaScript: true,
-            supportsScreenshot: false,
-            supportsDownload: false,
-            supportsUserTakeover: true,
-            supportsIPhoneDelegation: true,
-            notes: []
-        )
-        #expect(limited.unavailableCapabilities == [.screenshot, .download])
     }
 
     @Test("环境变量脱敏遵循长度、重叠和关闭规则")
@@ -672,67 +631,19 @@ struct LocalAgentRuntimeTests {
         #expect(!modelOutput.contains(LocalLinuxDiagnosticPresentation.userGuidance))
     }
 
-    @Test("Linux、Browser 与反馈工具协议暴露完整动作")
+    @Test("Linux 与反馈工具协议暴露完整动作")
     func toolDefinitionsExposeExpectedContract() throws {
         #expect(Set(LocalLinuxToolDefinitions.all.map(\.name)) == ["linux_run", "linux_shell", "linux_process"])
-        #expect(BrowserAgentToolDefinitions.all.map(\.name) == ["browser_control"])
-
-        let browserData = try JSONEncoder().encode(BrowserAgentToolDefinitions.all[0].parameters)
-        let browserSchema = try #require(String(data: browserData, encoding: .utf8))
-        #expect(browserSchema.contains("evaluate_javascript"))
-        #expect(browserSchema.contains("screenshot"))
-        #expect(browserSchema.contains("download"))
-
         let feedbackData = try JSONEncoder().encode(AppToolKind.submitFeedbackTicket.parameters)
         let feedbackSchema = try #require(String(data: feedbackData, encoding: .utf8))
         #expect(feedbackSchema.contains("linux_runtime_diagnostic_id"))
     }
 
-    @Test("Browser 数据 profile 与快照可以稳定编码")
-    func browserModelsCodableRoundTrip() throws {
-        let snapshot = BrowserAgentSnapshot(
-            title: "Example",
-            url: "https://example.com",
-            text: "正文",
-            elements: [.init(
-                index: 0,
-                elementID: "continue-button",
-                domRevision: 1,
-                role: "button",
-                label: "继续",
-                value: nil,
-                isVisible: true,
-                bounds: BrowserAgentElementBounds(x: 0, y: 0, width: 120, height: 44),
-                actions: ["click"]
-            )],
-            wasTruncated: false,
-            domRevision: 1
-        )
-        let decoded = try JSONDecoder().decode(
-            BrowserAgentSnapshot.self,
-            from: JSONEncoder().encode(snapshot)
-        )
-        #expect(decoded == snapshot)
+    @Test("历史 Browser 数据 profile 保持可解码")
+    func browserDataProfilesRemainDecodable() {
         #expect(BrowserAgentDataProfile(rawValue: "session_isolated") == .sessionIsolated)
         #expect(BrowserAgentDataProfile(rawValue: "persistent_shared") == .persistentShared)
     }
-
-    #if canImport(WebKit) && canImport(UIKit) && !os(watchOS)
-    @Test("Browser 下载只携带目标域和路径适用的 Cookie")
-    func browserDownloadCookieScope() throws {
-        let cookie = try #require(HTTPCookie(properties: [
-            .domain: ".example.com",
-            .path: "/account",
-            .name: "session",
-            .value: "secret",
-            .secure: "TRUE"
-        ]))
-        #expect(BrowserSessionManager.cookieApplies(cookie, to: URL(string: "https://api.example.com/account/file")!))
-        #expect(!BrowserSessionManager.cookieApplies(cookie, to: URL(string: "https://api.example.com/accounting")!))
-        #expect(!BrowserSessionManager.cookieApplies(cookie, to: URL(string: "http://api.example.com/account/file")!))
-        #expect(!BrowserSessionManager.cookieApplies(cookie, to: URL(string: "https://example.net/account/file")!))
-    }
-    #endif
 
     @Test("任务规则命中与 Agent 提示词会随 Run 快照稳定编码")
     func agentRunSnapshotCodableRoundTrip() throws {

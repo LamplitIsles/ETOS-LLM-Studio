@@ -4,11 +4,11 @@ import Testing
 @testable import ETOS_LLM_Studio_macOS_App
 
 struct MacSlashCommandTests {
-    @Test("十九条内建命令全部映射到唯一的桌面操作或已存在页面")
+    @Test("内建命令全部映射到唯一的桌面操作或已存在页面")
     func everyBuiltInHasARealRoute() {
         let routes = ChatSlashCommand.allCases.map(MacSlashCommandRoute.init)
-        #expect(routes.count == 19 && Set(routes).count == 19)
-        #expect(MacSlashCommandRoute(.tools) == .page(.toolCenter))
+        #expect(routes.count == ChatSlashCommand.allCases.count && Set(routes).count == routes.count)
+        #expect(MacSlashCommandRoute(.shortcuts) == .page(.shortcuts))
         #expect(MacSlashCommandRoute(.features) == .page(.extendedFeatures))
         #expect(MacSlashCommandRoute(.sessions) == .sessions)
         #expect(MacSlashCommandRoute(.model) == .model)
@@ -49,7 +49,7 @@ struct MacSlashCommandTests {
         let state = MacSlashCommandCatalog(CustomChatSlashCommandSnapshot(commands: [command], rawValue: "原始配置"))
         #expect(state.custom.first?.description.count == 160)
         #expect(state.commandsByID[command.id]?.prompt.count == 400)
-        #expect(state.builtIn.count == 19)
+        #expect(state.builtIn.count == ChatSlashCommand.allCases.count)
         #expect(state.guideCommands == GuideSlashCommandSettingsSupport.value([command]))
     }
 
@@ -94,15 +94,6 @@ struct MacSlashCommandTests {
         model.invalidate()
         #expect(model.input == nil && !model.moveSelection(1))
         #expect(model.selectedSuggestion() == nil)
-    }
-
-    @Test("双语向导明确草稿保存、原生命令与后台校验的边界")
-    func guideDocumentsNativeExecutionBoundary() {
-        let chinese = GuideSlashCommandsKnowledge.document(locale: Locale(identifier: "zh_CN")).content
-        let english = GuideSlashCommandsKnowledge.document(locale: Locale(identifier: "en_US")).content
-        #expect(chinese.contains("共 19 项") && chinese.contains("向导不能执行命令"))
-        #expect(english.contains("never recursively executed") && english.contains("cannot execute commands"))
-        #expect(GuideDocumentCatalog.documents.filter { $0.id == "slash-commands" }.count == 1)
     }
 
     @Test("普通消息不依赖命令目录，取消提交会释放解析状态，斜杠输入仍等待目录")

@@ -24,7 +24,7 @@ final class ChatSlashCommandTests: XCTestCase {
     func testPrefixOnlyMatchesDisplayedCommandName() {
         XCTAssertEqual(
             ChatSlashCommandParser.suggestions(for: "/s"),
-            [.sessions, .settings, .skills, .shortcuts, .stop]
+            [.sessions, .settings, .shortcuts, .stop]
         )
         XCTAssertFalse(ChatSlashCommandParser.suggestions(for: "/s").contains(.usage))
         XCTAssertTrue(ChatSlashCommandParser.suggestions(for: "/hist").isEmpty)
@@ -48,6 +48,10 @@ final class ChatSlashCommandTests: XCTestCase {
     func testUnknownCommandAndArgumentsRemainUnrecognized() {
         XCTAssertNil(ChatSlashCommandParser.recognizedCommand(in: "/unknown"))
         XCTAssertNil(ChatSlashCommandParser.recognizedCommand(in: "/new later"))
+        for command in ["daily", "pulse", "skills", "skill", "roleplay", "tools", "tool"] {
+            XCTAssertNil(ChatSlashCommandParser.recognizedCommand(in: "/\(command)"))
+            XCTAssertFalse(ChatSlashCommandParser.isReservedTrigger(command))
+        }
     }
 
     func testSlashMustStartAtBeginningOfMessage() {
@@ -60,14 +64,14 @@ final class ChatSlashCommandTests: XCTestCase {
     }
 
     func testCustomCommandAppearsInPrefixSuggestions() {
-        let customCommand = CustomChatSlashCommand(trigger: "sk", prompt: "请总结当前对话。")
+        let customCommand = CustomChatSlashCommand(trigger: "se_custom", prompt: "请总结当前对话。")
 
         let suggestions = ChatSlashCommandParser.suggestions(
-            for: "/sk",
+            for: "/se",
             customCommands: [customCommand]
         )
 
-        XCTAssertTrue(suggestions.contains(.builtIn(.skills)))
+        XCTAssertTrue(suggestions.contains(.builtIn(.sessions)))
         XCTAssertTrue(suggestions.contains(.custom(customCommand)))
     }
 

@@ -70,7 +70,7 @@ struct MacSpeechRecorderView: View {
                 ]
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 500, minHeight: 420)
         .onAppear { visible = true; if !available { dismiss() } }
         .onDisappear { visible = false; model.close(sourceID: source.id) }

@@ -12,6 +12,19 @@ import Testing
 
 @Suite("内建 MCP 拓展工具服务器测试")
 struct MCPBuiltInAppToolServerTests {
+    @Test("旧浏览器调用被拒绝，不进入浏览器执行器")
+    func removedBrowserToolIsUnknown() async throws {
+        #expect(MCPBuiltInAppToolServer.category(for: "browser_control") == nil)
+        let engine = MCPBuiltInAppToolServerEngine(category: .browser)
+        let request = Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"browser_control","arguments":{"action":"capabilities"}}}"#.utf8)
+        let response = try await engine.handleMessage(request)
+        let envelope = try #require(JSONSerialization.jsonObject(with: response) as? [String: Any])
+        let result = try #require(envelope["result"] as? [String: Any])
+        #expect(result["isError"] as? Bool == true)
+        let content = try #require(result["content"] as? [[String: Any]])
+        #expect((content.first?["text"] as? String)?.contains("Unknown built-in app tool") == true)
+    }
+
     @Test("路线工具不声明或执行公交完整路线")
     func testTransitDirectionsAreRejectedBeforeNetworkAccess() async throws {
         let tool = try #require(MCPNativeDeviceToolDefinitions.descriptions.first { $0.toolId == "maps.directions" })

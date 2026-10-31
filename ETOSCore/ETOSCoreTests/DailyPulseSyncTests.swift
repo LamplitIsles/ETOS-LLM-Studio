@@ -216,7 +216,7 @@ struct DailyPulseSyncTests {
         let mergedRuns = Persistence.loadDailyPulseRuns().sorted(by: { $0.generatedAt > $1.generatedAt })
 
         #expect(summary.importedDailyPulseRuns == 16)
-        #expect(mergedRuns.count == DailyPulseManager.persistedRetentionLimit)
+        #expect(mergedRuns.count == SyncEngine.dailyPulseRunRetentionLimit)
         #expect(mergedRuns.first?.dayKey == "2026-03-16")
         #expect(mergedRuns.last?.dayKey == "2026-03-03")
     }

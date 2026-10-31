@@ -94,7 +94,7 @@ extension ChatBubble {
                 renderContent(message.content)
                     .etFont(.body, sampleText: message.content)
                     .foregroundStyle(textForegroundColor)
-                    .textSelection(.enabled)
+                    .textSelection(.disabled)
             }
         } else if message.role == .assistant,
                   (message.reasoningContent ?? "").isEmpty,

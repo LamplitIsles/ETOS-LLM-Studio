@@ -47,7 +47,7 @@ struct MacChatRequestBodyPreviewView: View {
                     .readOnly("ready", label: NSLocalizedString("配置有效", comment: ""), value: { .bool(!busy && error == nil) })
                 ])
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 580, minHeight: 520)
         .task(id: config.appLanguage) { await prepare() }
         .onChange(of: workspace.isRestoringData) { _, restoring in if restoring { dismiss() } }

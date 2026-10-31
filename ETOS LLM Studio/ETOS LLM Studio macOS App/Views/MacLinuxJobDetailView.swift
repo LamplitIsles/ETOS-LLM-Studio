@@ -35,11 +35,6 @@ struct MacLinuxJobDetailView: View {
                         Button(NSLocalizedString("停止任务", comment: ""), role: .destructive) {
                             cancellation = MacLinuxJobCancellation(action: .job(jobID))
                         }.disabled(actions.isWorking)
-                        if let runID = details.job.runID {
-                            Button(NSLocalizedString("停止此 Agent", comment: ""), role: .destructive) {
-                                cancellation = MacLinuxJobCancellation(action: .agent(runID))
-                            }.disabled(actions.isWorking)
-                        }
                     }
                 }
                 if details.job.diagnosticID != nil {

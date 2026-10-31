@@ -63,7 +63,6 @@ final class MacWorkspaceModel: ObservableObject {
     let builtInTools = MacBuiltInToolsModel()
     let toolApproval = MacToolApprovalModel()
     let skills = MacSkillsModel()
-    let browser = MacBrowserModel()
     let globalProxy = MacGlobalProxyModel()
     let speechInput = MacSpeechInputModel()
     let tts = MacTTSModel()
@@ -71,11 +70,9 @@ final class MacWorkspaceModel: ObservableObject {
     let appearance = MacAppearanceModel()
     let fonts = MacFontModel()
     let linux = MacLinuxModel()
-    let dailyPulse = MacDailyPulseModel()
     let slashCommands = MacSlashCommandsModel()
     let dataImportOperations = MacDataImportOperations()
     let connectionSecurity = MacConnectionSecurityModel()
-    let remoteAccess = MacRemoteAccessModel()
     private(set) var externalOpenRevision = UUID()
     lazy var incomingDocuments = MacIncomingDocumentsModel(
         applyAttachments: { [weak self] attachments in
@@ -88,7 +85,6 @@ final class MacWorkspaceModel: ObservableObject {
     private var roleplayLifecycleRevision = UUID()
     @Published private var isClosingRoleplay = false
     private var toolDrafts: [UUID: [AppToolInputDraftRequest]] = [:]
-    private var rewriteTasks: [UUID: Task<Void, Never>] = [:]
     private var sendTasks: [UUID: Task<Void, Never>] = [:]
     private var effectiveModel: RunnableModel?
 
@@ -152,9 +148,8 @@ final class MacWorkspaceModel: ObservableObject {
         await shortcutTools.start()
         let service = await Task.detached(priority: .userInitiated) { ChatService.shared }.value
         self.service = service
-        configureRemoteAccess()
         speechInput.start(service: service)
-        tts.start(service: service)
+        tts.start()
         backgrounds.start()
         appearance.start()
         fonts.start()
@@ -163,7 +158,6 @@ final class MacWorkspaceModel: ObservableObject {
         roleplayModel.start(service: service, workspace: self)
         roleplayRuntime.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         requestControls.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        browser.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         linux.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         slashCommands.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         incomingDocuments.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -190,7 +184,6 @@ final class MacWorkspaceModel: ObservableObject {
         phase = .ready
         AppLockManager.shared.refreshState()
         resumeRequestControls()
-        CloudSyncManager.shared.performAutoSyncIfEnabled()
         Task.detached(priority: .utility) {
             _ = Persistence.scheduleLaunchBackupPointAfterStartupIfEnabled()
         }
@@ -227,7 +220,6 @@ final class MacWorkspaceModel: ObservableObject {
                 self?.roleplayRuntime.showSession(session?.id, running: service.runningSessionIDsSubject.value)
             }
             self?.currentSession = session
-            AppLocalNotificationCenter.shared.macCurrentSessionID = session?.id
             self?.incomingDocuments.updateSession(session?.id)
             self?.refreshEffectiveModel()
             self?.isTemporaryChat = service.isTemporaryChatEnabled(for: session?.id)
@@ -285,9 +277,9 @@ final class MacWorkspaceModel: ObservableObject {
                 suspendRoleplayPresentation(); requestControls.suspend(); modelTests.cancelAll()
                 shortcutTools.suspend()
                 builtInTools.suspend(); toolApproval.suspend(); skills.suspend()
-                browser.suspend(); globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
+                globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
                 incomingDocuments.suspend(acceptNewFiles: !isRestoringData && !isExportingSnapshot && !isClosingRoleplay)
-                dailyPulse.suspend(); slashCommands.suspend(); connectionSecurity.suspend(); remoteAccess.suspend(); dataImportOperations.cancelPreviews()
+                slashCommands.suspend(); connectionSecurity.suspend(); dataImportOperations.cancelPreviews()
             }
             else { self?.resumeRoleplayPresentation(); self?.resumeRequestControls() }
         }.store(in: &subscriptions)
@@ -361,18 +353,17 @@ final class MacWorkspaceModel: ObservableObject {
 
     func prepareForTermination() async {
         await MacAppInformationModel.shared.suspend()
-        dailyPulse.suspend(); slashCommands.suspend(); connectionSecurity.suspend(); remoteAccess.suspend()
+        slashCommands.suspend(); connectionSecurity.suspend()
         isClosingRoleplay = true
         externalOpenRevision = UUID()
         // 退出时不能让等待控件落盘的发送任务随后发出新请求。
         for task in sendTasks.values { task.cancel() }
-        for task in rewriteTasks.values { task.cancel() }
         suspendRoleplayPresentation()
         requestControls.suspend()
 
         shortcutTools.suspend()
         builtInTools.suspend(); toolApproval.suspend(); skills.suspend()
-        browser.suspend(); globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
+        globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
         incomingDocuments.suspend()
         await dataImportOperations.waitForCompletion()
         await dataImportOperations.cancelAndWaitForPreviews()
@@ -381,10 +372,10 @@ final class MacWorkspaceModel: ObservableObject {
         if let service {
             for sessionID in service.runningSessionIDsSubject.value { await service.cancelRequest(for: sessionID) }
         }
-        await dailyPulse.waitForPendingOperations(); await slashCommands.waitForPendingOperations(); await connectionSecurity.waitForPendingOperations(); await remoteAccess.waitForPendingOperations()
+        await slashCommands.waitForPendingOperations(); await connectionSecurity.waitForPendingOperations()
         await shortcutTools.waitForPendingWrites()
         await builtInTools.waitForPendingWrites(); await toolApproval.waitForPendingWrites(); await skills.waitForPendingWrites()
-        await browser.waitForPendingOperations(); await globalProxy.waitForPendingWrites(); try? await linux.waitForPendingOperations()
+        await globalProxy.waitForPendingWrites(); try? await linux.waitForPendingOperations()
         await incomingDocuments.waitForPendingOperations(); await speechInput.waitForPendingOperations(); await tts.waitForPendingOperations(); await backgrounds.waitForPendingOperations()
         await appearance.waitForPendingOperations(); await fonts.waitForPendingOperations()
         await requestControls.waitForPendingWrites()
@@ -634,15 +625,8 @@ final class MacWorkspaceModel: ObservableObject {
 
     func stop() {
         guard let service, let sessionID = currentSession?.id else { return }
-        rewriteTasks[sessionID]?.cancel()
         sendTasks[sessionID]?.cancel()
         Task { await service.cancelRequest(for: sessionID) }
-    }
-
-    @discardableResult
-    func rewriteMessage(_ request: MacMessageRewriteRequest) -> Bool {
-        errorMessage = NSLocalizedString("此功能暂不可用。", comment: "Unavailable chat operation")
-        return false
     }
 
     func retryMessage(_ message: ChatMessage, prefill: Bool = false) {
@@ -724,13 +708,13 @@ final class MacWorkspaceModel: ObservableObject {
     func beginSnapshotExport() -> Bool {
         guard !isRestoringData, !isMutatingHistory, !roleplayRuntime.isBusy, !sessionLibrary.isWorking, !roleplayModel.isWorking, !isExportingSnapshot, !SnapshotUploadManager.shared.isUploading else { return false }
         isExportingSnapshot = true
-        dailyPulse.suspend(); slashCommands.suspend(); connectionSecurity.suspend(); remoteAccess.suspend(); dataImportOperations.cancelPreviews()
+        slashCommands.suspend(); connectionSecurity.suspend(); dataImportOperations.cancelPreviews()
         externalOpenRevision = UUID()
         modelTests.cancelAll()
 
         shortcutTools.suspend()
         builtInTools.suspend(); toolApproval.suspend(); skills.suspend()
-        browser.suspend(); globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
+        globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
         incomingDocuments.suspend()
         suspendRoleplayPresentation()
         requestControls.suspend()
@@ -746,23 +730,18 @@ final class MacWorkspaceModel: ObservableObject {
             return
         }
         requestControls.resume()
-        dailyPulse.start(workspace: self); dailyPulse.resume()
-        slashCommands.resume(); connectionSecurity.resume(); remoteAccess.resume()
+        slashCommands.resume(); connectionSecurity.resume()
         shortcutTools.resume()
         builtInTools.resume(); toolApproval.resume(); skills.resume()
-        browser.resume(); globalProxy.resume(); speechInput.resume(); tts.resume(); backgrounds.resume(); appearance.resume(); fonts.resume(); linux.resume()
+        globalProxy.resume(); speechInput.resume(); tts.resume(); backgrounds.resume(); appearance.resume(); fonts.resume(); linux.resume()
         incomingDocuments.resume(sessionID: currentSession?.id)
-    }
-
-    func restoreSnapshot(from url: URL, password: String?) async throws {
-        _ = try await importData(.snapshot(url, password: password))
     }
 
     func importData(_ operation: MacDataImportOperation) async throws -> SyncMergeSummary? {
         try await dataImportOperations.perform { try await self.performDataMaintenance { try await operation.apply(using: $0) } }
     }
 
-    func performDataMaintenance<Value>(remoteAccessCommand: Bool = false, _ operation: (ChatService) async throws -> Value) async throws -> Value {
+    func performDataMaintenance<Value>(_ operation: (ChatService) async throws -> Value) async throws -> Value {
         let cloud = CloudSyncManager.shared
         guard canManageLocalModels, !isRestoringData, !isMutatingHistory, !sessionLibrary.isWorking, !roleplayModel.isWorking, !isExportingSnapshot, sendingSessionIDs.isEmpty,
               !SnapshotUploadManager.shared.isUploading,
@@ -772,13 +751,13 @@ final class MacWorkspaceModel: ObservableObject {
             ])
         }
         isRestoringData = true
-        dailyPulse.suspend(); slashCommands.suspend(); connectionSecurity.suspend(); remoteAccess.suspend(disconnectConnection: !remoteAccessCommand)
+        slashCommands.suspend(); connectionSecurity.suspend()
         externalOpenRevision = UUID()
         modelTests.cancelAll()
 
         shortcutTools.suspend()
         builtInTools.suspend(); toolApproval.suspend(); skills.suspend()
-        browser.suspend(); globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
+        globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
         incomingDocuments.suspend()
         suspendRoleplayPresentation()
         requestControls.suspend()
@@ -793,10 +772,10 @@ final class MacWorkspaceModel: ObservableObject {
         await modelTests.cancelAndWait(); await dataImportOperations.cancelAndWaitForPreviews()
         for sessionID in service.runningSessionIDsSubject.value { await service.cancelRequest(for: sessionID) }
         await MacAppInformationModel.shared.suspend()
-        await dailyPulse.waitForPendingOperations(); await slashCommands.waitForPendingOperations(); await connectionSecurity.waitForPendingOperations(); if !remoteAccessCommand { await remoteAccess.waitForPendingOperations() }
+        await slashCommands.waitForPendingOperations(); await connectionSecurity.waitForPendingOperations()
         await shortcutTools.waitForPendingWrites()
         await builtInTools.waitForPendingWrites(); await toolApproval.waitForPendingWrites(); await skills.waitForPendingWrites()
-        await browser.waitForPendingOperations(); await globalProxy.waitForPendingWrites(); try await linux.waitForPendingOperations()
+        await globalProxy.waitForPendingWrites(); try await linux.waitForPendingOperations()
         await incomingDocuments.waitForPendingOperations(); await speechInput.waitForPendingOperations(); await tts.waitForPendingOperations(); await backgrounds.waitForPendingOperations()
         await appearance.waitForPendingOperations(); await fonts.waitForPendingOperations()
         await requestControls.waitForPendingWrites()
@@ -827,13 +806,13 @@ final class MacWorkspaceModel: ObservableObject {
             ])
         }
         isRestoringData = true
-        dailyPulse.suspend(); slashCommands.suspend(); connectionSecurity.suspend(); remoteAccess.suspend()
+        slashCommands.suspend(); connectionSecurity.suspend()
         externalOpenRevision = UUID()
         modelTests.cancelAll()
 
         shortcutTools.suspend()
         builtInTools.suspend(); toolApproval.suspend(); skills.suspend()
-        browser.suspend(); globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
+        globalProxy.suspend(); speechInput.suspend(); tts.suspend(); backgrounds.suspend(); appearance.suspend(); fonts.suspend(); linux.suspend()
         incomingDocuments.suspend()
         suspendRoleplayPresentation()
         requestControls.suspend()
@@ -841,10 +820,10 @@ final class MacWorkspaceModel: ObservableObject {
         defer { isRestoringData = false; resumeRoleplayPresentation(); resumeRequestControls() }
         await modelTests.cancelAndWait(); await dataImportOperations.cancelAndWaitForPreviews()
         for sessionID in service.runningSessionIDsSubject.value { await service.cancelRequest(for: sessionID) }
-        await dailyPulse.waitForPendingOperations(); await slashCommands.waitForPendingOperations(); await connectionSecurity.waitForPendingOperations(); await remoteAccess.waitForPendingOperations()
+        await slashCommands.waitForPendingOperations(); await connectionSecurity.waitForPendingOperations()
         await shortcutTools.waitForPendingWrites()
         await builtInTools.waitForPendingWrites(); await toolApproval.waitForPendingWrites(); await skills.waitForPendingWrites()
-        await browser.waitForPendingOperations(); await globalProxy.waitForPendingWrites(); try await linux.waitForPendingOperations()
+        await globalProxy.waitForPendingWrites(); try await linux.waitForPendingOperations()
         await incomingDocuments.waitForPendingOperations(); await speechInput.waitForPendingOperations(); await tts.waitForPendingOperations(); await backgrounds.waitForPendingOperations()
         await appearance.waitForPendingOperations(); await fonts.waitForPendingOperations()
         await requestControls.waitForPendingWrites()
@@ -863,9 +842,7 @@ final class MacWorkspaceModel: ObservableObject {
     }
 
     private func refreshRestoredData(_ service: ChatService) async {
-        browser.discardRestoredSessions()
         await AppConfigStore.shared.reloadFromPersistentStoreAndWait()
-        await dailyPulse.reloadAfterRestore()
         // 解除恢复屏障前更新工具路由，下一轮聊天不能读取旧数据库的快捷指令。
         await ShortcutToolManager.shared.reloadToolsInBackground()
         await AppToolManager.shared.reloadInBackground()

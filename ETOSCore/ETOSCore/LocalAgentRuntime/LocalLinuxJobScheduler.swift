@@ -616,27 +616,23 @@ public actor LocalLinuxJobScheduler {
             try? terminal.session.cancel()
             return
         }
-        await BrowserAgentToolExecutor.shared.cancel(jobID: jobID)
     }
 
     public func cancel(runID: UUID) async {
         activeCommands.values.filter { $0.job.runID == runID }.forEach { try? $0.session.cancel() }
         activeTerminals.values.filter { $0.job.runID == runID }.forEach { try? $0.session.cancel() }
-        await BrowserAgentToolExecutor.shared.cancel(runID: runID)
     }
 
     public func cancel(sessionID: UUID) async {
         activeCommands.values.filter { $0.job.sessionID == sessionID }.forEach { try? $0.session.cancel() }
         activeTerminals.values.filter { $0.job.sessionID == sessionID }.forEach { try? $0.session.cancel() }
-        await BrowserAgentToolExecutor.shared.cancel(sessionID: sessionID)
     }
 
     public func cancelAll() async {
         await cancelAllLinuxRuntimeWork()
-        await BrowserAgentToolExecutor.shared.cancelAll()
     }
 
-    /// Linux 热重启只终止依赖 iSH 的作业；浏览器 Agent 使用独立执行链，不应被连带取消。
+    /// 等待本机命令和终端的取消及输出收尾。
     public func cancelAllLinuxRuntimeWork() async {
         let commands = Array(activeCommands.values)
         let terminals = Array(activeTerminals.values)
@@ -652,7 +648,7 @@ public actor LocalLinuxJobScheduler {
 
     /// 系统即将冻结进程时先记录中断归因，再取消 guest 进程组。恢复后不会重放这些命令。
     public func interruptForSystemSuspension() async {
-        var interruptedRunIDs = Set(
+        let interruptedRunIDs = Set(
             activeCommands.values.compactMap(\.job.runID)
                 + activeTerminals.values.compactMap(\.job.runID)
         )
@@ -660,7 +656,6 @@ public actor LocalLinuxJobScheduler {
         suspensionInterruptedJobIDs.formUnion(activeTerminals.keys)
         activeCommands.values.forEach { try? $0.session.cancel() }
         activeTerminals.values.forEach { try? $0.session.cancel() }
-        interruptedRunIDs.formUnion(await BrowserAgentToolExecutor.shared.interruptForSystemSuspension())
         for runID in interruptedRunIDs {
             await LocalAgentRuntimeContextManager.shared.finishRun(id: runID, state: .interrupted)
         }

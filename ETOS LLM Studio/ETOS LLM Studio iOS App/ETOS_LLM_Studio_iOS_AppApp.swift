@@ -5,66 +5,30 @@
 //
 // 定义内容:
 // - 定义 App 的主体 (@main)
-// - 初始化 ChatViewModel 并将其注入到环境中
 // - 设置应用的根视图为 ContentView
-// - 启动时自动同步（如果已启用）
 // ============================================================================
 
 import SwiftUI
-import BackgroundTasks
 import Combine
 import ETOSCore
 #if canImport(UIKit)
 import UIKit
 #endif
 
-#if canImport(UIKit)
-final class ETOSCloudSyncAppDelegate: NSObject, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
-    ) -> Bool {
-        application.registerForRemoteNotifications()
-        Task { @MainActor in
-            await CloudSyncManager.shared.ensureRemoteChangeSubscriptionIfEnabled()
-        }
-        return true
-    }
-
-    func application(
-        _: UIApplication,
-        didReceiveRemoteNotification _: [AnyHashable: Any],
-        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
-    ) {
-        Task { @MainActor in
-            let imported = await CloudSyncManager.shared.performAutoSyncNowIfEnabled()
-            completionHandler(imported ? .newData : .noData)
-        }
-    }
-}
-#endif
-
 @main
 struct ETOS_LLM_Studio_iOS_AppApp: App {
-#if canImport(UIKit)
-    @UIApplicationDelegateAdaptor(ETOSCloudSyncAppDelegate.self) private var appDelegate
-#endif
     @StateObject private var launchStateMachine = AppLaunchStateMachine()
-    @StateObject private var cloudSyncManager = CloudSyncManager.shared
-    @StateObject private var dailyPulseManager = DailyPulseManager.shared
-    @StateObject private var dailyPulseDeliveryCoordinator = DailyPulseDeliveryCoordinator.shared
     @StateObject private var updateTimelineManager = UpdateTimelineManager.shared
     @StateObject private var feedbackService = FeedbackService.shared
-    @StateObject private var viewModel = ChatViewModel()
     @StateObject private var appConfig = AppConfigStore.shared
     @StateObject private var appLockWindowPresenter = AppLockWindowPresenter()
     @State private var hasTriggeredFeedbackRefreshOnLaunch = false
+    @State private var unsupportedIncomingFile = false
 
     init() {
         _ = ChatBackgroundStartupCache.shared
         AppLanguageRuntime.applyConfiguredLanguage()
         SyncTemporaryFileCleaner.cleanupResidualTemporaryDirectoriesInBackground()
-        DailyPulseDeliveryCoordinator.shared.activate()
         FontLibrary.preloadRuntimeCacheAsync(forceReload: true)
         let performanceTelemetryEnabled = PerformanceTelemetryCenter.resolveLaunchEnabled(
             requiresManualUnlock: DatabaseEncryptionManager.shared.requiresManualUnlock
@@ -84,11 +48,9 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(unsupportedIncomingFile: $unsupportedIncomingFile)
                 .networkConnectionApprovalHost()
-                .environmentObject(viewModel)
                 .environmentObject(appConfig)
-                .environmentObject(cloudSyncManager)
                 .overlay {
                     if launchStateMachine.phase == .waitingForDatabaseUnlock {
                         DatabaseUnlockOverlayView {
@@ -100,31 +62,23 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
                 .onOpenURL { url in
                     Task { @MainActor in
                         if NewAPIProviderImportURLHandler.canHandle(url) {
-                            await handleNewAPIProviderImport(url)
+                            NotificationCenter.default.post(name: .newAPIProviderImportDidFail, object: NSLocalizedString("此功能暂不可用。", comment: ""))
                             return
                         }
                         if await SystemEntryURLRouter.handle(url) {
                             return
                         }
                         let handledByShortcutRouter = await ShortcutURLRouter.shared.handleIncomingURL(url)
-                        if !handledByShortcutRouter {
-                            if IncomingSnapshotRestoreSupport.isSnapshotURL(url) {
-                                NotificationCenter.default.post(name: .requestIncomingSnapshotRestore, object: url)
-                            } else {
-                                viewModel.handleIncomingDocumentURL(url)
-                            }
+                        if !handledByShortcutRouter && url.isFileURL {
+                            unsupportedIncomingFile = true
                         }
                     }
                 }
-                .batchTaskLifecycle(isReady: launchStateMachine.phase == .ready)
                 .onAppear {
                     PerformanceTelemetryCenter.shared.markFirstInterfaceReady()
                     appLockWindowPresenter.install()
-                    dailyPulseDeliveryCoordinator.activate()
-                    DailyPulseBackgroundDeliveryScheduler.shared.activate()
                     updateTimelineManager.activateOnLaunchIfNeeded()
                     triggerFeedbackRefreshOnLaunchIfNeeded()
-                    SystemEntrySnapshotPublisher.shared.activate()
                     SystemFileProviderDomainManager.activate()
                 }
                 .onChange(of: appConfig.performanceTelemetryEnabled) { _, enabled in
@@ -140,27 +94,9 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
                         )
                     }
                 }
-                .onChange(of: dailyPulseDeliveryCoordinator.reminderEnabled) { _, _ in
-                    DailyPulseBackgroundDeliveryScheduler.shared.refreshScheduleIfNeeded()
-                }
-                .onChange(of: dailyPulseManager.isDailyPulseEnabled) { _, _ in
-                    DailyPulseBackgroundDeliveryScheduler.shared.refreshScheduleIfNeeded()
-                }
-                .onChange(of: dailyPulseManager.tomorrowRun?.dayKey) { _, _ in
-                    DailyPulseBackgroundDeliveryScheduler.shared.refreshScheduleIfNeeded()
-                }
                 .task {
                     launchStateMachine.startIfNeeded()
                 }
-                .task(id: launchStateMachine.phase) {
-                    guard launchStateMachine.phase == .ready else { return }
-                    guard !Persistence.hasPendingLaunchRecoveryRequest() else { return }
-                    // 启动持久化预热完成后再触发自动同步，避免冷启动阶段覆盖未加载完的会话状态。
-                    cloudSyncManager.performAutoSyncIfEnabled()
-                }
-        }
-        .backgroundTask(.appRefresh(DailyPulseBackgroundDeliveryScheduler.taskIdentifier)) {
-            await DailyPulseBackgroundDeliveryScheduler.shared.handleAppRefresh()
         }
     }
 
@@ -169,21 +105,6 @@ struct ETOS_LLM_Studio_iOS_AppApp: App {
         guard launchStateMachine.phase == .waitingForDatabaseUnlock else { return }
         appConfig.reloadFromPersistentStore()
         launchStateMachine.continueAfterDatabaseUnlock()
-    }
-
-    @MainActor
-    private func handleNewAPIProviderImport(_ url: URL) async {
-        do {
-            let result = try await NewAPIProviderImportURLHandler.importProvider(from: url)
-            let message = String(
-                format: NSLocalizedString("已导入 New API 连接信息。新增提供商 %d，跳过 %d。", comment: "New API deeplink import success message"),
-                result.summary.importedProviders,
-                result.summary.skippedProviders
-            )
-            NotificationCenter.default.post(name: .newAPIProviderImportDidFinish, object: message)
-        } catch {
-            NotificationCenter.default.post(name: .newAPIProviderImportDidFail, object: error.localizedDescription)
-        }
     }
 
     private func triggerFeedbackRefreshOnLaunchIfNeeded() {

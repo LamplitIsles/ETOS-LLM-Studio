@@ -10,9 +10,9 @@ public enum GuideMacWorkspaceKnowledge {
             content: chinese ? """
             Mac 主窗口包含会话侧栏与聊天内容；侧栏提供会话管理和设置入口，聊天顶部提供模型与导出入口。
 
-            设置窗口使用侧栏，包含模型、会话、输出与拓展能力。工具中心提供内置工具和快捷指令；原生设备能力源码保留，当前聊天暂不能调用这些设备工具。
+            设置窗口使用侧栏，包含模型、会话、输出与拓展能力。设置中保留独立的快捷指令工具集成；原生设备能力源码保留，当前聊天暂不能调用这些设备工具。
 
-            输入框底部的快捷功能可在显示设置中选择；浏览器绑定来源会话。向导只能提出配置修改，不能触发入口。
+            输入框底部的快捷功能可在显示设置中选择。向导只能提出配置修改，不能触发入口。
 
             聊天工具栏可导出完整会话，消息右键菜单可导出截至该条的历史，导出页也可勾选消息。支持 PDF、Markdown、TXT、PNG，可选择思考与系统提示词，PNG 不包含系统提示词。读取稳定快照并在后台生成文件，再由用户选择保存位置；切换会话或锁定取消旧页面。向导仅能确认导出选项，不能读取消息、选择具体消息或执行保存。消息编辑支持正文、助手思考与工具调用 JSON 草稿，保存才更新当前会话且不会执行工具；提取正文图片会下载并保存可用图片、移除对应标记，附加图片只用于展示，失败不会遗留本次新文件。
 
@@ -24,16 +24,9 @@ public enum GuideMacWorkspaceKnowledge {
 
             连接例外从设置的“安全”或拓展功能进入，管理当前安装记住的 HTTP 与证书验证例外。开关只启用已有地址，不允许任意服务器；关闭或撤销会停止受影响连接。根页、详情和介绍均为只读向导，信任必须由用户操作原生控件，向导不能批准连接。日期和地址索引后台准备，已接受修改由工作区持有，备份、恢复和退出等待完成。数据库恢复后重新验证记录，旧确认不能跨恢复生效。原生 stdio 子进程、本机 Shell、Safari 和系统证书信任不受影响。详见 network-connection-exceptions。
 
-            远程文件访问从拓展功能进入，复用 HTTP/WebSocket 调试连接与 Bonjour 发现。地址和模式先编辑草稿，连接、断开、扫描、清空日志及捕获保存/忽略只允许原生操作；捕获确认绑定请求标识。根页向导可确认编辑不可读的地址草稿和协议开关，日志、捕获确认及介绍页只读，不公开日志或捕获内容。连接由工作区持有，离页保留连接，锁定、备份、其他恢复和退出断开并等待收尾；远程上传自身调用维护时避免等待自身命令。文件协议的剩余数据库边界详见 remote-file-access。
 
-            拓展功能中的快速指令默认关闭，开启后输入 / 可筛选 16 项内建命令与自定义提示词，支持方向键、Tab 补全和 ⌘Return。别名只供完整识别，未知内容仍按普通消息发送；自定义提示词只填草稿，下一次提交按字面发送，避免以 / 开头的提示词递归执行。配置、输入解析和校验在后台处理，整表保存比较原始 JSON，保留移动端键与格式。根页向导可确认批量配置，编辑器只改草稿，不能代执行任何聊天命令；模型选择页可确认修改全局模型。详见 slash-commands。
+            拓展功能中的快速指令默认关闭，开启后输入 / 可筛选 11 项内建命令与自定义提示词，支持方向键、Tab 补全和 ⌘Return。别名只供完整识别，未知内容仍按普通消息发送；自定义提示词只填草稿，下一次提交按字面发送，避免以 / 开头的提示词递归执行。配置、输入解析和校验在后台处理，整表保存比较原始 JSON，保留移动端键与格式。根页向导可确认批量配置，编辑器只改草稿，不能代执行任何聊天命令；模型选择页可确认修改全局模型。详见 slash-commands。
 
-
-            Mac 每日脉冲从设置侧栏或聊天快捷功能打开，卡片、任务、反馈历史、外部信号和设置使用独立标签。复用 Core 的数据库和保留规则，只展示今天的卡片，预先准备的明日内容不会提前显示。详情可喜欢、降权、隐藏、重置反馈、加入任务、保存为正式会话或继续聊；继续聊只填入草稿，不自动发送，重置反馈也不会删除历史事件。隐藏卡片可从今天的隐藏区域打开。
-
-            设置直接保存，包含启用、首次打开补生成、专用模型、焦点、明日策展、外部上下文和每卡时间。时间编辑器仅改草稿，须点击保存；外部时间变化时拒绝覆盖。页面向导只经原生确认修改设置与时间草稿，卡片和其他管理标签只读，不能生成、归档、继续聊、反馈、删除或执行快捷指令。介绍与编辑器各有独立上下文，切标签、离页、锁定及数据恢复使旧提案失效。
-
-            Mac 在应用运行且解锁时按实际送达时刻、午夜、回到前台与系统唤醒处理准备；没有轮询，也不保证休眠或退出后生成。通知点击冷启动时只暂存操作意图，工作区就绪后处理。反馈和任务按原 Core 保存，归档在后台创建会话；锁定取消生成并停用页面，备份、恢复和退出还会等待已接受持久化，恢复后丢弃旧通知操作。日期、正文解析与展示索引在后台准备，停止展示后不保留页面快照。
 
             Mac 用量统计位于设置侧栏的拓展能力分组，复用 Core 仪表盘和原数据库用量表。全量概览独立于详情筛选；通过热力图和月历选定日期，再切换日、周、月或全部。Token 趋势按 Core 小时/日期桶显示，另有模型堆叠图、模型榜单与来源明细。缓存与思考不重复计入总量；无命中率显示暂无数据，没有可展示费用汇总时不显示费用，不等于没有发生费用。估价沿用当前价格及请求发生时间，和消息功能栏优先采用已保存费用快照的规则不同；未记录历史不能从消息反推。
 
@@ -93,7 +86,7 @@ public enum GuideMacWorkspaceKnowledge {
 
             单项、会话和全局停止只取消当时运行中的任务，不关闭对应聊天；“停止此 Agent”调用共享会话运行时，停止该 Run 及其子 Run。原生确认固定范围和运行代次，导航或锁定使待确认操作失效，数据恢复等待已接受取消收尾。任务根页、详情、诊断和介绍各有只读向导；只提供 ID、类型、状态、计数及页码，不公开命令、参数、环境值、原始输出或诊断正文，不提供停止、复制、执行或发送工具。进入子页停止父页订阅但保留阅读位置，锁定和恢复清除旧快照。
 
-            工具中心与拓展功能的本机 Shell 页面提供启用开关、终端、任务和配置入口。开关自动保存，打开页面不会执行命令。配置保存默认 Shell、新会话模式、超时、模型输出上限、环境值脱敏与命令规则。各页面和介绍独立声明向导；设置提案需原生确认，切页使旧提案失效。向导不能输入终端或执行命令。
+            拓展功能的本机 Shell 页面提供启用开关、终端、任务和配置入口。开关自动保存，打开页面不会执行命令。配置保存默认 Shell、新会话模式、超时、模型输出上限、环境值脱敏与命令规则。各页面和介绍独立声明向导；设置提案需原生确认，切页使旧提案失效。向导不能输入终端或执行命令。
 
             本机 Shell 配置内可管理环境变量、命令规则和终端快捷键。变量名称会修整，值和备注保留字面空白，名称不区分大小写且不能重复。变量值默认隐藏，只在新建本机进程时注入；已运行进程不追加入值。向导根页不读值和备注，编辑器的值只写不可读，显示值只能手动切换。变量和规则编辑均需保存，旧原件或旧删除确认会被拒绝。命令安全总开关自动保存；规则支持前缀、后缀、正则及作用范围，拒绝优先于确认，确认优先于警告，列表顺序只决定同类命中的先后。规则不约束交互终端输入，也不是 shell 沙盒。正则校验在后台完成。
 
@@ -101,7 +94,6 @@ public enum GuideMacWorkspaceKnowledge {
 
             用户终端可以新建、切换、输入、使用已保存快捷键、复制当前屏幕、中断前台程序和确认结束。打开空页面不会自动创建进程；离页保留进程，重开后可重新选择。向 Agent 终端发送内容会取得输入控制，可显式交还。输出解析及快捷键编码在后台准备。终端向导只见 ID、数量和控制状态，不见命令草稿、环境值或输出；教程独立只读。锁定、备份、恢复和退出同步封闭新入口，取消准备及进程，等待任务诊断、Agent Run 清理和工作区统计落盘，并回收本机子进程。停止失败阻止数据库替换；恢复前收敛旧运行态，解锁或恢复不重放命令。真实 Mac PTY、进程取消与恢复尚未进行运行测试。
 
-            聊天输入区与工具中心均可打开本机会话浏览器，复用 Core 的 WKWebView、网页工具和审批。地址栏支持 http/https、域名及 Google 搜索，标签可新建、切换、右键关闭，支持前进、后退和重载。用户接管会停止载入并取消该会话的浏览器任务；交还或离页后刷新快照再释放控制权，不自动开始新聊天。标签按会话隔离；临时网站数据只在同一会话共享，开启保留登录后新标签使用本 App 在 Mac 上共享的持久数据，与 Safari 分开。普通会话的偏好后台自动保存并核对旧值；临时对话不可保存偏好。根页向导不读取网址、标题、正文、Cookie 或搜索词，设置页只可经确认修改登录偏好，说明页只读。向导不能操作网页或执行浏览器工具。锁定、备份、恢复和退出等待任务与写入收尾；数据库恢复关闭旧标签，WebKit 的持久网站数据不在数据库同步内。Mac 的移动 User-Agent 不模拟设备硬件，实际网页、截图、下载和 WebKit 取消行为仍需完整工具链下验证。
 
             Mac 聊天窗口左侧选择会话，右侧选择模型并输入消息；⌘N 新建会话，⌘Return 发送。附件通过系统文件选择器导入，正文与 Markdown 在后台准备。生成期间可以切换会话，工具调用继续使用 ETOSCore 的原生审批。右键消息可以复制、编辑或删除；编辑消息只修改历史，不执行其中的工具调用。消息正文不向页面向导公开。系统文件选择器属于系统页面，不提供配置向导。
 
@@ -116,9 +108,9 @@ public enum GuideMacWorkspaceKnowledge {
 
             “设置”窗口按手机端的核心设置和拓展能力排序，使用独立侧栏导航。提供商、模型和会话编辑器都保留草稿；向导确认仅更新这些编辑器的草稿，需要点击页面保存。模型编辑器的完成先返回提供商草稿，还需保存提供商。JSON 子页面返回时不直接保存；已有请求头、请求体与密钥对向导不可读，可以通过提案替换用户主动提供的新 JSON 对象。切换前台窗口、页面、协议或锁定应用后，旧页面提案不再可执行。
 
-            工具中心包含内置工具、快捷指令、Skills 和审批自动化入口。快捷指令页支持目录搜索、启用筛选、总开关和原生确认删除；删除仅移除配置。启用状态、直连/桥接优先、自定义描述及重新生成的描述保留详情草稿，保存和删除核对原记录，防止覆盖同步的新版本。锁定、导出、恢复和退出使旧页面失效，等待已接受写入并取消未提交准备。需要在本机安装同名系统快捷指令；数据库同步不会安装它们。
+            设置中的快捷指令集成页支持目录搜索、启用筛选、总开关和原生确认删除；删除仅移除配置。启用状态、直连/桥接优先、自定义描述及重新生成的描述保留详情草稿，保存和删除核对原记录，防止覆盖同步的新版本。锁定、导出、恢复和退出使旧页面失效，等待已接受写入并取消未提交准备。需要在本机安装同名系统快捷指令；数据库同步不会安装它们。
 
-            快捷指令导入支持剪贴板、粘贴 JSON、清单文件和 schemaVersion 1/light/deep 格式。后台预览按 deep 标记读取 iCloud 分享链接，把名称、元数据和来源摘要交给当前模型生成描述，不可用时回退模板。预览不保存或运行工具；点击导入后只新增不重名项，并在事务中再次检查冲突。配置页自动保存官方导入和桥接名称，手动打开安装链接或运行导出后，返回导入页手动读取剪贴板。完成回调只报告状态或结束已有调用，不触发自动导入。列表、详情、设置、导入及说明分别声明向导；导入页只读且不公开原始清单或任意元数据，其余页面仅修改允许的设置或草稿，不能运行快捷指令、生成描述、读取剪贴板、导入或删除。
+            快捷指令导入支持剪贴板、粘贴 JSON、清单文件和 schemaVersion 1/light/deep 格式。后台预览按 deep 标记读取 iCloud 分享链接，根据名称、元数据和来源摘要在本地生成描述。预览不保存或运行工具；点击导入后只新增不重名项，并在事务中再次检查冲突。配置页自动保存官方导入和桥接名称，手动打开安装链接或运行导出后，返回导入页手动读取剪贴板。完成回调只报告状态或结束已有调用，不触发自动导入。列表、详情、设置、导入及说明分别声明向导；导入页只读且不公开原始清单或任意元数据，其余页面仅修改允许的设置或草稿，不能运行快捷指令、生成描述、读取剪贴板、导入或删除。
 
             Skills 复用移动端目录与设置键，总开关与单项启用自动保存。支持粘贴 SKILL.md 创建、本地文件/目录/ZIP、GitHub 与链接导入，先显示预览，同名替换需要原生确认并替换整目录。详情可编辑 SKILL.md 和文本资源、新建或删除资源、修改脚本策略；保存与当前版本授权核对文件摘要，旧草稿不能覆盖新内容。图片、文档和二进制只列出原资源。向导对编辑器只改草稿，对开关与策略经确认直接保存；导入链接不可读，不执行下载、导入、删除、保存草稿或脚本。目录操作在后台完成，锁定、备份、恢复、退出等待已接受写入并取消导入准备，数据库恢复后重新加载路由。
 
@@ -167,16 +159,9 @@ public enum GuideMacWorkspaceKnowledge {
 
             Connection Exceptions opens from Security settings or Extended Features and manages HTTP and certificate exceptions remembered by this installation. Switches enable known addresses only; disabling or removing an exception stops affected connections. The root, details and introduction have read-only guides: trust decisions require native controls, and the guide cannot approve connections. Dates and address indexes are prepared in the background. The workspace owns accepted writes and waits for them during backup, restore and quit. Restored records are verified again, and old confirmations cannot cross a database restore. These settings do not control native stdio child processes, Local Shell, Safari or system certificate trust. See network-connection-exceptions.
 
-            Remote File Access opens from Extended Features and reuses HTTP/WebSocket debugging and Bonjour discovery. Address and mode are drafts. Connecting, disconnecting, scanning, clearing logs and saving/ignoring captures require native actions; capture confirmation binds to the request ID. The root guide may confirm a write-only address draft and protocol switch. Logs, capture confirmation and introduction are read-only contexts without log or capture contents. The workspace owns the connection across page navigation. Locking, backup, other restoration and quit disconnect and await cleanup; a remote upload entering maintenance avoids waiting for its own command. See remote-file-access for remaining file-protocol database boundaries.
 
-            Quick Commands in Extended Features are off by default. Enable them and type / to search the 19 built-ins and custom prompts, with arrow keys, Tab completion and Command-Return. Aliases match complete commands only; unknown input remains ordinary messages. Custom prompts fill the draft and are sent literally on the next submission, preventing recursive execution of prompts starting with /. Configuration, parsing and validation run in the background. Whole-list saves compare the original JSON and retain mobile keys and format. The root guide can confirm bulk configuration changes; editors only change drafts and cannot execute chat commands. The model picker supports confirmed global model changes. See slash-commands.
+            Quick Commands in Extended Features are off by default. Enable them and type / to search the built-in commands and custom prompts, with arrow keys, Tab completion and Command-Return. Aliases match complete commands only; unknown input remains ordinary messages. Custom prompts fill the draft and are sent literally on the next submission, preventing recursive execution of prompts starting with /. Configuration, parsing and validation run in the background. Whole-list saves compare the original JSON and retain mobile keys and format. The root guide can confirm bulk configuration changes; editors only change drafts and cannot execute chat commands. The model picker supports confirmed global model changes. See slash-commands.
 
-
-            Mac Daily Pulse opens from the chat toolbar, with separate tabs for cards, tasks, feedback history, external signals and settings. It reuses Core storage and retention: only today's cards are shown, and prepared tomorrow content is not revealed early. Card details support likes, downranking, hiding, resetting feedback, tasks, conversation archiving and continuing chat. Continuing fills a draft without sending; resetting feedback does not erase history events. Hidden cards remain accessible in today's hidden section.
-
-            Settings save directly: enablement, generation on first open, dedicated model, focus, tomorrow curation, external context and per-card delivery times. The time editor changes a draft and requires manual Save; external time changes prevent overwriting. The page guide may propose settings and time-draft changes through native confirmation. Cards and other management tabs are read-only to the guide. It cannot generate, archive, continue chat, give feedback, delete records or run shortcuts. Introduction and editor contexts are independent; changing tabs, leaving, locking or restoring invalidates old proposals.
-
-            While the Mac app is running and unlocked, preparation follows actual delivery times, midnight, activation and wake events without polling. Generation is not guaranteed during sleep or after quitting. Cold-start notification clicks queue intent until the workspace is ready. Archiving creates conversations in the background. Locking cancels generation and disables presentation; backup, restore and termination also drain accepted persistence. Restore discards old notification actions. Dates, text parsing and presentation indexes are prepared in the background, and presentation snapshots are cleared when hidden.
 
             Mac usage analytics is under Settings > Data. It reuses the Core dashboard and existing usage tables. Global totals stay independent of detail filters. Select a date in the heatmap or calendar, then choose day, week, month or all time. Token trends keep Core hour/day buckets, with a stacked model chart and model/source breakdowns. Cache and thinking tokens are not added twice. Missing cache rates show no data. An absent cost total does not prove no cost occurred. Estimates use current pricing and request time, unlike the message action bar’s preference for saved cost snapshots. Unrecorded history cannot be reconstructed from messages.
 
@@ -236,7 +221,7 @@ public enum GuideMacWorkspaceKnowledge {
 
             Stopping a job, session tasks or all tasks cancels currently running jobs without closing the chat. Stop This Agent uses the shared conversation runtime to stop that Run and its descendants. Native confirmation retains its scope and runtime revision; navigation or locking invalidates pending confirmations, and restore waits for accepted cancellation work. The list, detail, diagnostic and introduction pages each declare read-only guide context containing only IDs, kinds, states, counts and page numbers. Commands, arguments, environment values, raw output and diagnostic bodies remain hidden. The guide cannot stop, copy, execute or send anything. Parent subscriptions stop on child navigation while reading positions remain; locking and restore clear old snapshots.
 
-            Local Shell in Tool Center and Extended Features offers the enable switch, Terminal, Tasks and Configuration. The switch saves immediately; opening a page never executes commands. Configuration saves the default Shell, new-session mode, timeouts, model output limits, environment redaction and command rules. Each page and introduction declares a guide context. Proposals require native confirmation and become invalid after navigation. The guide cannot enter terminal input or run commands.
+            Local Shell in Extended Features offers the enable switch, Terminal, Tasks and Configuration. The switch saves immediately; opening a page never executes commands. Configuration saves the default Shell, new-session mode, timeouts, model output limits, environment redaction and command rules. Each page and introduction declares a guide context. Proposals require native confirmation and become invalid after navigation. The guide cannot enter terminal input or run commands.
 
             Local Shell settings manage environment variables, command rules and terminal shortcuts. Variable names are trimmed and unique ignoring case; values and notes retain literal whitespace. Values start hidden and apply only to newly created native processes. The root guide excludes values and notes; editor values are write-only, and revealing them is manual. Variable and rule drafts require Save, with stale originals and deletion confirmations rejected. The command-safety switch saves immediately. Rules support prefix, suffix, regex and execution scope: deny takes precedence over confirm, then warn; list order breaks ties within an action. Rules do not constrain interactive terminal input and are not a shell sandbox. Regex validation runs in the background.
 
@@ -244,7 +229,6 @@ public enum GuideMacWorkspaceKnowledge {
 
             The terminal supports creation, selection, input, saved shortcut keys, copying the current screen, foreground interruption and confirmed termination. Opening an empty page creates no process. Leaving preserves terminals for later selection. Sending to an Agent terminal claims input; it can be explicitly returned. Output parsing and shortcut encoding run in the background. The terminal guide exposes only IDs, counts and control state, with no input, environment values or output; its introduction is separately read-only. Lock, backup, restore and quit close admission synchronously, cancel preparation and processes, await diagnostics, Agent Run cleanup and workspace statistics, then reap native child processes. Stop failure prevents database replacement. Imported running states are recovered before admission resumes; commands are never replayed after unlock or restore. Native PTY operation, process cancellation and restore have not been runtime tested.
 
-            Open the session browser from the chat composer or Tool Center. It reuses Core’s local WKWebView, browser tools and approvals. Enter an http/https URL, a domain or a Google search; create, select or right-click to close tabs, and go back, forward or reload. Taking control stops loading and cancels browser jobs for that session. Returning control or leaving refreshes the snapshot and releases control without starting a chat request. Tabs are isolated by session. Temporary website data is shared within one session; keeping login state makes new tabs use this app’s shared persistent Mac data, separate from Safari. Regular chats save preferences in the background with stale-value checks; temporary chats cannot save them. The root guide cannot read addresses, titles, content, Cookies or search terms. Settings only allow the login preference after confirmation, and introductions are read-only. The guide cannot operate pages or execute browser tools. Locking, backup, restore and exit wait for jobs and writes; database restore closes old tabs. Persistent WebKit website data is outside database sync. Mac mobile User-Agent mode does not emulate device hardware. Actual pages, screenshots, downloads and WebKit cancellation still require runtime verification with the complete toolchain.
 
             Select a session in the Mac sidebar, choose a model and compose on the right. Command-N creates a session and Command-Return sends. Import attachments with the system file picker. Message and Markdown preparation runs in the background. Sessions can be switched during generation; ETOSCore still controls native tool approval. Right-click a message to copy, edit or delete it. Editing changes history without executing tool calls. Message content is hidden from the page guide. The system file picker has no app configuration guide.
 
@@ -254,7 +238,6 @@ public enum GuideMacWorkspaceKnowledge {
 
             Versioned messages offer deletion of the current version or all versions. Confirmation retains the source session. Deleting an attempt includes its tool results and keeps the user-question anchor; legacy messages remove individual content versions. A changed target or a newly selected attempt invalidates the old confirmation. Message editors also retain their source and cannot write a draft into a different session after switching. The deletion guide exposes only operation type and source ID, without message text or a deletion executor.
 
-            Choose Rewrite Reply from an assistant message menu to enter instructions and optionally reference earlier versions. The request does not include conversation history. Enable selection rewriting and drag over the original preview to map a plain-text selection back to Markdown. Only that source range is replaced, preserving both versions. Selection mode omits reference versions. Source mapping and previews are prepared in the background. Submission retains the source session and model and rejects drafts whose original text has changed. Stop cancels the network task and removes the placeholder version. The guide receives read-only state with original text and instructions hidden; submission is manual.
 
             The workspace has a classification sidebar, a session list and the conversation. Filter by folder, tag or system color. Folders show full paths and only their directly assigned sessions. Search checks titles, prompts and message text within the selected scope; searching and counts run in the background. Right-click sessions to move them or toggle multiple tags and colors. The sidebar plus menu creates folders and tags; category menus edit or delete them. System colors cannot be renamed or deleted. Editors and introduction pages declare their own guide context. Guide proposals change drafts only, and Save checks the original version. Deletion requires manual confirmation: deleting a folder includes its subfolders and moves their sessions to Uncategorized; deleting a tag retains conversation content. The guide sees read-only state during deletion confirmation.
 
@@ -262,7 +245,7 @@ public enum GuideMacWorkspaceKnowledge {
 
             Settings uses sidebar navigation with the same core categories and extension order as mobile. Provider, model and session editors keep drafts: confirming a guide proposal changes the draft, and Save commits it. Completing a model editor returns to the provider draft, which must also be saved. Returning from a JSON subpage does not save. Existing headers, request bodies and keys are unreadable to the guide; proposals may replace them with JSON objects the user supplies. Switching the foreground window, page or protocol, or locking the app invalidates old page proposals.
 
-            Tool Center contains Built-in Tools, Shortcuts, Skills and Approval Automation. Shortcuts supports search, enabled filtering, a main switch and deletion with native confirmation; deletion removes configuration only. Enabled state, direct/bridge priority, custom descriptions and regenerated descriptions remain drafts. Save and deletion check the original record to protect synced changes. Locking, export, restore and termination invalidate old pages, wait for accepted writes and cancel uncommitted preparation. Matching system shortcuts must be installed locally; database sync does not install them.
+            Shortcuts in Settings supports search, enabled filtering, a main switch and deletion with native confirmation; deletion removes configuration only. Enabled state, direct/bridge priority, custom descriptions and regenerated descriptions remain drafts. Save and deletion check the original record to protect synced changes. Locking, export, restore and termination invalidate old pages, wait for accepted writes and cancel uncommitted preparation. Matching system shortcuts must be installed locally; database sync does not install them.
 
             Shortcut import supports the clipboard, pasted JSON and manifest files in schemaVersion 1, light and deep formats. Background preview reads iCloud sharing links for deep imports and sends names, metadata and source summaries to the current model for descriptions, falling back to templates if unavailable. Preview neither saves nor runs tools. Import adds new names only and rechecks conflicts within the transaction. Setup saves official import and bridge names automatically. After manually opening the installation link or running the export, return to import and read the clipboard manually. Completion callbacks only report status or finish existing calls; they do not import automatically. The list, editor, setup, import and introductions declare separate guide contexts. Import is read-only and excludes raw manifests and arbitrary metadata. Other pages permit only declared settings or drafts; the guide cannot run shortcuts, generate descriptions, read the clipboard, import or delete tools.
 

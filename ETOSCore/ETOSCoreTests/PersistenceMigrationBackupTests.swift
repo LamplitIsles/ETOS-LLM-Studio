@@ -417,16 +417,6 @@ extension PersistenceTests {
         #expect(restoredProfile?.content == "恢复源用户画像")
         #expect(restoredProfile?.sourceSessionID == snapshotSession.id)
         #expect(Persistence.loadLocalLinuxEnvironmentVariables().contains { $0.id == linuxVariable.id && $0.value == linuxVariable.value })
-
-        // 再经“导入数据”入口恢复同一归档，确认关系表配置也与直接恢复一致。
-        #expect(Persistence.deleteLocalLinuxEnvironmentVariable(id: linuxVariable.id))
-        do {
-            _ = try ThirdPartyImportService.prepareImport(source: .etosBackup, fileURL: snapshotURL)
-            Issue.record("快照导入必须进入完整恢复确认")
-        } catch let request as SnapshotRestoreRequest {
-            try SnapshotRestoreService.restorePlainSnapshot(from: request.fileURL)
-        }
-        #expect(Persistence.loadLocalLinuxEnvironmentVariables().contains { $0.id == linuxVariable.id && $0.value == linuxVariable.value })
     }
 
     @Test("数据库物理加密开启时恢复快照会保持三处分库加密")

@@ -100,7 +100,7 @@ struct MacRequestControlEditor: View {
             .guideSettingsPageContext(id: pageID, title: NSLocalizedString("结构化控制", comment: ""),
                 documents: [GuideDocumentReference(id: "model-request-body", title: "Request Body Controls")], settings: guideSettings)
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 500, minHeight: 550)
         .sheet(isPresented: $editsPayload) {
             MacRequestParameterEditor(pageID: GuidePageID(rawValue: "\(pageID.rawValue)-payload"), parameters: draft.control.payload, mode: mode) { values, _, _ in
@@ -254,7 +254,7 @@ private struct MacRequestOptionEditor: View {
                     .string("title", label: NSLocalizedString("显示名称", comment: ""), allowsEmpty: false, get: { option.title }, set: { option.title = $0 })
                 ])
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 460, minHeight: 300)
         .sheet(isPresented: $editsPayload) {
             MacRequestParameterEditor(pageID: GuidePageID(rawValue: "\(pageID.rawValue)-payload"), parameters: option.payload, mode: mode,

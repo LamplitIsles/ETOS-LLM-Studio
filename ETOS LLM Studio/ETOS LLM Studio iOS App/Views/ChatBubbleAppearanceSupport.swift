@@ -249,7 +249,7 @@ extension ChatBubble {
         case .copyMessage:
             return !message.content.isEmpty
         case .readAloud:
-            return MessageActionBarAvailability.canReadAloud(message)
+            return allowsReadAloud && MessageActionBarAvailability.canReadAloud(message)
         case .requestTime:
             return messageRequestDate != nil
         case .inputTokens:

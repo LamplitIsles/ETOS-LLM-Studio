@@ -97,57 +97,6 @@ extension ChatService {
         }
     }
 
-    private func escapeXMLText(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-    }
-
-    public func generateShortcutToolDescription(
-        toolName: String,
-        metadata: [String: JSONValue],
-        source: String?
-    ) async -> String? {
-        guard let runnableModel = resolvedChatCapableModel() else {
-            return nil
-        }
-
-        let metadataText: String = {
-            guard !metadata.isEmpty else { return "{}" }
-            return JSONValue.dictionary(metadata).prettyPrintedCompact()
-        }()
-
-        let sourceText = source?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? (source?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-            : NSLocalizedString("无", comment: "")
-
-        let prompt = BuiltInPromptStore.render(
-            .shortcutDescription,
-            variables: [
-                "shortcut_name": escapeXMLText(toolName),
-                "metadata": escapeXMLText(metadataText),
-                "source_summary": escapeXMLText(sourceText)
-            ]
-        )
-
-        do {
-            let rawDescription = try await generateDetachedChatCompletion(
-                userPrompt: prompt,
-                temperature: 0.2,
-                runnableModel: runnableModel,
-                requestSource: .shortcutDescription
-            )
-            let text = rawDescription
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'”’"))
-            return text.isEmpty ? nil : text
-        } catch {
-            logger.warning("生成快捷指令描述失败: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
     /// 执行一次不落入聊天历史的独立推理请求，适合标题生成、每日摘要等辅助功能。
     public func generateDetachedChatCompletion(
         systemPrompt: String? = nil,

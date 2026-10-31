@@ -95,7 +95,7 @@ final class ChatTimelineEdgePanController: NSObject, UIGestureRecognizerDelegate
         case .began, .changed:
             guard !didReveal, let startLocationX else { return }
             let translation = gestureRecognizer.translation(in: scrollView)
-            guard ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+            guard ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
                 startLocationX: startLocationX,
                 viewportWidth: scrollView.bounds.width,
                 translation: CGSize(width: translation.x, height: translation.y)

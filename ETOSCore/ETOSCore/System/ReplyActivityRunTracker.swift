@@ -90,28 +90,6 @@ public struct ReplyActivityRunTracker {
     }
 }
 
-public enum BackgroundReplyNotificationPolicy {
-    public enum ApplicationVisibility {
-        case active
-        case inactive
-        case background
-    }
-
-    public enum Action: Equatable {
-        case suppress
-        case resolveTransition
-        case deliver
-    }
-
-    public static func action(for visibility: ApplicationVisibility, isCurrentSession: Bool) -> Action {
-        switch visibility {
-        case .active: return isCurrentSession ? .suppress : .deliver
-        case .inactive: return isCurrentSession ? .resolveTransition : .deliver
-        case .background: return .deliver
-        }
-    }
-}
-
 public enum ReplyActivityDismissalDecision: Equatable {
     case immediate
     case after(Date)

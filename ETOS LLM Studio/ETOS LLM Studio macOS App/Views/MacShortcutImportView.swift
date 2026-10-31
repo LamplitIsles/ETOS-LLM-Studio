@@ -38,7 +38,7 @@ struct MacShortcutImportView: View {
                         .accessibilityLabel(NSLocalizedString("内容", comment: ""))
                     Button(NSLocalizedString("预览", comment: "")) { prepare(.text(text)) }.disabled(text.isEmpty)
                 } footer: {
-                    Text(NSLocalizedString("预览会读取分享链接并使用当前模型生成描述，不会运行快捷指令。", comment: "")).font(.footnote).foregroundStyle(.secondary)
+                    Text(NSLocalizedString("预览会读取分享链接并在本地生成描述，不会运行快捷指令。", comment: "")).font(.footnote).foregroundStyle(.secondary)
                 }.disabled(!model.canWrite)
                 if model.isPreparing {
                     Section {

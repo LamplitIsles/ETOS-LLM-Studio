@@ -94,7 +94,7 @@ struct MacRoleplayBindingView: View {
                 settings: guideSettings
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 520, minHeight: 500)
         .interactiveDismissDisabled(saving)
         .confirmationDialog(NSLocalizedString("解除角色扮演绑定", comment: ""), isPresented: $confirmingRemoval, titleVisibility: .visible) {

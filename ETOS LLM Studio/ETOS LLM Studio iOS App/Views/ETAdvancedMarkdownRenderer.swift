@@ -11,6 +11,17 @@ import SwiftUI
 import MarkdownUI
 import ETOSCore
 
+private struct MarkdownRemoteImagesKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var markdownRemoteImagesEnabled: Bool {
+        get { self[MarkdownRemoteImagesKey.self] }
+        set { self[MarkdownRemoteImagesKey.self] = newValue }
+    }
+}
+
 struct ETAdvancedMarkdownRenderer: View {
     let content: String
     let preparedContent: ETPreparedMarkdownRenderPayload?
@@ -24,6 +35,7 @@ struct ETAdvancedMarkdownRenderer: View {
     var streamingState: ETStreamingMarkdownRenderState? = nil
     var streamingChannel: ETStreamingMarkdownChannel = .content
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.markdownRemoteImagesEnabled) private var remoteImagesEnabled
     @ObservedObject private var appConfig = AppConfigStore.shared
     @State private var preparedRuleRequest: ChatAppearanceTextRuleRenderRequest?
     @State private var ruleAttributedText: AttributedString?
@@ -199,10 +211,10 @@ struct ETAdvancedMarkdownRenderer: View {
         let codeTextColor = resolvedStyleColor(customTextStyleColors?.code, fallback: textColor)
         Markdown(markdownContent)
             .markdownImageProvider(
-                ETIOSMarkdownImageProvider(textColor: mathTextColor, fontScale: fontScale)
+                ETIOSMarkdownImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled)
             )
             .markdownInlineImageProvider(
-                ETIOSMarkdownInlineImageProvider(textColor: mathTextColor, fontScale: fontScale)
+                ETIOSMarkdownInlineImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled)
             )
             .etChatMarkdownBaseStyle(
                 textColor: textColor,

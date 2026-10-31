@@ -3,7 +3,7 @@
 // ============================================================================
 // ETOS LLM Studio iOS App
 //
-// 显示 Git 提交检查更新与 AI 摘要。
+// 显示 Git 提交和检查更新。
 // ============================================================================
 
 import SwiftUI
@@ -15,7 +15,6 @@ struct UpdateTimelineView: View {
     @ObservedObject private var appConfig = AppConfigStore.shared
     @Environment(\.openURL) private var openURL
     @State private var visibleTimelineLimit = 5
-    @State private var preparedSummaryMarkdown: ETPreparedMarkdownRenderPayload?
     @State private var linkedCommitNavigationTarget: LinkedUpdateTimelineCommit?
     @State private var showClearCacheConfirmation = false
 
@@ -46,7 +45,7 @@ struct UpdateTimelineView: View {
                 linkedCommitSection(highlightedCommit)
             }
             timelineSection
-            summarySection
+            appStoreSection
             statusSection
             controlsSection
         }
@@ -78,7 +77,6 @@ struct UpdateTimelineView: View {
             Button(NSLocalizedString("清空更新缓存", comment: "Clear update timeline cache"), role: .destructive) {
                 manager.clearPersistentCache()
                 visibleTimelineLimit = timelineInitialLimit
-                preparedSummaryMarkdown = nil
             }
             Button(NSLocalizedString("取消", comment: ""), role: .cancel) {}
         } message: {
@@ -86,9 +84,6 @@ struct UpdateTimelineView: View {
         }
         .task {
             await manager.refreshIfNeeded()
-        }
-        .task(id: manager.state.summaryText) {
-            await prepareSummaryMarkdown(for: manager.state.summaryText)
         }
         .onChange(of: displayedCommits.count) { _, newCount in
             if newCount <= timelineInitialLimit {
@@ -166,54 +161,19 @@ struct UpdateTimelineView: View {
     private var controlsSection: some View {
         Section {
             Toggle(NSLocalizedString("自动检查更新", comment: "Update timeline auto check toggle"), isOn: autoCheckBinding)
-            Toggle(NSLocalizedString("自动检查并总结", comment: "Update timeline auto summary toggle"), isOn: autoSummaryBinding)
-        } footer: {
-            Text(NSLocalizedString("自动总结默认关闭；关闭后可在这里手动请求 AI 基于差值 Commit 生成摘要。", comment: "Update timeline controls footer"))
-                .etFont(.footnote)
-                .foregroundStyle(.secondary)
         }
     }
 
-    private var summarySection: some View {
-        Section {
-            if let summary = manager.state.summaryText, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                UpdateSummaryMarkdownView(
-                    summary: summary,
-                    preparedSummary: preparedSummaryMarkdown,
-                    enableMarkdown: appConfig.enableMarkdown,
-                    enableAdvancedRenderer: appConfig.enableAdvancedRenderer
-                )
-                if let generatedAt = manager.state.summaryGeneratedAt {
-                    Text(String(format: NSLocalizedString("生成于 %@", comment: "Update timeline summary generated at"), generatedAt.formatted(date: .abbreviated, time: .shortened)))
-                        .etFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text(NSLocalizedString("还没有摘要。", comment: "Update timeline empty summary"))
-                    .foregroundStyle(.secondary)
-            }
-
-            if manager.state.allowsSummary {
-                Button {
-                    Task { await manager.generateSummary() }
-                } label: {
-                    Label(
-                        manager.isSummarizing
-                            ? NSLocalizedString("正在请求 AI 总结", comment: "Update timeline summarizing button")
-                            : NSLocalizedString("请求 AI 总结", comment: "Update timeline request summary button"),
-                        systemImage: "sparkles"
-                    )
-                }
-                .disabled(manager.isSummarizing || manager.state.summaryCommits.isEmpty)
-            } else if let appStoreURL = manager.state.appStoreURL {
+    @ViewBuilder
+    private var appStoreSection: some View {
+        if !manager.state.allowsSummary, let appStoreURL = manager.state.appStoreURL {
+            Section {
                 Button {
                     openURL(appStoreURL)
                 } label: {
                     Label(NSLocalizedString("前往 App Store 更新", comment: "Update timeline open App Store button"), systemImage: "arrow.up.circle")
                 }
             }
-        } header: {
-            Text(NSLocalizedString("AI 摘要", comment: "Update timeline summary section"))
         }
     }
 
@@ -262,19 +222,6 @@ struct UpdateTimelineView: View {
         )
     }
 
-    private var autoSummaryBinding: Binding<Bool> {
-        Binding(
-            get: { appConfig.updateTimelineAutoSummaryEnabled },
-            set: { newValue in
-                appConfig.updateTimelineAutoSummaryEnabled = newValue
-                manager.autoSummaryEnabled = newValue
-                if newValue {
-                    Task { await manager.generateSummaryIfNeeded() }
-                }
-            }
-        )
-    }
-
     private var statusColor: Color {
         switch manager.state.status {
         case .unknown:
@@ -286,54 +233,12 @@ struct UpdateTimelineView: View {
         }
     }
 
-    @MainActor
-    private func prepareSummaryMarkdown(for summary: String?) async {
-        guard let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            preparedSummaryMarkdown = nil
-            return
-        }
-        guard preparedSummaryMarkdown?.sourceText != summary else { return }
 
-        let prepared = await ETMarkdownPrecomputeWorker.shared.prepare(source: summary)
-        guard !Task.isCancelled else { return }
-        preparedSummaryMarkdown = prepared
-    }
 }
 
 private struct LinkedUpdateTimelineCommit: Identifiable, Hashable {
     let commit: UpdateTimelineCommit
     var id: String { commit.id }
-}
-
-private struct UpdateSummaryMarkdownView: View {
-    let summary: String
-    let preparedSummary: ETPreparedMarkdownRenderPayload?
-    let enableMarkdown: Bool
-    let enableAdvancedRenderer: Bool
-
-    var body: some View {
-        if enableMarkdown,
-           let preparedSummary,
-           preparedSummary.sourceText == summary {
-            ETAdvancedMarkdownRenderer(
-                content: summary,
-                preparedContent: preparedSummary,
-                enableMarkdown: true,
-                isOutgoing: false,
-                enableAdvancedRenderer: enableAdvancedRenderer,
-                enableMathRendering: enableAdvancedRenderer,
-                customTextColor: nil
-            )
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Text(summary)
-                .etFont(.body, sampleText: summary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 }
 
 private struct UpdateTimelineRow: View {

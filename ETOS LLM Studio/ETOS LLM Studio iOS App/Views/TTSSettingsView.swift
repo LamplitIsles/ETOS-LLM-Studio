@@ -76,7 +76,6 @@ struct TTSSettingsView: View {
             .string("selected_service_id", label: NSLocalizedString("当前服务", comment: "向导设置字段"), allowedValues: [""] + serviceStore.services.map { $0.id.uuidString }, get: { serviceStore.selectedServiceID?.uuidString ?? "" }, set: { serviceStore.select(UUID(uuidString: $0)) }),
             .bool("continue_in_background", label: NSLocalizedString("后台继续朗读", comment: "向导设置字段"), get: { appConfig.continueTTSPlaybackInBackground }, set: { appConfig.continueTTSPlaybackInBackground = $0 }),
             .bool("cache_network_audio", label: NSLocalizedString("缓存网络音频用于重播", comment: "向导设置字段"), get: { appConfig.ttsCacheNetworkAudioForReplay }, set: { appConfig.ttsCacheNetworkAudioForReplay = $0 }),
-            .bool("auto_play_after_response", label: NSLocalizedString("回复完成后自动朗读", comment: "向导设置字段"), get: { settingsStore.autoPlayAfterAssistantResponse }, set: { settingsStore.autoPlayAfterAssistantResponse = $0 }),
             .string("text_selection_mode", label: NSLocalizedString("朗读内容", comment: "向导设置字段"), allowedValues: TTSTextSelectionMode.allCases.map(\.rawValue), get: { textSelectionModeBinding.wrappedValue.rawValue }, set: { if let mode = TTSTextSelectionMode(rawValue: $0) { textSelectionModeBinding.wrappedValue = mode } }),
             .bool("filter_code_and_html", label: NSLocalizedString("过滤代码与 HTML 标签", value: "Filter Code and HTML Tags", comment: "TTS 内容过滤开关"), get: { appConfig.ttsFilterCodeAndHTML }, set: { appConfig.ttsFilterCodeAndHTML = $0 }),
             .double("system_speech_rate", label: NSLocalizedString("系统语速", comment: "向导设置字段"), range: 0.1...3, get: { Double(settingsStore.speechRate) }, set: { settingsStore.speechRate = Float($0) }),
@@ -149,7 +148,6 @@ struct TTSSettingsView: View {
                 NSLocalizedString("缓存网络音频用于重播", comment: "TTS network audio replay cache"),
                 isOn: $appConfig.ttsCacheNetworkAudioForReplay
             )
-            Toggle(NSLocalizedString("回复完成后自动朗读", comment: ""), isOn: $settingsStore.autoPlayAfterAssistantResponse)
             Picker(NSLocalizedString("朗读内容", comment: "TTS text selection picker"), selection: textSelectionModeBinding) {
                 ForEach(TTSTextSelectionMode.allCases, id: \.self) { mode in
                     Text(mode.localizedName).tag(mode)

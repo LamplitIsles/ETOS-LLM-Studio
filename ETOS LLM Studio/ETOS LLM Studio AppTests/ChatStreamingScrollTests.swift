@@ -124,42 +124,42 @@ struct ChatStreamingScrollTests {
 
     @Test("拖动立即解除吸底且松手后仅在底部重新接管")
     func testBottomPinIntentPrioritizesUserInteraction() {
-        #expect(!ChatView.resolvedBottomPinIntent(
+        #expect(!ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: true,
             distanceToBottom: 0,
             arrivalTolerance: 1,
             isUserInteracting: true,
             isLayoutSettling: false
         ))
-        #expect(ChatView.resolvedBottomPinIntent(
+        #expect(ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: true,
             distanceToBottom: 80,
             arrivalTolerance: 1,
             isUserInteracting: false,
             isLayoutSettling: false
         ))
-        #expect(!ChatView.resolvedBottomPinIntent(
+        #expect(!ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: false,
             distanceToBottom: 12,
             arrivalTolerance: 1,
             isUserInteracting: false,
             isLayoutSettling: false
         ))
-        #expect(!ChatView.resolvedBottomPinIntent(
+        #expect(!ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: false,
             distanceToBottom: 48,
             arrivalTolerance: 1,
             isUserInteracting: false,
             isLayoutSettling: false
         ))
-        #expect(ChatView.resolvedBottomPinIntent(
+        #expect(ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: false,
             distanceToBottom: 0.5,
             arrivalTolerance: 1,
             isUserInteracting: false,
             isLayoutSettling: false
         ))
-        #expect(!ChatView.resolvedBottomPinIntent(
+        #expect(!ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: false,
             distanceToBottom: 0,
             arrivalTolerance: 1,
@@ -170,7 +170,7 @@ struct ChatStreamingScrollTests {
 
     @Test("向上程序导航期间即使仍在底部也不能重新吸底")
     func testMessageNavigationSuppressesBottomPinIntent() {
-        #expect(!ChatView.resolvedBottomPinIntent(
+        #expect(!ChatTimelineInteraction.resolvedBottomPinIntent(
             currentIntent: true,
             distanceToBottom: 0,
             arrivalTolerance: 1,
@@ -278,57 +278,18 @@ struct ChatStreamingScrollTests {
 
     @Test("尺寸变化只在贴底状态下使用底部锚点")
     func testChatSizeChangeAnchorFollowsBottomIntent() {
-        #expect(ChatView.chatSizeChangeScrollAnchor(
+        #expect(ChatTimelineInteraction.chatSizeChangeScrollAnchor(
             keepsBottomPinned: true,
             isStreaming: false
         ) == .bottom)
-        #expect(ChatView.chatSizeChangeScrollAnchor(
+        #expect(ChatTimelineInteraction.chatSizeChangeScrollAnchor(
             keepsBottomPinned: false,
             isStreaming: false
         ) == nil)
-        #expect(ChatView.chatSizeChangeScrollAnchor(
+        #expect(ChatTimelineInteraction.chatSizeChangeScrollAnchor(
             keepsBottomPinned: true,
             isStreaming: true
         ) == nil)
     }
 
-    @Test("自动历史窗口只在真实滚到边缘时记录一次加载意图")
-    func testAutomaticHistoryLoadingRequiresEdgeInteraction() {
-        let firstMessageID = UUID()
-
-        #expect(!ChatView.shouldQueueAutomaticHistoryLoad(
-            usesAutomaticHistoryWindow: true,
-            isUserInteracting: false,
-            distanceToEdge: 0,
-            triggerDistance: 240,
-            anchorMessageID: firstMessageID,
-            lastLoadAnchorID: nil
-        ))
-        #expect(ChatView.shouldQueueAutomaticHistoryLoad(
-            usesAutomaticHistoryWindow: true,
-            isUserInteracting: true,
-            distanceToEdge: 120,
-            triggerDistance: 240,
-            anchorMessageID: firstMessageID,
-            lastLoadAnchorID: nil
-        ))
-        #expect(!ChatView.shouldQueueAutomaticHistoryLoad(
-            usesAutomaticHistoryWindow: true,
-            isUserInteracting: true,
-            distanceToEdge: 120,
-            triggerDistance: 240,
-            anchorMessageID: firstMessageID,
-            lastLoadAnchorID: firstMessageID
-        ))
-
-        #expect(ChatView.shouldQueueAutomaticHistoryLoad(
-            usesAutomaticHistoryWindow: true,
-            isUserInteracting: true,
-            distanceToEdge: 120,
-            triggerDistance: 240,
-            anchorMessageID: firstMessageID,
-            lastLoadAnchorID: nil
-        ))
-
-    }
 }

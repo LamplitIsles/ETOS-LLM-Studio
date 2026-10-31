@@ -8,52 +8,41 @@
 
 import SwiftUI
 import Foundation
-import CoreTransferable
-import PhotosUI
 import UIKit
-import UniformTypeIdentifiers
 import ETOSCore
+
+struct CFLComposerState {
+    let canSend: Bool
+    let isSubmitting: Bool
+    let isResponding: Bool
+}
 
 /// Telegram 风格的消息输入框
 struct TelegramMessageComposer: View {
-    @EnvironmentObject var viewModel: ChatViewModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @ObservedObject var appConfig = AppConfigStore.shared
-    @ObservedObject private var composerDraftState = AppConfigStore.shared.composerDraftState
-    @ObservedObject private var customSlashCommandStore = CustomChatSlashCommandStore.shared
-    @ObservedObject var submissionState: ChatSendSubmissionState
     let sendFlightController: ChatSendFlightController
     @Binding var text: String
-    @Binding var isRequestControlsExpanded: Bool
-    @Binding var localAgentMode: LocalAgentMode
-    var isSendActionPending: Bool { submissionState.isPending(for: viewModel.currentSession?.id) }
-    var isSending: Bool { viewModel.isSendingMessage || viewModel.isSendDelayPending || isSendActionPending }
+    var isSendActionPending: Bool { cflState.isSubmitting }
+    var isSending: Bool { cflState.isResponding }
+    var composerCanSend: Bool { cflState.canSend }
+    var composerSupportsSpeech: Bool { appConfig.enableSpeechInput }
+    private var composerRecordingFormat: AudioRecordingFormat {
+        AudioRecordingFormat(rawValue: appConfig.audioRecordingFormat) ?? .aac
+    }
     let sendAction: () -> Bool
     let stopAction: () -> Void
-    let slashCommandAction: (ChatSlashCommand) -> Void
     let focus: FocusState<Bool>.Binding
     var availableHeight: CGFloat = .infinity
+    var cflState: CFLComposerState
 
-    @State private var showImagePicker = false
-    @State private var showCamera = false
-    @State private var showAudioRecorder = false
-    @State private var audioRecorderSheetDetent: PresentationDetent = .fraction(0.5)
-    @State private var audioRecorderEntryMode: AudioRecorderEntryMode = .attachment
-    @State private var showAudioImporter = false
-    @State private var showFileImporter = false
-    @State private var selectedPhotos: [PhotosPickerItem] = []
-    @State private var photoImportTask: Task<Void, Never>?
-    @State private var cameraImagePreparationTask: Task<Void, Never>?
     @State var isExpandedComposer = false
-    @State var adaptiveRequestControls: [ModelRequestBodyControl] = []
     @State var adaptiveHasSendableText = false
-    @State var adaptiveRecognizedSlashCommand: ChatSlashCommandSuggestion?
-    @State var slashCommandSuggestions: [ChatSlashCommandSuggestion] = []
-    @State private var customSlashCommandPrefilledPrompt: String?
     @StateObject var inlineSpeechRecorder = InlineSpeechRecorderController()
     @Namespace var adaptiveGlassNamespace
-    @State private var inlineSpeechFinalizeTask: Task<Void, Never>?
+    @State private var inlineSpeechStartTask: Task<Void, Never>?
+    @State private var inlineSpeechTranscriptionTask: Task<Void, Never>?
     @State var inlineSpeechPreparedTranscript: String?
     @State private var showInlineSpeechError = false
     @State private var inlineSpeechErrorMessage: String?
@@ -68,11 +57,6 @@ struct TelegramMessageComposer: View {
     private var composerReservedHeight: CGFloat {
         adaptiveControlSize + 16
     }
-    var hasUpperComposerContent: Bool {
-        !viewModel.pendingImageAttachments.isEmpty || viewModel.pendingAudioAttachment != nil
-            || !viewModel.pendingFileAttachments.isEmpty
-            || (!slashCommandSuggestions.isEmpty && !isRequestControlsExpanded)
-    }
     private var estimatedCompactInputWidth: CGFloat {
         max(0, UIScreen.main.bounds.width - 16 * 2 - adaptiveControlSize * 2 - 10 * 2)
     }
@@ -81,125 +65,35 @@ struct TelegramMessageComposer: View {
     var compactTextEdgeInset: CGFloat { 6 }
     private var isLiquidGlassEnabled: Bool {
         if #available(iOS 26.0, *) {
-            return viewModel.enableLiquidGlass
+            return appConfig.enableLiquidGlass
         }
         return false
-    }
-    private var isCameraAvailable: Bool {
-        UIImagePickerController.isSourceTypeAvailable(.camera)
     }
     var body: some View {
         ChatComposerHeightLimit(maximumHeight: availableHeight) {
             VStack(spacing: 8) {
-                if !viewModel.pendingImageAttachments.isEmpty || viewModel.pendingAudioAttachment != nil || !viewModel.pendingFileAttachments.isEmpty {
-                    telegramAttachmentPreview
-                        .padding(.horizontal, 16)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .layoutPriority(1)
-                }
-
-                if !slashCommandSuggestions.isEmpty && !isRequestControlsExpanded {
-                    ChatSlashCommandSuggestionPanel(
-                        commands: slashCommandSuggestions,
-                        usesLiquidGlass: viewModel.enableLiquidGlass,
-                        glassTintOpacity: appConfig.liquidGlassTintOpacity,
-                        onSelect: performSuggestedSlashCommand
-                    )
-                    .padding(.horizontal, 16)
-                    .layoutPriority(1)
-                    .transition(
-                        accessibilityReduceMotion ? .opacity : .scale(scale: 0.98, anchor: .bottom)
-                            .combined(with: .opacity)
-                    )
-                }
-
                 if usesCardComposer {
                     cardComposerLayout
                         .zIndex(1)
                 } else {
-                    // 上方存在附件或建议时必须报告真实高度，不能从固定占位向上盖住兄弟控件。
                     composerOverlayContent
-                        .frame(height: hasUpperComposerContent ? nil : composerReservedHeight, alignment: .bottom)
+                        .frame(height: composerReservedHeight, alignment: .bottom)
                         .zIndex(1)
                 }
             }
             .padding(.bottom, 6)
         }
-        .animation(
-            accessibilityReduceMotion
-                ? nil
-                : .spring(response: 0.3, dampingFraction: 1),
-            value: slashCommandSuggestions
-        )
-        .photosPicker(
-            isPresented: $showImagePicker,
-            selection: $selectedPhotos,
-            matching: .any(of: [.images, .videos])
-        )
-        .onChange(of: selectedPhotos) { _, newItems in
-            photoImportTask?.cancel()
-            guard !newItems.isEmpty else {
-                photoImportTask = nil
-                return
-            }
-            let sessionID = viewModel.currentSession?.id
-            photoImportTask = Task {
-                defer {
-                    // A→B→A 的旧 A 即使值相同，也不能清掉新选择。
-                    if !Task.isCancelled, selectedPhotos == newItems { selectedPhotos = [] }
-                }
-                for item in newItems {
-                    guard !Task.isCancelled, viewModel.currentSession?.id == sessionID else { return }
-                    let videoType = item.supportedContentTypes.first { $0.conforms(to: .movie) }
-                    if let videoType {
-                        guard let video = try? await item.loadTransferable(
-                            type: PickedChatVideo.self
-                        ) else {
-                            continue
-                        }
-                        let fileExtension = video.fileExtension
-                        let mimeType = videoType.preferredMIMEType ?? video.mimeType
-                        let fileName = "video_\(UUID().uuidString).\(fileExtension)"
-                        guard !Task.isCancelled, viewModel.currentSession?.id == sessionID else { return }
-                        viewModel.addFileAttachment(FileAttachment(
-                            data: video.data,
-                            mimeType: mimeType,
-                            fileName: fileName
-                        ))
-                    } else if let data = try? await item.loadTransferable(type: Data.self) {
-                        await viewModel.addImageAttachment(data: data, forSessionID: sessionID)
-                    }
-                }
-            }
-        }
         .onChange(of: text) { _, newValue in
             handleAutoExpand(for: newValue)
-        }
-        .onChange(of: appConfig.enableSlashCommands) { _, _ in
-            refreshSlashCommandState(for: text)
         }
         .onChange(of: appConfig.chatComposerStyle) { _, _ in
             withAnimation(adaptiveComposerAnimation) {
                 isExpandedComposer = false
-                isRequestControlsExpanded = false
             }
             handleAutoExpand(for: text)
         }
-        .onChange(of: customSlashCommandStore.commands) { _, _ in
-            refreshSlashCommandState(for: text)
-        }
-        .onChange(of: showAudioRecorder) { _, presented in
-            if presented {
-                audioRecorderSheetDetent = .fraction(0.5)
-            }
-        }
         .onChange(of: focus.wrappedValue) { _, isFocused in
             if isFocused {
-                if isRequestControlsExpanded {
-                    withAnimation(adaptiveComposerAnimation) {
-                        isRequestControlsExpanded = false
-                    }
-                }
                 handleAutoExpand(for: text)
             } else if isExpandedComposer {
                 withAnimation(adaptiveComposerAnimation) {
@@ -213,206 +107,43 @@ struct TelegramMessageComposer: View {
             Text(inlineSpeechErrorMessage ?? NSLocalizedString("发生未知错误，请稍后重试。", comment: ""))
         }
         .onDisappear {
-            photoImportTask?.cancel()
-            photoImportTask = nil
-            cameraImagePreparationTask?.cancel()
-            cameraImagePreparationTask = nil
-            isRequestControlsExpanded = false
-            inlineSpeechFinalizeTask?.cancel()
-            inlineSpeechFinalizeTask = nil
+            inlineSpeechStartTask?.cancel()
+            inlineSpeechStartTask = nil
+            inlineSpeechTranscriptionTask?.cancel()
+            inlineSpeechTranscriptionTask = nil
             inlineSpeechPreparedTranscript = nil
             inlineSpeechRecorder.cancel()
-        }
-        .onAppear {
-            refreshSlashCommandState(for: text)
-        }
-        .fullScreenCover(isPresented: $showCamera) {
-            ZStack {
-                // 系统相机使用黑色舞台；覆盖安全区，避免 Hosting 容器露出白边。
-                Color.black
-                    .ignoresSafeArea()
-
-                CameraImagePicker(isPresented: $showCamera) { image in
-                    cameraImagePreparationTask?.cancel()
-                    if let image {
-                        let sessionID = viewModel.currentSession?.id
-                        cameraImagePreparationTask = Task {
-                            await viewModel.addImageAttachment(image, forSessionID: sessionID)
-                        }
-                    } else {
-                        cameraImagePreparationTask = nil
-                    }
-                }
-                .ignoresSafeArea()
-            }
-        }
-        .sheet(isPresented: $showAudioRecorder) {
-            AudioRecorderSheet(
-                format: viewModel.audioRecordingFormat,
-                mode: recorderMode,
-                transcribeRemotely: { model, attachment in
-                    try await viewModel.transcribeAudioAttachment(using: model, attachment: attachment)
-                },
-                onCompleteAudio: { attachment in
-                    viewModel.setAudioAttachment(attachment)
-                },
-                onCompleteTranscript: { transcript in
-                    appendTranscribedTextToComposer(transcript)
-                }
-            )
-            .presentationDetents([.fraction(0.5), .large], selection: $audioRecorderSheetDetent)
-            .presentationDragIndicator(.visible)
-        }
-        .fileImporter(
-            isPresented: $showAudioImporter,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                importAudioAttachment(from: url)
-            case .failure(let error):
-                print(String(format: NSLocalizedString("无法加载音频文件: %@", comment: ""), error.localizedDescription))
-            }
-        }
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                for url in urls {
-                    importFileAttachment(from: url)
-                }
-            case .failure(let error):
-                print(String(format: NSLocalizedString("无法加载文件: %@", comment: ""), error.localizedDescription))
-            }
         }
     }
 
     private var composerOverlayContent: some View {
-        // 无附件时保留向上展开；有兄弟时接受键盘上方的有限高度，让正文在编辑器内滚动。
+        // 保留向上展开的输入框及其发送动画锚点。
         adaptiveComposerContent
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .fixedSize(horizontal: false, vertical: !hasUpperComposerContent)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .bottom)
             // 测真实展开内容，不能把外层 60pt 占位当成输入框顶部。
             .background(ChatSendFlightLayoutAnchor(controller: sendFlightController, region: .composerContent))
             .animation(adaptiveComposerAnimation, value: isExpandedComposer)
             .animation(adaptiveComposerAnimation, value: inlineSpeechRecorder.phase)
-            .animation(adaptiveComposerAnimation, value: isRequestControlsExpanded)
-    }
-
-    func attachmentMenuButton(
-        size: CGFloat,
-        participatesInGlassContainer: Bool = false,
-        embeddedInCard: Bool = false
-    ) -> some View {
-        Menu {
-            Button {
-                showImagePicker = true
-            } label: {
-                Label(NSLocalizedString("选择照片或视频", comment: ""), systemImage: "photo.on.rectangle")
-            }
-
-            Button {
-                showCamera = true
-            } label: {
-                Label(NSLocalizedString("拍照", comment: ""), systemImage: "camera")
-            }
-            .disabled(!isCameraAvailable)
-
-            Button {
-                audioRecorderEntryMode = .attachment
-                showAudioRecorder = true
-            } label: {
-                Label(NSLocalizedString("录制语音", comment: ""), systemImage: "waveform")
-            }
-
-            Button {
-                showAudioImporter = true
-            } label: {
-                Label(NSLocalizedString("从录音备忘录上传", comment: ""), systemImage: "music.note.list")
-            }
-
-            Button {
-                showFileImporter = true
-            } label: {
-                Label(NSLocalizedString("选择文件", comment: ""), systemImage: "doc")
-            }
-        } label: {
-            attachmentMenuLabel(
-                size: size,
-                participatesInGlassContainer: participatesInGlassContainer,
-                embeddedInCard: embeddedInCard
-            )
-        }
-        .buttonStyle(
-            ComposerPressButtonStyle(
-                usesSystemGlassFeedback: participatesInGlassContainer
-                    && isLiquidGlassEnabled
-            )
-        )
-        .accessibilityLabel(NSLocalizedString("添加附件", comment: "聊天输入栏附件菜单"))
-    }
-
-    @ViewBuilder
-    private func attachmentMenuLabel(
-        size: CGFloat,
-        participatesInGlassContainer: Bool,
-        embeddedInCard: Bool
-    ) -> some View {
-        let label = Image(systemName: embeddedInCard ? "plus" : "paperclip")
-            .etFont(.system(size: max(14, size * 0.45), weight: .semibold))
-            .foregroundColor(TelegramColors.attachButtonColor)
-            .frame(width: size, height: size)
-
-        if embeddedInCard {
-            label
-                .background(Circle().fill(Color.primary.opacity(0.08)))
-        } else if #available(iOS 26.0, *),
-           isLiquidGlassEnabled,
-           participatesInGlassContainer {
-            label
-                .background(Circle().fill(glassOverlayColor))
-                .glassEffect(.clear.interactive(), in: Circle())
-                .overlay(Circle().stroke(glassStrokeColor, lineWidth: 0.5))
-                .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-        } else {
-            label
-                .background(glassCircleBackground)
-        }
-    }
-
-    private var recorderMode: AudioRecorderSheet.Mode {
-        guard audioRecorderEntryMode == .speechInput, viewModel.enableSpeechInput else {
-            return .audioAttachment
-        }
-        guard !viewModel.sendSpeechAsAudio else {
-            return .audioAttachment
-        }
-        if let model = viewModel.selectedSpeechModel ?? viewModel.speechModels.first {
-            return .speechToText(model: model)
-        }
-        return .audioAttachment
     }
 
     func startInlineSpeechRecording() {
-        inlineSpeechFinalizeTask?.cancel()
-        inlineSpeechFinalizeTask = nil
+        inlineSpeechStartTask?.cancel()
+        inlineSpeechTranscriptionTask?.cancel()
+        inlineSpeechTranscriptionTask = nil
         inlineSpeechPreparedTranscript = nil
-        audioRecorderEntryMode = .speechInput
         inlineSpeechRecorder.prepareForRecording()
         focus.wrappedValue = false
-        Task { @MainActor in
+        inlineSpeechStartTask = Task { @MainActor in
             do {
                 try validateInlineSpeechInput()
                 await Task.yield()
-                try await inlineSpeechRecorder.start(format: viewModel.audioRecordingFormat)
+                try Task.checkCancellation()
+                try await inlineSpeechRecorder.start(format: composerRecordingFormat)
             } catch {
+                guard !Task.isCancelled else { return }
                 inlineSpeechErrorMessage = error.localizedDescription
                 showInlineSpeechError = true
                 inlineSpeechRecorder.cancel()
@@ -422,19 +153,11 @@ struct TelegramMessageComposer: View {
 
     func stopInlineSpeechRecording() {
         inlineSpeechRecorder.stopForPreview()
-        if viewModel.sendSpeechAsAudio {
-            scheduleInlineAudioAttachment()
-        } else {
-            transcribeInlineSpeechRecording()
-        }
+        transcribeInlineSpeechRecording()
     }
 
     func confirmInlineSpeechRecording() {
-        inlineSpeechFinalizeTask?.cancel()
-        inlineSpeechFinalizeTask = nil
-        if viewModel.sendSpeechAsAudio {
-            completeInlineAudioAttachment()
-        } else if let preparedTranscript = inlineSpeechPreparedTranscript, !preparedTranscript.isEmpty {
+        if let preparedTranscript = inlineSpeechPreparedTranscript, !preparedTranscript.isEmpty {
             appendTranscribedTextToComposer(preparedTranscript)
             inlineSpeechPreparedTranscript = nil
             inlineSpeechRecorder.cancel()
@@ -444,56 +167,26 @@ struct TelegramMessageComposer: View {
     }
 
     func cancelInlineSpeechRecording() {
-        inlineSpeechFinalizeTask?.cancel()
-        inlineSpeechFinalizeTask = nil
+        inlineSpeechStartTask?.cancel()
+        inlineSpeechStartTask = nil
+        inlineSpeechTranscriptionTask?.cancel()
+        inlineSpeechTranscriptionTask = nil
         inlineSpeechPreparedTranscript = nil
         inlineSpeechRecorder.cancel()
     }
 
-    private func scheduleInlineAudioAttachment() {
-        inlineSpeechFinalizeTask?.cancel()
-        inlineSpeechFinalizeTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard !Task.isCancelled else { return }
-            completeInlineAudioAttachment()
-        }
-    }
-
-    private func completeInlineAudioAttachment() {
-        do {
-            if inlineSpeechRecorder.phase == .recording {
-                inlineSpeechRecorder.stopForPreview()
-            }
-            let attachment = try inlineSpeechRecorder.makeAttachment(format: viewModel.audioRecordingFormat)
-            viewModel.setAudioAttachment(attachment)
-            inlineSpeechPreparedTranscript = nil
-            inlineSpeechRecorder.cancel()
-        } catch {
-            inlineSpeechErrorMessage = error.localizedDescription
-            showInlineSpeechError = true
-            inlineSpeechPreparedTranscript = nil
-            inlineSpeechRecorder.cancel()
-        }
-    }
-
     private func transcribeInlineSpeechRecording() {
-        inlineSpeechFinalizeTask?.cancel()
-        inlineSpeechFinalizeTask = nil
+        inlineSpeechTranscriptionTask?.cancel()
         inlineSpeechPreparedTranscript = nil
         inlineSpeechRecorder.beginTranscribing()
-        Task { @MainActor in
+        inlineSpeechTranscriptionTask = Task { @MainActor in
             do {
-                let model = try selectedInlineSpeechModel()
-                let attachment = try inlineSpeechRecorder.makeAttachment(format: viewModel.audioRecordingFormat)
-                let transcript: String
-                if ChatService.isSystemSpeechRecognizerModel(model) {
-                    transcript = try await SystemSpeechRecognizerService.transcribe(
-                        audioData: attachment.data,
-                        fileExtension: attachment.format
-                    )
-                } else {
-                    transcript = try await viewModel.transcribeAudioAttachment(using: model, attachment: attachment)
-                }
+                let attachment = try inlineSpeechRecorder.makeAttachment(format: composerRecordingFormat)
+                let transcript = try await SystemSpeechRecognizerService.transcribe(
+                    audioData: attachment.data,
+                    fileExtension: attachment.format
+                )
+                try Task.checkCancellation()
                 let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmedTranscript.isEmpty else {
                     throw NSError(
@@ -505,6 +198,7 @@ struct TelegramMessageComposer: View {
                 inlineSpeechPreparedTranscript = trimmedTranscript
                 inlineSpeechRecorder.showTranscriptPreview()
             } catch {
+                guard !Task.isCancelled else { return }
                 inlineSpeechErrorMessage = error.localizedDescription
                 showInlineSpeechError = true
                 inlineSpeechPreparedTranscript = nil
@@ -514,40 +208,23 @@ struct TelegramMessageComposer: View {
     }
 
     private func validateInlineSpeechInput() throws {
-        guard viewModel.enableSpeechInput else {
+        guard composerSupportsSpeech else {
             throw NSError(
                 domain: "InlineSpeechRecorder",
                 code: -1,
                 userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("语言输入已被关闭。", comment: "")]
             )
         }
-        guard viewModel.sendSpeechAsAudio || (viewModel.selectedSpeechModel ?? viewModel.speechModels.first) != nil else {
-            throw NSError(
-                domain: "InlineSpeechRecorder",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("请选择一个语音转文字模型。", comment: "")]
-            )
-        }
-    }
-
-    private func selectedInlineSpeechModel() throws -> RunnableModel {
-        if let model = viewModel.selectedSpeechModel ?? viewModel.speechModels.first {
-            return model
-        }
-        throw NSError(
-            domain: "InlineSpeechRecorder",
-            code: -1,
-            userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("请选择一个语音转文字模型。", comment: "")]
-        )
     }
 
     private func appendTranscribedTextToComposer(_ transcript: String) {
-        viewModel.appendTranscribedText(transcript)
-        text = viewModel.userInput
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let separator = text.isEmpty || (text.last?.isWhitespace ?? false) ? "" : " "
+        text += separator + trimmed
     }
 
     private func handleAutoExpand(for newValue: String) {
-        refreshSlashCommandState(for: newValue)
         let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
         // 复用自动展开时的文本规整结果，避免视图渲染时重复扫描草稿。
         adaptiveHasSendableText = !trimmed.isEmpty
@@ -570,8 +247,8 @@ struct TelegramMessageComposer: View {
         let availableWidth = baseAvailableWidth - Self.compactInlineControlsReservedWidth(
             controlSize: adaptiveControlSize,
             textEdgeInset: compactTextEdgeInset,
-            showsRequestControls: !adaptiveRequestControls.isEmpty,
-            showsSpeechButton: viewModel.enableSpeechInput
+            showsRequestControls: false,
+            showsSpeechButton: composerSupportsSpeech
         )
         let hasExplicitNewline = newValue.contains("\n")
         var shouldExpand = hasExplicitNewline
@@ -594,49 +271,6 @@ struct TelegramMessageComposer: View {
             withAnimation(adaptiveComposerAnimation) {
                 isExpandedComposer = false
             }
-        }
-    }
-
-    private func refreshSlashCommandState(for value: String) {
-        guard appConfig.enableSlashCommands else {
-            adaptiveRecognizedSlashCommand = nil
-            slashCommandSuggestions = []
-            return
-        }
-
-        if customSlashCommandPrefilledPrompt == value {
-            adaptiveRecognizedSlashCommand = nil
-            slashCommandSuggestions = []
-            return
-        }
-        customSlashCommandPrefilledPrompt = nil
-        adaptiveRecognizedSlashCommand = ChatSlashCommandParser.recognizedSuggestion(
-            in: value,
-            customCommands: customSlashCommandStore.commands
-        )
-        slashCommandSuggestions = ChatSlashCommandParser.suggestions(
-            for: value,
-            customCommands: customSlashCommandStore.commands
-        )
-    }
-
-    private func performSuggestedSlashCommand(_ command: ChatSlashCommandSuggestion) {
-        performSelectedSlashCommand(command)
-    }
-
-    func performSelectedSlashCommand(_ command: ChatSlashCommandSuggestion) {
-        adaptiveRecognizedSlashCommand = nil
-        slashCommandSuggestions = []
-
-        switch command {
-        case .builtIn(let builtInCommand):
-            customSlashCommandPrefilledPrompt = nil
-            text = ""
-            slashCommandAction(builtInCommand)
-        case .custom(let customCommand):
-            customSlashCommandPrefilledPrompt = customCommand.prompt
-            text = customCommand.prompt
-            focus.wrappedValue = true
         }
     }
 
@@ -803,25 +437,5 @@ struct TelegramMessageComposer: View {
 
     var glassShadowColor: Color {
         Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1)
-    }
-}
-
-private struct PickedChatVideo: Transferable {
-    let data: Data
-    let mimeType: String
-    let fileExtension: String
-
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(importedContentType: .movie) { receivedFile in
-            let rawExtension = receivedFile.file.pathExtension.lowercased()
-            let fileExtension = rawExtension.isEmpty ? "mov" : rawExtension
-            let mimeType = UTType(filenameExtension: fileExtension)?.preferredMIMEType
-                ?? "video/quicktime"
-            return PickedChatVideo(
-                data: try Data(contentsOf: receivedFile.file),
-                mimeType: mimeType,
-                fileExtension: fileExtension
-            )
-        }
     }
 }

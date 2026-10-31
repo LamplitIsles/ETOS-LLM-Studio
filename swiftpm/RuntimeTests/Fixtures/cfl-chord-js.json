@@ -1,0 +1,214 @@
+[
+  {
+    "type": "result",
+    "id": "1",
+    "result": {
+      "serviceId": "lamplit.chat.v2",
+      "mode": "singleton",
+      "instances": [
+        {
+          "members": [
+            {
+              "name": "album",
+              "kind": "method"
+            },
+            {
+              "name": "compact",
+              "kind": "method"
+            },
+            {
+              "name": "deleteFailed",
+              "kind": "method"
+            },
+            {
+              "name": "diaryList",
+              "kind": "method"
+            },
+            {
+              "name": "diaryRead",
+              "kind": "method"
+            },
+            {
+              "name": "finalizeSubmission",
+              "kind": "method"
+            },
+            {
+              "name": "history",
+              "kind": "method"
+            },
+            {
+              "name": "lookup",
+              "kind": "method"
+            },
+            {
+              "name": "relationship",
+              "kind": "method"
+            },
+            {
+              "name": "relationshipHistory",
+              "kind": "method"
+            },
+            {
+              "name": "reminders",
+              "kind": "method"
+            },
+            {
+              "name": "retryFailed",
+              "kind": "method"
+            },
+            {
+              "name": "search",
+              "kind": "method"
+            },
+            {
+              "name": "searchRead",
+              "kind": "method"
+            },
+            {
+              "name": "stop",
+              "kind": "method"
+            },
+            {
+              "name": "submit",
+              "kind": "method"
+            },
+            {
+              "name": "view",
+              "kind": "state",
+              "sequence": 0,
+              "ops": [
+                [
+                  "r",
+                  {
+                    "version": 2,
+                    "sessionId": "fixture-session",
+                    "name": "Mica",
+                    "activeTurnId": null,
+                    "contextUsage": {
+                      "tokens": null,
+                      "capacity": null
+                    },
+                    "compaction": null,
+                    "messages": [],
+                    "before": null,
+                    "capabilities": {
+                      "text": true,
+                      "steer": true,
+                      "stop": true,
+                      "images": false
+                    },
+                    "recovery": []
+                  }
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "type": "update",
+    "subscriptionId": "view",
+    "update": {
+      "type": "state",
+      "member": "view",
+      "sequence": 1,
+      "ops": [
+        [
+          "s",
+          [
+            "messages"
+          ],
+          [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "role": "user",
+              "text": "hello",
+              "createdAt": 1793332730998,
+              "operationId": "11111111-1111-4111-8111-111111111111",
+              "turnId": "11111111-1111-4111-8111-111111111111"
+            }
+          ]
+        ],
+        [
+          "s",
+          [
+            "activeTurnId"
+          ],
+          "11111111-1111-4111-8111-111111111111"
+        ]
+      ]
+    }
+  },
+  {
+    "type": "result",
+    "id": "2",
+    "result": {
+      "operationId": "11111111-1111-4111-8111-111111111111",
+      "state": "submitted",
+      "messageId": "11111111-1111-4111-8111-111111111111",
+      "turnId": "11111111-1111-4111-8111-111111111111",
+      "error": null
+    }
+  },
+  {
+    "type": "update",
+    "subscriptionId": "view",
+    "update": {
+      "type": "state",
+      "member": "view",
+      "sequence": 2,
+      "ops": [
+        [
+          "#",
+          0,
+          [
+            "messages"
+          ]
+        ],
+        [
+          "s",
+          0,
+          [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "role": "user",
+              "text": "hello",
+              "createdAt": 1793332730998,
+              "operationId": "11111111-1111-4111-8111-111111111111",
+              "turnId": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "id": "turn:11111111-1111-4111-8111-111111111111:status",
+              "role": "notice",
+              "text": "已停止回复",
+              "createdAt": 1793332731055,
+              "operationId": null,
+              "turnId": "11111111-1111-4111-8111-111111111111"
+            }
+          ]
+        ],
+        [
+          "#",
+          1,
+          [
+            "activeTurnId"
+          ]
+        ],
+        [
+          "s",
+          1,
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "type": "result",
+    "id": "3",
+    "result": {
+      "stopped": true
+    }
+  }
+]

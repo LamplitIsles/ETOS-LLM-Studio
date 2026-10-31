@@ -219,15 +219,9 @@ extension AppConfigStore {
         return true
     }
 
-    /// 已在数据库事务内提交的局部修改仍需更新缓存，并沿用原有同步通知。
+    /// 已在数据库事务内提交的局部修改仍需更新缓存。
     nonisolated static func publishPersistedValue(_ normalizedValue: AppConfigValue, for key: AppConfigKey) {
         snapshotCache.set(normalizedValue.anyValue, for: key)
-        if !shouldSkipRealtimeCloudSyncForCurrentProcess,
-           key.participatesInSync {
-            Task { @MainActor in
-                CloudSyncManager.shared.scheduleRealtimeSyncIfEnabled(reason: "appConfig.\(key.rawValue)")
-            }
-        }
     }
 
     public func flushPendingWrites() async {
@@ -236,7 +230,7 @@ extension AppConfigStore {
         for task in tasks {
             await task.value
         }
-        await DailyPulseManager.flushPendingPersistence()
+        await DailyPulsePersistenceQueue.shared.flush()
     }
 
     private func flushPendingChatComposerDraftWriteIfNeeded() async {
@@ -325,6 +319,7 @@ extension AppConfigStore {
 
     public func value(for key: AppConfigKey) -> AppConfigValue {
         switch key {
+        case .cflHTTPSOrigin: return .text(cflHTTPSOrigin)
         case .syncProviders: return .bool(syncProviders)
         case .syncBackgrounds: return .bool(syncBackgrounds)
         case .syncAudioFiles: return .bool(syncAudioFiles)

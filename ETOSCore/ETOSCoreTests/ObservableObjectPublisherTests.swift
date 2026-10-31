@@ -68,8 +68,7 @@ struct ObservableObjectPublisherTests {
             ("ToolPermissionCenter", { ToolPermissionCenter.shared.objectWillChange }),
             ("AppToolManager", { AppToolManager.shared.objectWillChange }),
             ("AppLogCenter", { AppLogCenter.shared.objectWillChange }),
-            ("ShortcutToolManager", { ShortcutToolManager.shared.objectWillChange }),
-            ("LocalDebugServer", { LocalDebugServer().objectWillChange })
+            ("ShortcutToolManager", { ShortcutToolManager.shared.objectWillChange })
         ]
 
         for (name, makePublisher) in publishers {
@@ -268,24 +267,6 @@ struct ObservableObjectPublisherTests {
         service.reloadTickets()
 
         #expect(service.tickets.contains(where: { $0.issueNumber == issueNumber }))
-        #expect(changeCount >= 1)
-        withExtendedLifetime(cancellable) {}
-    }
-
-    @Test("LocalDebugServer 写入调试日志会触发 objectWillChange")
-    @MainActor
-    func localDebugServerPublishesWhenAppendingLogs() {
-        let server = LocalDebugServer()
-        let marker = "debug-log-\(UUID().uuidString)"
-
-        var changeCount = 0
-        let cancellable = server.objectWillChange.sink { _ in
-            changeCount += 1
-        }
-
-        server.addLog(marker)
-
-        #expect(server.debugLogs.contains(where: { $0.message == marker }))
         #expect(changeCount >= 1)
         withExtendedLifetime(cancellable) {}
     }

@@ -171,6 +171,8 @@ extension AppConfigStore {
 
     func setText(_ value: String, for key: AppConfigKey) {
         switch key {
+        case .cflHTTPSOrigin:
+            if let origin = CFLHTTPSOrigin.normalized(value) { cflHTTPSOrigin = origin }
         case .syncBackupUploadEndpoint: syncBackupUploadEndpoint = value
         case .syncBackupS3Region: syncBackupS3Region = value
         case .syncBackupS3Bucket: syncBackupS3Bucket = value
@@ -329,12 +331,6 @@ extension AppConfigStore {
                 }
             }
         }
-
-        if !Self.shouldSkipRealtimeCloudSyncForCurrentProcess,
-           !isApplyingSnapshot,
-           key.participatesInSync {
-            CloudSyncManager.shared.scheduleRealtimeSyncIfEnabled(reason: "appConfig.\(rawKey)")
-        }
     }
 
     func updateFontRuntimeSettings() {
@@ -438,6 +434,7 @@ extension AppConfigStore {
     }
 
     static func userDefaultsValue(for key: AppConfigKey, userDefaults: UserDefaults) -> AppConfigValue? {
+        guard key != .cflHTTPSOrigin else { return nil }
         guard let object = userDefaults.object(forKey: key.rawValue) else {
             return nil
         }
@@ -553,6 +550,8 @@ extension AppConfigStore {
 
     nonisolated static func normalizedTextValue(_ value: String, for key: AppConfigKey) -> String {
         switch key {
+        case .cflHTTPSOrigin:
+            return CFLHTTPSOrigin.normalized(value) ?? ""
         case .reasoningContentEchoMode:
             return ReasoningContentEchoMode.normalized(value).rawValue
         case .videoFrameExtractionMode:

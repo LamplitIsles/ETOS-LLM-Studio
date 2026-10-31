@@ -56,10 +56,10 @@ struct ChatTimelineEdgePanTests {
             try #require(pan.translation(in: scroll) == translation)
             #expect(pan.delegate?.gestureRecognizerShouldBegin?(pan) == expected)
         }
-        #expect(!ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+        #expect(!ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
             startLocationX: 390, viewportWidth: 402, translation: CGSize(width: -9, height: 2)
         ))
-        #expect(ChatView.shouldRevealScrollNavigationForEdgeSwipe(
+        #expect(ChatTimelineInteraction.shouldRevealScrollNavigationForEdgeSwipe(
             startLocationX: 390, viewportWidth: 402, translation: CGSize(width: -14, height: 0)
         ))
         #expect(pan.delegate?.gestureRecognizer?(pan, shouldRecognizeSimultaneouslyWith: scroll.panGestureRecognizer) == true)

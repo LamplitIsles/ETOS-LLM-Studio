@@ -42,9 +42,6 @@ struct MacChatQuickActionsView: View {
             if !available { showsTemporaryIntroduction = false }
         }
         .onChange(of: appLock.state) { _, state in if state == .locked { destination = nil } }
-        .onChange(of: workspace.currentSession?.id) { _, _ in
-            if destination?.page.requiresSession == true { destination = nil }
-        }
         .onChange(of: workspace.linux.epoch) { _, _ in
             if destination?.page == .localTerminal { destination = nil }
         }
@@ -55,19 +52,14 @@ struct MacChatQuickActionsView: View {
         switch row.action {
         case .temporaryChat: MacTemporaryChatMenu(showingIntroduction: $showsTemporaryIntroduction)
         case .settings: SettingsLink { Label(row.title, systemImage: row.systemImage) }
-        case .dailyPulse: MacDailyPulseEntry(model: workspace.dailyPulse)
         default:
             if let page = MacChatQuickActionPage(rawValue: row.action.rawValue) {
                 Button {
-                    guard available, !page.requiresSession || workspace.currentSession != nil else { return }
+                    guard available else { return }
                     guard page != .localTerminal || (configuration.localLinuxEnabled && !workspace.linux.isSuspended && !workspace.linux.isWorking) else { return }
-                    guard page != .browser || !workspace.browser.isSuspended else { return }
-                    destination = MacChatQuickActionDestination(page: page, sessionID: workspace.currentSession?.id,
-                        isTemporary: workspace.isTemporaryChat)
+                    destination = MacChatQuickActionDestination(page: page)
                 } label: { Label(row.title, systemImage: row.systemImage) }
-                    .disabled((page.requiresSession && workspace.currentSession == nil)
-                        || (page == .browser && workspace.browser.isSuspended)
-                        || (page == .localTerminal && (!configuration.localLinuxEnabled || workspace.linux.isSuspended || workspace.linux.isWorking)))
+                    .disabled(page == .localTerminal && (!configuration.localLinuxEnabled || workspace.linux.isSuspended || workspace.linux.isWorking))
             }
         }
     }
@@ -80,7 +72,7 @@ struct MacChatQuickActionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var visible = false
     private var available: Bool {
-        visible && workspace.canManageLocalModels && (!target.page.requiresSession || target.sessionID == workspace.currentSession?.id)
+        visible && workspace.canManageLocalModels
     }
 
     var body: some View {
@@ -88,7 +80,7 @@ struct MacChatQuickActionSheet: View {
             page
                 .navigationTitle(target.page.action.title)
                 .toolbar { Button(NSLocalizedString("关闭", comment: "")) { dismiss() } }
-                .modifier(MacGuideInspector())
+                .modifier(MacAppLockOverlayModifier())
         }
         .frame(minWidth: 700, minHeight: 540)
         .onAppear { visible = true }
@@ -99,14 +91,9 @@ struct MacChatQuickActionSheet: View {
     @ViewBuilder
     private var page: some View {
         switch target.page {
-        case .toolCenter: MacToolCenterView(isActive: available)
         case .usageAnalytics: MacUsageAnalyticsView(isActive: available)
-        case .agentSkills: MacSkillsView(isActive: available, model: workspace.skills)
         case .shortcuts: MacShortcutToolsView(isActive: available, model: workspace.shortcutTools)
-        case .roleplay: MacRoleplayLibraryView(model: workspace.roleplayModel)
         case .extendedFeatures: MacExtendedFeaturesView(isActive: available)
-        case .browser:
-            MacBrowserView(sessionID: target.sessionID, isTemporary: target.isTemporary, isActive: available, model: workspace.browser)
         case .localTerminal: MacLinuxTerminalView(isActive: available, runtime: workspace.linux)
         }
     }

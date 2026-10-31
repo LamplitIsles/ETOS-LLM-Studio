@@ -189,7 +189,7 @@ private struct FlightContentCompletionHost: View {
         }
         .padding(.top, 220)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .coordinateSpace(name: ChatView.flightCoordinateSpace)
+        .coordinateSpace(name: ChatSendFlightTarget.coordinateSpace)
     }
 }
 
@@ -238,7 +238,7 @@ private struct FlightBubbleLifecycleHost: View {
         }
         .padding(.top, 220)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .coordinateSpace(name: ChatView.flightCoordinateSpace)
+        .coordinateSpace(name: ChatSendFlightTarget.coordinateSpace)
         .environment(\.chatSendFlightController, state.controller)
         .onPreferenceChange(FlightTargetRectKey.self) { frames in
             if let frame = frames[state.messageState.id] { state.controller.retarget([.text: frame]) }

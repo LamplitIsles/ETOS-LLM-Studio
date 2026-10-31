@@ -94,7 +94,11 @@ struct MacDataImportTests {
         do {
             _ = try await operations.perform { SyncMergeSummary.empty }
             Issue.record("并发导入没有被拒绝")
-        } catch { #expect(error is MacMemoryWriteError) }
+        } catch {
+            if let failure = error as? MacWorkspaceWriteError, case .busy = failure {} else {
+                Issue.record("并发导入应报告工作区繁忙")
+            }
+        }
         release.continuation.yield(())
         await operations.waitForCompletion()
         let summary = try await caller.value

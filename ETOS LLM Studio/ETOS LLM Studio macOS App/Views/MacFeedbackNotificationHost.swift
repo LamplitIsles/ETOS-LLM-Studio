@@ -4,7 +4,6 @@ import SwiftUI
 /// 通知仅请求导航；工作区锁定或恢复期间不读取工单与记录。
 struct MacFeedbackNotificationHost: ViewModifier {
     private enum Destination: String, Identifiable { case feedback, journal, updates, announcements, deviceMessage; var id: String { rawValue } }
-    @ObservedObject var dailyPulse: MacDailyPulseModel
     var isBlocked = false
     @EnvironmentObject private var workspace: MacWorkspaceModel
     @ObservedObject private var notifications = AppLocalNotificationCenter.shared
@@ -24,7 +23,6 @@ struct MacFeedbackNotificationHost: ViewModifier {
                 if available { receive() } else { destination = nil }
             }
             .onChange(of: isBlocked) { _, blocked in if !blocked { receive() } }
-            .onChange(of: dailyPulse.showsWindow) { _, shown in if !shown { receive() } }
             .onAppear { receive() }
             .task { await deviceMessages.checkMessages() }
             .task(id: canPresentDeviceMessage) {
@@ -68,19 +66,19 @@ struct MacFeedbackNotificationHost: ViewModifier {
                     }
                 }
                 .frame(minWidth: 560, minHeight: 500)
-                .modifier(MacGuideInspector())
+                .modifier(MacAppLockOverlayModifier())
             }
     }
 
     private var canPresentDeviceMessage: Bool {
-        deviceMessages.hasPendingMessage && destination == nil && !isBlocked && !dailyPulse.showsWindow
+        deviceMessages.hasPendingMessage && destination == nil && !isBlocked
             && workspace.canManageLocalModels && windowActivity == .key
             && !announcements.shouldShowAlert && permissions.activeRequest == nil
             && !permissions.hasAutoPresentationBlockers(excluding: ["mac.feedback.presentation"])
     }
 
     private func receive() {
-        guard workspace.canManageLocalModels, destination == nil, !isBlocked, !dailyPulse.showsWindow else { return }
+        guard workspace.canManageLocalModels, destination == nil, !isBlocked else { return }
         switch notifications.pendingRoute {
         case .feedback:
             issueNumber = notifications.consumePendingFeedbackIssueNumber()

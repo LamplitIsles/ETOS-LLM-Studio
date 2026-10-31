@@ -36,36 +36,3 @@ struct MacTTSPresentation: Sendable {
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 }
-
-/// 只处理本次请求的开始/完成事件；历史加载、失败和取消均不能触发自动出声。
-actor MacTTSAutoPlayTracker {
-    private var baseline: [UUID: ChatMessage?] = [:]
-    private var context: UUID?
-    func reset() { baseline = [:]; context = nil }
-
-    func process(_ event: ChatService.SessionRequestStatusEvent, context: UUID, sessionID: UUID?) -> ChatMessage? {
-        if self.context != context { self.context = context; baseline = [:] }
-        guard event.sessionID == sessionID else { return nil }
-        switch event.status {
-        case .started:
-            baseline[event.sessionID] = .some(Self.latest(event.messages))
-            return nil
-        case .finished:
-            guard let previous = baseline.removeValue(forKey: event.sessionID), let latest = Self.latest(event.messages) else { return nil }
-            guard latest.id != previous?.id || latest.content != previous?.content else { return nil }
-            return latest
-        case .error, .cancelled:
-            baseline.removeValue(forKey: event.sessionID)
-            return nil
-        @unknown default:
-            baseline.removeValue(forKey: event.sessionID)
-            return nil
-        }
-    }
-
-    private static func latest(_ messages: [ChatMessage]) -> ChatMessage? {
-        ChatResponseAttemptSupport.visibleMessages(from: messages).last {
-            $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-}

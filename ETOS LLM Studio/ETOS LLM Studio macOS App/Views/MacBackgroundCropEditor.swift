@@ -64,7 +64,7 @@ struct MacBackgroundCropEditor: View {
                 isActive: visible && editable && dragStart == nil, settings: guideSettings
             )
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 520, minHeight: 620)
         .interactiveDismissDisabled(model.isWorking)
     }

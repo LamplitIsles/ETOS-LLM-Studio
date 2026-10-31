@@ -3,7 +3,6 @@
 // ============================================================================
 // 应用根视图:
 // - 构建聊天根视图，统一承接通知与页面跳转
-// - 通过环境注入的 ChatViewModel 在各子视图间共享状态
 // ============================================================================
 
 import SwiftUI
@@ -17,16 +16,10 @@ import UIKit
 import CoreText
 #endif
 
-enum GuideOverlayPresentationPolicy {
-    static func shouldPresent(isEnabled: Bool, activeMode: GuideMode?) -> Bool {
-        isEnabled && activeMode == .contextualHelp
-    }
-}
-
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.sizeCategory) private var sizeCategory
-    @EnvironmentObject private var viewModel: ChatViewModel
+    @Binding var unsupportedIncomingFile: Bool
     @StateObject private var announcementManager = AnnouncementManager.shared
     @StateObject private var surveyManager = SurveyManager.shared
     @StateObject private var deviceMessages = DeviceMessageManager.shared
@@ -34,22 +27,16 @@ struct ContentView: View {
     @ObservedObject private var appConfig = AppConfigStore.shared
     @ObservedObject private var appLockManager = AppLockManager.shared
     @ObservedObject private var toolPermissionCenter = ToolPermissionCenter.shared
-    @ObservedObject private var guideCoordinator = GuideContextCoordinator.shared
-    @StateObject private var guideController = GuideConversationController(historyStore: .contextualHelp)
+    @StateObject private var cflModel = CFLConversationModel()
     @State private var settingsDestination: SettingsNavigationDestination?
-    @State private var dailyPulsePreparationTask: Task<Void, Never>?
     @State private var launchRecoveryNoticeMessage: String?
     @State private var launchRecoveryRequest: Persistence.LaunchRecoveryRequest?
     @State private var launchRecoveryErrorMessage: String?
     @State private var rootBodyFont: Font = .body
     @State private var rootFontPreparationTask: Task<Void, Never>?
     @State private var isNativeSettingsPresented: Bool = false
-    @State private var incomingSnapshotRestorePayload: IncomingSnapshotRestorePayload?
     @State private var systemEntryInboxPayload: SystemEntryInboxPayload?
-    @State private var systemEntryRoute: SystemEntryRoute?
-    @State private var newAPIProviderImportNoticeMessage: String?
     @State private var newAPIProviderImportErrorMessage: String?
-    @State private var settingsGuideContextToken: GuideContextCoordinator.RegistrationToken?
     
     var body: some View {
         contentWithNewAPIImportAlerts
@@ -65,17 +52,12 @@ struct ContentView: View {
             }
             .onAppear {
                 refreshRootToolPermissionAutoPresentationBlocker()
-                updateSettingsGuideContext(isPresented: isNativeSettingsPresented)
             }
             .onDisappear {
                 setRootToolPermissionAutoPresentationBlocked(false)
-                updateSettingsGuideContext(isPresented: false)
             }
             .onChange(of: rootToolPermissionAutoPresentationBlocked) { _, _ in
                 refreshRootToolPermissionAutoPresentationBlocker()
-            }
-            .onChange(of: isNativeSettingsPresented) { _, isPresented in
-                updateSettingsGuideContext(isPresented: isPresented)
             }
             .onChange(of: announcementManager.shouldShowAlert) { _, isPresented in
                 guard !isPresented else { return }
@@ -91,20 +73,14 @@ struct ContentView: View {
                     TTSManager.shared.setApplicationIsInBackground(false)
                     appLockManager.handleSceneDidBecomeActive()
                     ChatAppearanceProfileManager.shared.handleAppBecameActive()
-                    scheduleDailyPulsePreparation(after: 1_500_000_000)
                 case .background:
-                    Task {
-                        await guideController.persistHistory()
-                        await GuideConversationController.modelSetup.persistHistory()
-                    }
                     TTSManager.shared.setApplicationIsInBackground(true)
                     appLockManager.handleSceneDidEnterBackground()
                     Task {
                         await AppConfigStore.shared.flushPendingWrites()
                     }
-                    cancelDailyPulsePreparation()
                 default:
-                    cancelDailyPulsePreparation()
+                    break
                 }
             }
     }
@@ -136,10 +112,10 @@ struct ContentView: View {
         }
         .alert(NSLocalizedString("导入失败", comment: ""), isPresented: externalDocumentImportErrorPresented) {
             Button(NSLocalizedString("好的", comment: ""), role: .cancel) {
-                viewModel.externalDocumentImportErrorMessage = nil
+                unsupportedIncomingFile = false
             }
         } message: {
-            Text(viewModel.externalDocumentImportErrorMessage ?? "")
+            Text(NSLocalizedString("当前聊天暂不支持发送文件或图片。", comment: "Unsupported chat attachment"))
         }
         // MARK: - 公告弹窗
         .sheet(isPresented: $announcementManager.shouldShowAlert) {
@@ -163,25 +139,9 @@ struct ContentView: View {
             }
             .appLockOverlayLayer()
         }
-        .sheet(item: $incomingSnapshotRestorePayload) { payload in
-            NavigationStack {
-                IncomingSnapshotRestoreView(fileURL: payload.fileURL) {
-                    incomingSnapshotRestorePayload = nil
-                }
-            }
-        }
         .sheet(item: $systemEntryInboxPayload) { payload in
-            SystemEntryInboxPreviewView(payload: payload) { sessionID in
+            SystemEntryInboxPreviewView(payload: payload) {
                 systemEntryInboxPayload = nil
-                if let sessionID { openChatSession(sessionID: sessionID) }
-            }
-        }
-        .sheet(item: $systemEntryRoute) { route in
-            NavigationStack {
-                switch route {
-                case .browser:
-                    BrowserAgentFeatureView(sessionID: viewModel.currentSession?.id)
-                }
             }
         }
     }
@@ -191,14 +151,8 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .requestSwitchToChatTab)) { _ in
             pushNativeChatIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .requestOpenDailyPulse)) { _ in
-            openDailyPulse()
-        }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenFeedback)) { _ in
             openFeedbackFromNotification()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestOpenChatSession)) { _ in
-            openChatSessionFromNotification()
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenAchievementJournal)) { _ in
             openAchievementJournalFromNotification()
@@ -206,23 +160,8 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenUpdateTimeline)) { _ in
             openUpdateTimelineFromNotification()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .requestGuideModelManagement)) { _ in
-            pushNativeSettings(destination: .modelManagement)
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .requestIncomingSnapshotRestore),
-            perform: handleIncomingSnapshotRestore
-        )
         .onReceive(NotificationCenter.default.publisher(for: .requestSystemEntryInboxPreview)) { notification in
             systemEntryInboxPayload = notification.object as? SystemEntryInboxPayload
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestSystemEntryRoute)) { notification in
-            systemEntryRoute = notification.object as? SystemEntryRoute
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestContinueDailyPulseChat)) { _ in
-            Task { @MainActor in
-                openDailyPulseContinuationIfNeeded()
-            }
         }
     }
 
@@ -263,28 +202,14 @@ struct ContentView: View {
             }
     }
 
-    private func handleIncomingSnapshotRestore(_ notification: Notification) {
-        guard let fileURL = notification.object as? URL else { return }
-        incomingSnapshotRestorePayload = IncomingSnapshotRestorePayload(fileURL: fileURL)
-    }
-
     private var appNavigationContent: some View {
         NavigationStack {
-            ChatView()
+            CFLConversationView(model: cflModel, openSettings: { pushNativeSettings(destination: nil) })
                 .navigationDestination(isPresented: $isNativeSettingsPresented) {
                     SettingsView(requestedDestination: $settingsDestination)
                 }
         }
-        .overlay {
-            if GuideOverlayPresentationPolicy.shouldPresent(
-                isEnabled: appConfig.guideOverlayEnabled,
-                activeMode: guideCoordinator.activePage?.mode
-            ) {
-                GuideFloatingOverlay(controller: guideController)
-                    .environmentObject(viewModel)
-                    .zIndex(100)
-            }
-        }
+        .environmentObject(cflModel)
     }
 
     private var contentWithNewAPIImportAlerts: some View {
@@ -295,22 +220,11 @@ struct ContentView: View {
                 }
                 .interactiveDismissDisabled(true)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .newAPIProviderImportDidFinish)) { notification in
-                newAPIProviderImportNoticeMessage = notification.object as? String
-                    ?? NSLocalizedString("已导入 New API 连接信息。", comment: "New API deeplink import fallback success message")
-            }
             .onReceive(NotificationCenter.default.publisher(for: .newAPIProviderImportDidFail)) { notification in
                 newAPIProviderImportErrorMessage = notification.object as? String
-                    ?? NSLocalizedString("无法导入 New API 连接信息。", comment: "New API deeplink import fallback error message")
+                    ?? NSLocalizedString("此功能暂不可用。", comment: "")
             }
-            .alert(NSLocalizedString("连接信息已导入", comment: "New API deeplink import success title"), isPresented: newAPIProviderImportNoticePresented) {
-                Button(NSLocalizedString("好的", comment: ""), role: .cancel) {
-                    newAPIProviderImportNoticeMessage = nil
-                }
-            } message: {
-                Text(newAPIProviderImportNoticeMessage ?? "")
-            }
-            .alert(NSLocalizedString("New API 导入失败", comment: "New API deeplink import failure title"), isPresented: newAPIProviderImportErrorPresented) {
+            .alert(NSLocalizedString("导入失败", comment: "Import failure title"), isPresented: newAPIProviderImportErrorPresented) {
                 Button(NSLocalizedString("好的", comment: ""), role: .cancel) {
                     newAPIProviderImportErrorMessage = nil
                 }
@@ -327,13 +241,8 @@ struct ContentView: View {
     }
 
     private var globalToolPermissionRequest: ToolPermissionRequest? {
-        guard toolPermissionCenter.canAutoPresentRequestDetails,
-              let request = toolPermissionCenter.activeRequest,
-              let sourceSessionID = request.sourceSessionID,
-              sourceSessionID != viewModel.currentSession?.id else {
-            return nil
-        }
-        return request
+        guard toolPermissionCenter.canAutoPresentRequestDetails else { return nil }
+        return toolPermissionCenter.activeRequest
     }
 
     private var rootToolPermissionAutoPresentationBlocked: Bool {
@@ -341,12 +250,10 @@ struct ContentView: View {
             || announcementManager.shouldShowAlert
             || surveyManager.shouldShowSurvey
             || deviceMessages.currentMessage != nil
-            || incomingSnapshotRestorePayload != nil
-            || viewModel.externalDocumentImportErrorMessage != nil
+            || unsupportedIncomingFile
             || launchRecoveryNoticeMessage != nil
             || launchRecoveryRequest != nil
             || launchRecoveryErrorMessage != nil
-            || newAPIProviderImportNoticeMessage != nil
             || newAPIProviderImportErrorMessage != nil
             || appLockManager.state == .locked
     }
@@ -361,9 +268,7 @@ struct ContentView: View {
             && !rootToolPermissionAutoPresentationBlocked
             && toolPermissionCenter.activeRequest == nil
             && !toolPermissionCenter.hasAutoPresentationBlockers(excluding: ["ios.root.presentation"])
-            && incomingSnapshotRestorePayload == nil
             && systemEntryInboxPayload == nil
-            && systemEntryRoute == nil
     }
 
     private func refreshRootToolPermissionAutoPresentationBlocker() {
@@ -379,20 +284,6 @@ struct ContentView: View {
                 }
             }
         )
-    }
-
-    private func openDailyPulse() {
-        _ = notificationCenter.consumePendingRoute()
-        if let selection = notificationCenter.consumePendingDailyPulseSelection() {
-            pushNativeSettings(
-                destination: .dailyPulseCard(
-                    runID: selection.runID,
-                    cardID: selection.cardID
-                )
-            )
-        } else {
-            pushNativeSettings(destination: .dailyPulse)
-        }
     }
 
     private var launchRecoveryNoticePresented: Binding<Bool> {
@@ -430,21 +321,10 @@ struct ContentView: View {
 
     private var externalDocumentImportErrorPresented: Binding<Bool> {
         Binding(
-            get: { viewModel.externalDocumentImportErrorMessage != nil },
+            get: { unsupportedIncomingFile },
             set: { isPresented in
                 if !isPresented {
-                    viewModel.externalDocumentImportErrorMessage = nil
-                }
-            }
-        )
-    }
-
-    private var newAPIProviderImportNoticePresented: Binding<Bool> {
-        Binding(
-            get: { newAPIProviderImportNoticeMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    newAPIProviderImportNoticeMessage = nil
+                    unsupportedIncomingFile = false
                 }
             }
         )
@@ -466,12 +346,6 @@ struct ContentView: View {
         openFeedback(issueNumber: notificationCenter.consumePendingFeedbackIssueNumber())
     }
 
-    private func openChatSessionFromNotification() {
-        _ = notificationCenter.consumePendingRoute()
-        guard let sessionID = notificationCenter.consumePendingChatSessionID() else { return }
-        openChatSession(sessionID: sessionID)
-    }
-
     private func openAchievementJournalFromNotification() {
         _ = notificationCenter.consumePendingRoute()
         openAchievementJournal()
@@ -480,11 +354,6 @@ struct ContentView: View {
     private func openUpdateTimelineFromNotification() {
         _ = notificationCenter.consumePendingRoute()
         openUpdateTimeline()
-    }
-
-    private func openChatSession(sessionID: UUID) {
-        guard viewModel.setCurrentSessionIfExists(sessionID: sessionID) else { return }
-        pushNativeChatIfNeeded()
     }
 
     private func openFeedback(issueNumber: Int?) {
@@ -512,20 +381,12 @@ struct ContentView: View {
         await announcementManager.checkAnnouncement()
         await surveyManager.checkSurveys(canPresent: !announcementManager.shouldShowAlert)
         await deviceMessages.checkMessages()
-        scheduleDailyPulsePreparation(after: 1_500_000_000)
-        if openDailyPulseContinuationIfNeeded() {
-            return
-        }
         if let pendingRoute = notificationCenter.consumePendingRoute() {
             switch pendingRoute {
             case .dailyPulse:
-                openDailyPulse()
+                break
             case .feedback:
                 openFeedback(issueNumber: notificationCenter.consumePendingFeedbackIssueNumber())
-            case .chatSession:
-                if let sessionID = notificationCenter.consumePendingChatSessionID() {
-                    openChatSession(sessionID: sessionID)
-                }
             case .achievementJournal:
                 openAchievementJournal()
             case .updateTimeline:
@@ -541,7 +402,7 @@ struct ContentView: View {
                 let message = try await Task.detached(priority: .userInitiated) {
                     try Persistence.restorePendingLaunchBackupRequest()
                 }.value
-                viewModel.reloadAfterSnapshotRestore()
+                AppConfigStore.shared.reloadFromPersistentStore()
                 _ = Persistence.consumeLaunchRecoveryNotice()
                 launchRecoveryNoticeMessage = message
             } catch {
@@ -549,19 +410,6 @@ struct ContentView: View {
                 launchRecoveryErrorMessage = error.localizedDescription
             }
         }
-    }
-
-    @discardableResult
-    private func openDailyPulseContinuationIfNeeded() -> Bool {
-        guard let continuation = notificationCenter.consumePendingDailyPulseContinuation() else {
-            return false
-        }
-        viewModel.applyDailyPulseContinuation(
-            sessionID: continuation.sessionID,
-            prompt: continuation.prompt
-        )
-        pushNativeChatIfNeeded()
-        return true
     }
 
     private func pushNativeSettings(destination: SettingsNavigationDestination?) {
@@ -576,67 +424,6 @@ struct ContentView: View {
 
     private func pushNativeChatIfNeeded() {
         isNativeSettingsPresented = false
-    }
-
-    private func updateSettingsGuideContext(isPresented: Bool) {
-        guard isPresented else {
-            if let settingsGuideContextToken {
-                guideCoordinator.unregister(settingsGuideContextToken)
-                self.settingsGuideContextToken = nil
-            }
-            return
-        }
-        guard settingsGuideContextToken == nil else { return }
-
-        let settingsViewModel = viewModel
-        settingsGuideContextToken = guideCoordinator.register(
-            descriptor: GuidePageDescriptor(
-                id: "settings-navigation",
-                title: NSLocalizedString("设置", comment: "设置导航向导后备上下文标题"),
-                documents: [GuideDocumentReference(id: "guide-overview", title: "Guide Overview")]
-            ),
-            isFallback: true,
-            snapshot: {
-                GuidePageSnapshot(fields: [
-                    "provider_count": GuideSnapshotField(
-                        label: NSLocalizedString("提供商数量", comment: "设置导航向导后备快照字段"),
-                        value: .int(settingsViewModel.providers.count),
-                        access: .readOnly
-                    ),
-                    "selected_model": GuideSnapshotField(
-                        label: NSLocalizedString("当前模型", comment: "设置导航向导后备快照字段"),
-                        value: .string(settingsViewModel.selectedModel?.model.displayName ?? ""),
-                        access: .readOnly
-                    )
-                ])
-            },
-            buildProposal: { _, _ in throw GuideError.invalidToolArguments },
-            execute: { _ in throw GuideError.invalidToolArguments }
-        )
-    }
-
-    private func scheduleDailyPulsePreparation(after delayNanoseconds: UInt64) {
-        dailyPulsePreparationTask?.cancel()
-        dailyPulsePreparationTask = Task(priority: .utility) {
-            if delayNanoseconds > 0 {
-                try? await Task.sleep(nanoseconds: delayNanoseconds)
-            }
-            guard !Task.isCancelled else { return }
-            let isSceneActive = await MainActor.run { scenePhase == .active }
-            guard isSceneActive else { return }
-            await viewModel.prepareDailyPulseIfNeeded()
-            guard !Task.isCancelled else { return }
-            await viewModel.prepareMorningDailyPulseDeliveryIfNeeded()
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                dailyPulsePreparationTask = nil
-            }
-        }
-    }
-
-    private func cancelDailyPulsePreparation() {
-        dailyPulsePreparationTask?.cancel()
-        dailyPulsePreparationTask = nil
     }
 
     private func refreshRootBodyFont() {

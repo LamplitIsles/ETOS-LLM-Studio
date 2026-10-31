@@ -24,13 +24,6 @@ enum TelegramColors {
     static let scrollButtonShadow = Color.black.opacity(0.15)
 }
 
-struct SessionPickerInfoPayload: Identifiable {
-    let id = UUID()
-    let session: ChatSession
-    let messageCount: Int
-    let isCurrent: Bool
-}
-
 func resolvedFileMimeType(for url: URL) -> String {
     let ext = url.pathExtension.lowercased()
     if let type = UTType(filenameExtension: ext),

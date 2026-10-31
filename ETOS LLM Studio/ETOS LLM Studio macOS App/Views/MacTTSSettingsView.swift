@@ -27,7 +27,6 @@ struct MacTTSSettingsView: View {
                         Text(NSLocalizedString("云端朗读", comment: "")).tag(TTSPlaybackMode.cloud)
                         Text(NSLocalizedString("自动", comment: "")).tag(TTSPlaybackMode.auto)
                     }
-                    Toggle(NSLocalizedString("回复完成后自动朗读", comment: ""), isOn: $model.draft.autoPlayAfterAssistantResponse)
                     Slider(value: $model.draft.speechRate, in: 0.1...3) { Text(NSLocalizedString("朗读语速", comment: "")) }
                     Slider(value: $model.draft.pitch, in: 0.1...2) { Text(NSLocalizedString("音调", comment: "")) }
                     Slider(value: $model.draft.playbackSpeed, in: 0.5...2) { Text(NSLocalizedString("播放倍速", comment: "")) }
@@ -118,7 +117,6 @@ struct MacTTSSettingsView: View {
     private var guideSettings: [GuidePageSetting] {
         var result: [GuidePageSetting] = [
             .string("playback_mode", label: NSLocalizedString("朗读方式", comment: ""), allowedValues: ["system", "cloud", "auto"], get: { model.draft.playbackMode.rawValue }, set: { if let value = TTSPlaybackMode(rawValue: $0) { model.draft.playbackMode = value } }),
-            .bool("auto_play", label: NSLocalizedString("回复完成后自动朗读", comment: ""), get: { model.draft.autoPlayAfterAssistantResponse }, set: { model.draft.autoPlayAfterAssistantResponse = $0 }),
             .double("speech_rate", label: NSLocalizedString("朗读语速", comment: ""), range: 0.1...3, get: { Double(model.draft.speechRate) }, set: { model.draft.speechRate = Float($0) }),
             .double("pitch", label: NSLocalizedString("音调", comment: ""), range: 0.1...2, get: { Double(model.draft.pitch) }, set: { model.draft.pitch = Float($0) }),
             .double("playback_speed", label: NSLocalizedString("播放倍速", comment: ""), range: 0.5...2, get: { Double(model.draft.playbackSpeed) }, set: { model.draft.playbackSpeed = Float($0) }),

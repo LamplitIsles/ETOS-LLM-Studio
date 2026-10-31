@@ -168,11 +168,7 @@ public class AnnouncementManager: ObservableObject {
     // MARK: - Published 属性
     
     /// 当前公告列表（用于UI显示，可能有多个）
-    @Published public var currentAnnouncements: [Announcement] = [] {
-        didSet {
-            DailyPulseManager.shared.ingestAnnouncements(currentAnnouncements)
-        }
-    }
+    @Published public var currentAnnouncements: [Announcement] = []
     
     /// 是否应该显示弹窗通知
     @Published public var shouldShowAlert: Bool = false

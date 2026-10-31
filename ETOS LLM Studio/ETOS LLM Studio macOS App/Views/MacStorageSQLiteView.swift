@@ -160,7 +160,7 @@ private struct MacStorageCellPreviewView: View {
                 documents: [GuideDocumentReference(id: "storage-management", title: "Storage Management")], isActive: isActive && workspace.canManageLocalModels,
                 settings: [.readOnly("page", label: NSLocalizedString("文件预览", comment: ""), value: { .int(index + 1) })])
         }
-        .modifier(MacGuideInspector()).frame(minWidth: 600, minHeight: 400)
+        .modifier(MacAppLockOverlayModifier()).frame(minWidth: 600, minHeight: 400)
         .onAppear { let text = cell.fullText; model.load(workspace: workspace) { StorageBrowserSupport.paginateText(text) } }
         .onDisappear { model.close() }
         .onChange(of: isActive && workspace.canManageLocalModels) { _, active in if !active { model.close(); dismiss() } }

@@ -125,7 +125,7 @@ struct MacRequestParameterEditor: View {
                     return GuideActionExecution(message: NSLocalizedString("已更新草稿，请保存配置以生效。", comment: ""))
                 })
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 540, minHeight: 560)
         .task { await model.load(parameters: parameters, mode: mode, rawJSON: rawJSON, suggestion: suggestedParameters) }
         .onDisappear { model.cancel() }

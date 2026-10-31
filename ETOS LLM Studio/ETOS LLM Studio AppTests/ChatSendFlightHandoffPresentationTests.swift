@@ -295,14 +295,14 @@ private struct HandoffPresentationHost: View {
                             if let target = state.target { ChatSendFlightTargetAnchor(target: target) }
                             else { Color.clear }
                         }
-                        .preference(key: FlightTargetRectKey.self, value: [state.messageID: proxy.frame(in: .named(ChatView.flightCoordinateSpace))])
+                        .preference(key: FlightTargetRectKey.self, value: [state.messageID: proxy.frame(in: .named(ChatSendFlightTarget.coordinateSpace))])
                     }
                 }
                 .geometryGroup()
                 .position(x: state.frame.midX, y: state.frame.midY)
         }
         .ignoresSafeArea()
-        .coordinateSpace(.named(ChatView.flightCoordinateSpace))
+        .coordinateSpace(.named(ChatSendFlightTarget.coordinateSpace))
         .environment(\.chatSendFlightController, state.controller)
         .onPreferenceChange(FlightTargetRectKey.self) { frames in
             state.reportedFrame = frames[state.messageID]

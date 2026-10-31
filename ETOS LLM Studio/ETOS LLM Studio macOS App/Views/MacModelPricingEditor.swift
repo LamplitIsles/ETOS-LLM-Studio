@@ -84,7 +84,7 @@ struct MacModelPricingEditor: View {
             .guideSettingsPageContext(id: pageID, title: NSLocalizedString("价格设置", comment: ""),
                                       documents: [GuideDocumentReference(id: "model-pricing", title: "Model Pricing")], settings: guideSettings)
         }
-        .modifier(MacGuideInspector())
+        .modifier(MacAppLockOverlayModifier())
         .frame(minWidth: 520, minHeight: 580)
         .interactiveDismissDisabled(isBusy)
         .task {
