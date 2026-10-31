@@ -228,7 +228,14 @@ public actor CFLChatClient {
         for continuation in calls.values { continuation.resume(throwing: CFLFailure.offline) }; calls.removeAll()
         for timer in timeouts.values { timer.cancel() }; timeouts.removeAll()
         subscribed = false; chord = ChordState(); queuedUpdates = []
-        let failure = error as? CFLFailure
+        let failure: CFLFailure?
+        if let authorization = error as? CFLAuthorizationError {
+            switch authorization {
+            case .authorizationRequired: failure = .accessDenied
+            case .storage: failure = .storage
+            default: failure = .offline
+            }
+        } else { failure = error as? CFLFailure }
         state.connection = failure == .accessDenied ? .accessDenied : failure == .protocolError || error is ChordError ? .protocolError : .offline
         if failure == .storage { setError(.storage) }
         else if state.error != .storage { setError(nil) }
@@ -253,7 +260,7 @@ public actor CFLChatClient {
             calls[id] = continuation
             Task { [weak self] in
                 do { try await socket.send(text) }
-                catch { await self?.failCall(id, generation: current) }
+                catch { await self?.failCall(id, generation: current, error: error) }
             }
             timeouts[id] = Task { [weak self] in
                 do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { return }
@@ -261,9 +268,9 @@ public actor CFLChatClient {
             }
         }
     }
-    private func failCall(_ id: String, generation current: Int) async {
+    private func failCall(_ id: String, generation current: Int, error: Error = CFLFailure.offline) async {
         guard current == generation, calls[id] != nil else { return }
-        await disconnected(CFLFailure.offline, reconnect: true)
+        await disconnected(error, reconnect: true)
     }
     private func decode<T: Decodable>(_ type: T.Type, _ value: ChordJSON) throws -> T {
         do { return try JSONDecoder().decode(type, from: JSONEncoder().encode(value)) }

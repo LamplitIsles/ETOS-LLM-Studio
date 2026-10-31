@@ -8675,3 +8675,8 @@ If seulement le Archiver state changes, Aucun re-embedding est performed.";
 "CFL顶栏回复中" = "Réponse en cours";
 "CFL顶栏连接中" = "Connexion";
 "CFL顶栏离线" = "Hors ligne";
+
+"CFL使用Passkey登录" = "Se connecter avec une clé d’accès";
+"CFL认证需要重新登录" = "Veuillez vous reconnecter";
+"CFL认证无法保存" = "Impossible d’enregistrer les identifiants";
+"CFL认证暂时不可用" = "Connexion temporairement indisponible";

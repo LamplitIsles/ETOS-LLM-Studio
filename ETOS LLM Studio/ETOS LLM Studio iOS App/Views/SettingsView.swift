@@ -325,6 +325,13 @@ private struct CFLConnectionSettingsView: View {
                 Text(NSLocalizedString("请使用仅限可信网络访问的服务地址。", comment: "CFL trusted network"))
             }
             .disabled(!isReady)
+            Section {
+                Button(NSLocalizedString("CFL使用Passkey登录", comment: "CFL Passkey sign in")) {
+                    Task { await model.signIn() }
+                }
+                .disabled(!isReady || !model.canSignIn || CFLHTTPSOrigin.normalized(originDraft) != config.cflHTTPSOrigin)
+                if let error = model.signInError { Text(error).foregroundStyle(.red) }
+            }
         }
         .navigationTitle(NSLocalizedString("连接设置", comment: "CFL connection settings"))
         .toolbar {

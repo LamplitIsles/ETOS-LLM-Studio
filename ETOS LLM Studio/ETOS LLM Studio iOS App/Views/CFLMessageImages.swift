@@ -87,7 +87,8 @@ private struct CFLMessageImage: View {
             guard let decoded else { failed = true; return }
             thumbnail = decoded
         } catch {
-            guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision else { return }
+            guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision,
+                  model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { return }
             failed = true
         }
     }
@@ -114,6 +115,7 @@ private struct CFLOriginalImage: View {
     @State private var decoded: UIImage?
     @State private var failed = false
     @State private var attempt = 0
+    @State private var isVisible = false
 
     var body: some View {
         NavigationStack {
@@ -122,8 +124,21 @@ private struct CFLOriginalImage: View {
                 if let decoded {
                     Image(uiImage: decoded).resizable().scaledToFit()
                 } else if failed {
-                    Button(NSLocalizedString("图片加载失败，点按重试", comment: "Retry loading image")) { attempt += 1 }
-                        .foregroundStyle(.white)
+                    VStack(spacing: 12) {
+                        Button(NSLocalizedString("图片加载失败，点按重试", comment: "Retry loading image")) { attempt += 1 }
+                        if model.needsSignIn || model.state.connection == .accessDenied {
+                            Button(NSLocalizedString("CFL使用Passkey登录", comment: "CFL Passkey sign in")) {
+                                Task {
+                                    await model.signIn()
+                                    if isVisible && !model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) { dismiss() }
+                                }
+                            }
+                                .disabled(!model.canSignIn)
+                        }
+                        if let error = model.signInError {
+                            Text(error).font(.caption).multilineTextAlignment(.center)
+                        }
+                    }.foregroundStyle(.white)
                 } else {
                     ProgressView().tint(.white)
                 }
@@ -132,6 +147,8 @@ private struct CFLOriginalImage: View {
                 Button(NSLocalizedString("完成", comment: "Done")) { dismiss() }
             } }
         }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
         .task(id: "\(attempt)|\(model.imagePageRevision)|\(model.imagePageActive)") {
             guard model.imagePageActive else { return }
             let pageRevision = model.imagePageRevision
@@ -144,7 +161,8 @@ private struct CFLOriginalImage: View {
                 decoded = result
                 failed = result == nil
             } catch {
-                guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision else { return }
+                guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision,
+                      model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { return }
                 failed = true
             }
         }

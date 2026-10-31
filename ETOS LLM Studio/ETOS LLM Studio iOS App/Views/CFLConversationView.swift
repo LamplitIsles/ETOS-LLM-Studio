@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import Combine
+import AuthenticationServices
 import ETOSCore
 import MarkdownUI
 import PhotosUI
@@ -138,6 +139,46 @@ private struct CFLNativeMessageBubble: View {
 }
 
 @MainActor
+private final class CFLWebAuthentication: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+    private var continuation: CheckedContinuation<URL, Error>?
+
+    func signIn(url: URL) async throws -> URL {
+        guard continuation == nil else { throw CFLAuthorizationError.unavailable }
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "etosllmstudio") { [weak self] url, error in
+                Task { @MainActor in
+                    if let url { self?.finish(.success(url)) }
+                    else if let error {
+                        let nsError = error as NSError
+                        if nsError.domain == ASWebAuthenticationSessionError.errorDomain &&
+                            nsError.code == ASWebAuthenticationSessionError.Code.canceledLogin.rawValue {
+                            self?.finish(.failure(CFLAuthorizationError.cancelled))
+                        } else { self?.finish(.failure(error)) }
+                    } else { self?.finish(.failure(CFLAuthorizationError.unavailable)) }
+                }
+            }
+            session.presentationContextProvider = self
+            self.session = session
+            if !session.start() { finish(.failure(CFLAuthorizationError.unavailable)) }
+        }
+    }
+
+    private func finish(_ result: Result<URL, Error>) {
+        let continuation = self.continuation
+        self.continuation = nil
+        session = nil
+        continuation?.resume(with: result)
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+    }
+}
+
+@MainActor
 final class CFLConversationModel: ObservableObject {
     @Published var state = CFLChatState() {
         didSet {
@@ -239,6 +280,8 @@ final class CFLConversationModel: ObservableObject {
     @Published private(set) var hasUnknownPending = false
     @Published var busy = false
     @Published var notice: String?
+    @Published private(set) var signInError: String?
+    @Published private(set) var needsSignIn = false
     @Published var uncertain: CFLPending?
     @Published private(set) var selectedImages: [CFLSelectedImage] = []
     @Published private(set) var isPreparingImages = false
@@ -250,6 +293,8 @@ final class CFLConversationModel: ObservableObject {
     private var clientID = UUID()
     private var observation: Task<Void, Never>?
     private var connectedOrigin: String?
+    private let authorization = CFLAuthorization(store: CFLKeychainCredentialStore())
+    private let webAuthentication = CFLWebAuthentication()
     private var imageDraftOwner: (target: String, session: String)?
     private var selectionContext: CFLImageContext?
     private var awaitingImagePicker = false
@@ -271,6 +316,7 @@ final class CFLConversationModel: ObservableObject {
     }
 
     var stateError: String? { state.error.map { message(for: $0) } }
+    var canSignIn: Bool { connectedOrigin != nil && !busy }
 
     var imageContext: CFLImageContext? {
         guard let target = connectedOrigin, let session = state.sessionId else { return nil }
@@ -411,9 +457,14 @@ final class CFLConversationModel: ObservableObject {
     func media(_ image: CFLImageRef, target: String?, session: String?, revision: Int, clientID: UUID, original: Bool = false) async throws -> Data {
         guard imagePageActive, let context = imageContext, isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID), let client else { throw CFLFailure.sessionChanged }
         let pageRevision = imagePageRevision
-        let data = try await client.media(image, original: original, expectedSessionId: context.session, expectedSessionRevision: context.revision)
-        guard imagePageActive, imagePageRevision == pageRevision, imageContext == context else { throw CFLFailure.sessionChanged }
-        return data
+        do {
+            let data = try await client.media(image, original: original, expectedSessionId: context.session, expectedSessionRevision: context.revision)
+            guard imagePageActive, imagePageRevision == pageRevision, imageContext == context else { throw CFLFailure.sessionChanged }
+            return data
+        } catch {
+            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }
+            throw error
+        }
     }
 
     func isCurrentMediaContext(target: String?, session: String?, revision: Int, clientID: UUID) -> Bool {
@@ -452,17 +503,23 @@ final class CFLConversationModel: ObservableObject {
             notice = nil
             return true
         } catch {
-            if imagePageActive, imagePageRevision == pageRevision, imageContext == context {
-                notice = NSLocalizedString("无法恢复图片，请检查连接或重新选择。", comment: "Image recovery failed")
+            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context {
+                if !recordAuthorizationFailure(error) {
+                    notice = NSLocalizedString("无法恢复图片，请检查连接或重新选择。", comment: "Image recovery failed")
+                }
             }
             return false
         }
     }
 
     func connect(origin: String) async {
+        await connect(origin: origin, replacingClient: false)
+    }
+
+    private func connect(origin: String, replacingClient: Bool) async {
         guard let origin = CFLHTTPSOrigin.normalized(origin), !origin.isEmpty,
               var components = URLComponents(string: origin) else { return }
-        if client != nil && connectedOrigin == origin { return }
+        if !replacingClient && client != nil && connectedOrigin == origin { return }
         guard !busy else { return }
         busy = true
         defer { busy = false }
@@ -470,11 +527,17 @@ final class CFLConversationModel: ObservableObject {
         AppConfigStore.shared.cflHTTPSOrigin = origin
         observation?.cancel()
         if let client { await client.disconnect() }
+        if connectedOrigin != origin {
+            do { try await authorization.select(origin: origin) }
+            catch { notice = message(for: error); return }
+            needsSignIn = false
+            signInError = nil
+        }
         client = nil
         connectedOrigin = nil
         state = CFLChatState()
         notice = nil
-        uncertain = nil
+        if !replacingClient { uncertain = nil }
         components.scheme = "wss"
         components.path = "/api/chat/socket"
         guard let socketURL = components.url,
@@ -482,11 +545,13 @@ final class CFLConversationModel: ObservableObject {
             notice = NSLocalizedString("无法保存聊天状态。", comment: "CFL storage error")
             return
         }
-        var request = URLRequest(url: socketURL)
-        request.setValue(origin, forHTTPHeaderField: "Origin")
-        let socketRequest = request
         let store = CFLFilePendingStore(file: support.appendingPathComponent("CFL/pending.json"))
-        let next = CFLChatClient(target: origin, store: store, transport: { CFLWebSocketTransport(request: socketRequest) })
+        let authorization = self.authorization
+        let next = CFLChatClient(target: origin, store: store,
+                                 imageHTTP: CFLAuthorizedHTTP(authorization: authorization), transport: {
+            let request = try await authorization.authenticatedRequest(URLRequest(url: socketURL))
+            return CFLAuthorizedSocket(socket: CFLWebSocketTransport(request: request), authorization: authorization)
+        })
         clientID = UUID()
         client = next
         connectedOrigin = origin
@@ -499,8 +564,38 @@ final class CFLConversationModel: ObservableObject {
         await next.connect()
     }
 
+    func signIn() async {
+        guard let origin = connectedOrigin, !busy else { return }
+        let startingClient = clientID
+        busy = true
+        notice = nil
+        signInError = nil
+        let result = await CFLSignInFlow.run(
+            begin: { try await authorization.begin() },
+            authenticate: { try await webAuthentication.signIn(url: $0.url) },
+            complete: { try await authorization.complete($0, callback: $1) },
+            isCurrent: { connectedOrigin == origin && clientID == startingClient },
+            isCancellation: { ($0 as? CFLAuthorizationError) == .cancelled },
+            isSuperseded: { ($0 as? CFLAuthorizationError) == .superseded }
+        )
+        switch result {
+        case .completed:
+            needsSignIn = false
+            busy = false
+            await connect(origin: origin, replacingClient: true)
+        case .cancelled, .superseded:
+            busy = false
+        case .failed(let error):
+            recordAuthorizationFailure(error)
+            let description = message(for: error)
+            signInError = description
+            notice = description
+            busy = false
+        }
+    }
+
     func send(_ text: String, draftRevision capturedRevision: Int) async -> Bool {
-        guard let client, !busy, uncertain == nil, !isPreparingImages,
+        guard let client, !busy, !needsSignIn, uncertain == nil, !isPreparingImages,
               imagesBelongToCurrentSession, let context = imageContext else { return false }
         let captured = selectedImages
         busy = true
@@ -517,6 +612,7 @@ final class CFLConversationModel: ObservableObject {
             uncertainDraftRevision = capturedRevision
             notice = NSLocalizedString("无法确认内容是否已保存在本机。请先检查保存状态。", comment: "CFL uncertain storage")
         } catch {
+            if imageContext == context { recordAuthorizationFailure(error) }
             notice = message(for: error)
         }
         return false
@@ -586,10 +682,26 @@ final class CFLConversationModel: ObservableObject {
         catch { notice = message(for: error) }
     }
 
+    @discardableResult
+    func recordAuthorizationFailure(_ error: Error) -> Bool {
+        guard (error as? CFLFailure) == .accessDenied || (error as? CFLAuthorizationError) == .authorizationRequired else { return false }
+        needsSignIn = true
+        notice = NSLocalizedString("CFL认证需要重新登录", comment: "CFL sign in required")
+        return true
+    }
+
     private func message(for error: Error) -> String {
+        if let error = error as? CFLAuthorizationError {
+            switch error {
+            case .authorizationRequired, .invalidCallback: return NSLocalizedString("CFL认证需要重新登录", comment: "CFL sign in required")
+            case .storage: return NSLocalizedString("CFL认证无法保存", comment: "CFL credential storage error")
+            case .cancelled, .superseded: return ""
+            case .invalidOrigin, .unavailable: return NSLocalizedString("CFL认证暂时不可用", comment: "CFL authentication unavailable")
+            }
+        }
         switch error as? CFLFailure {
         case .offline: return NSLocalizedString("连接已断开，请等待重新连接。", comment: "CFL offline")
-        case .accessDenied: return NSLocalizedString("连接被拒绝，请检查服务设置。", comment: "CFL denied")
+        case .accessDenied: return NSLocalizedString("CFL认证需要重新登录", comment: "CFL sign in required")
         case .invalidInput: return NSLocalizedString("请检查文字内容和长度。", comment: "CFL invalid input")
         case .storage: return NSLocalizedString("无法保存聊天状态。", comment: "CFL storage error")
         case .protocolError: return NSLocalizedString("无法读取服务返回的数据。", comment: "CFL protocol error")
@@ -654,7 +766,7 @@ struct CFLConversationView: View {
         ZStack {
             ChatBackgroundLayer(isChatVisible: true).ignoresSafeArea()
             VStack(spacing: 0) {
-                if model.state.connection != .online || model.hasUnknownPending || !model.imagesBelongToCurrentSession
+                if model.state.connection != .online || model.needsSignIn || model.hasUnknownPending || !model.imagesBelongToCurrentSession
                     || model.uncertain != nil || model.notice != nil || model.stateError != nil {
                     connectionStatus
                 }
@@ -797,7 +909,7 @@ struct CFLConversationView: View {
         let tintOpacity = LiquidGlassTintSetting.normalized(config.liquidGlassTintOpacity)
         let tint = colorScheme == .dark ? Color.black.opacity(tintOpacity) : Color.white.opacity(tintOpacity)
         let headerStatus = CFLHeaderStatus(hasOrigin: !config.cflHTTPSOrigin.isEmpty,
-                                           connection: model.state.connection,
+                                           connection: model.needsSignIn ? .accessDenied : model.state.connection,
                                            hasActiveTurn: model.state.activeTurnId != nil)
         return ChatNavigationBar {
             ChatNavigationIconSurface(
@@ -837,7 +949,10 @@ struct CFLConversationView: View {
             HStack {
                 Text(statusText).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if !config.cflHTTPSOrigin.isEmpty && model.state.connection != .online && model.state.connection != .connecting {
+                if model.state.connection == .accessDenied || model.needsSignIn {
+                    Button(NSLocalizedString("CFL使用Passkey登录", comment: "CFL Passkey sign in")) { Task { await model.signIn() } }
+                        .font(.caption).disabled(!model.canSignIn)
+                } else if !config.cflHTTPSOrigin.isEmpty && model.state.connection != .online && model.state.connection != .connecting {
                     Button(NSLocalizedString("重新连接", comment: "CFL retry connection")) { Task { await model.retryConnection() } }
                         .font(.caption).disabled(model.busy)
                 }
@@ -855,11 +970,12 @@ struct CFLConversationView: View {
 
     private var statusText: String {
         if config.cflHTTPSOrigin.isEmpty { return NSLocalizedString("请先设置连接地址。", comment: "CFL setup") }
+        if model.needsSignIn { return NSLocalizedString("CFL认证需要重新登录", comment: "CFL sign in required") }
         switch model.state.connection {
         case .online: return model.state.activeTurnId == nil ? NSLocalizedString("已连接", comment: "CFL online") : NSLocalizedString("正在回复", comment: "CFL active")
         case .connecting: return NSLocalizedString("正在连接…", comment: "CFL connecting")
         case .offline: return NSLocalizedString("连接已断开。", comment: "CFL offline status")
-        case .accessDenied: return NSLocalizedString("连接被拒绝，请检查服务设置。", comment: "CFL denied")
+        case .accessDenied: return NSLocalizedString("CFL认证需要重新登录", comment: "CFL sign in required")
         case .protocolError: return NSLocalizedString("无法读取服务返回的数据。", comment: "CFL protocol error")
         }
     }
@@ -886,7 +1002,7 @@ struct CFLConversationView: View {
             },
             focus: $composerFocused,
             cflState: CFLComposerState(
-                canSend: !model.busy && !model.isPreparingImages && model.uncertain == nil
+                canSend: !model.busy && !model.needsSignIn && !model.isPreparingImages && model.uncertain == nil
                     && (draft.hasSendableText || !model.selectedImages.isEmpty)
                     && model.imagesBelongToCurrentSession && model.state.connection == .online,
                 isSubmitting: model.busy || model.isPreparingImages,

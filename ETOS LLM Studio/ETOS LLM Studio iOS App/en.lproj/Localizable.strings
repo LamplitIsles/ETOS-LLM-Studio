@@ -8598,3 +8598,8 @@
 "CFL顶栏回复中" = "Replying";
 "CFL顶栏连接中" = "Connecting";
 "CFL顶栏离线" = "Offline";
+
+"CFL使用Passkey登录" = "Sign in with Passkey";
+"CFL认证需要重新登录" = "Please sign in again";
+"CFL认证无法保存" = "Could not save sign-in credentials";
+"CFL认证暂时不可用" = "Sign-in is temporarily unavailable";

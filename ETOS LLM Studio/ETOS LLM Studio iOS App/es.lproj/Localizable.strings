@@ -8675,3 +8675,8 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 "CFL顶栏回复中" = "Respondiendo";
 "CFL顶栏连接中" = "Conectando";
 "CFL顶栏离线" = "Sin conexión";
+
+"CFL使用Passkey登录" = "Iniciar sesión con una llave de acceso";
+"CFL认证需要重新登录" = "Vuelve a iniciar sesión";
+"CFL认证无法保存" = "No se pudieron guardar las credenciales";
+"CFL认证暂时不可用" = "El inicio de sesión no está disponible";
