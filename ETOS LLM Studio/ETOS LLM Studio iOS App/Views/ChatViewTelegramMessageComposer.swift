@@ -8,6 +8,7 @@
 
 import SwiftUI
 import Foundation
+import PhotosUI
 import UIKit
 import ETOSCore
 
@@ -15,6 +16,7 @@ struct CFLComposerState {
     let canSend: Bool
     let isSubmitting: Bool
     let isResponding: Bool
+    var hasImages: Bool = false
 }
 
 /// Telegram 风格的消息输入框
@@ -36,6 +38,15 @@ struct TelegramMessageComposer: View {
     let focus: FocusState<Bool>.Binding
     var availableHeight: CGFloat = .infinity
     var cflState: CFLComposerState
+    var images: [CFLSelectedImage] = []
+    var canAttachImages = false
+    var remainingImageSlots = 0
+    var isPreparingImages = false
+    var beginImageSelection: () -> Bool = { false }
+    var imagePickerDidDismiss: () -> Void = {}
+    var addPhotos: ([PhotosPickerItem]) -> Void = { _ in }
+    var addCameraImage: (UIImage) -> Void = { _ in }
+    var removeImage: (UUID) -> Void = { _ in }
 
     @State var isExpandedComposer = false
     @State var adaptiveHasSendableText = false
@@ -46,6 +57,9 @@ struct TelegramMessageComposer: View {
     @State var inlineSpeechPreparedTranscript: String?
     @State private var showInlineSpeechError = false
     @State private var inlineSpeechErrorMessage: String?
+    @State private var showImagePicker = false
+    @State private var showCamera = false
+    @State private var selectedPhotos: [PhotosPickerItem] = []
 
     private let inputBasePointSize: CGFloat = 16
     private var measuredInputPointSize: CGFloat {
@@ -72,6 +86,15 @@ struct TelegramMessageComposer: View {
     var body: some View {
         ChatComposerHeightLimit(maximumHeight: availableHeight) {
             VStack(spacing: 8) {
+                if !images.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        imagePreviews
+                        Text(NSLocalizedString("未发送的图片仅暂存在内存中，退出应用后会丢失。", comment: "Image draft lifetime"))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }.padding(.horizontal, 16)
+                     .fixedSize(horizontal: false, vertical: true)
+                     .layoutPriority(1)
+                }
                 if usesCardComposer {
                     cardComposerLayout
                         .zIndex(1)
@@ -82,6 +105,27 @@ struct TelegramMessageComposer: View {
                 }
             }
             .padding(.bottom, 6)
+        }
+        .photosPicker(isPresented: $showImagePicker, selection: $selectedPhotos,
+                      maxSelectionCount: max(1, remainingImageSlots), selectionBehavior: .ordered, matching: .images)
+        .onChange(of: selectedPhotos) { _, photos in
+            guard !photos.isEmpty else { return }
+            addPhotos(photos)
+            selectedPhotos = []
+        }
+        .onChange(of: showImagePicker) { _, presented in
+            if !presented { imagePickerDidDismiss() }
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                CameraImagePicker(isPresented: $showCamera) { image in
+                    if let image { addCameraImage(image) }
+                }.ignoresSafeArea()
+            }
+        }
+        .onChange(of: showCamera) { _, presented in
+            if !presented { imagePickerDidDismiss() }
         }
         .onChange(of: text) { _, newValue in
             handleAutoExpand(for: newValue)
@@ -127,6 +171,58 @@ struct TelegramMessageComposer: View {
             .background(ChatSendFlightLayoutAnchor(controller: sendFlightController, region: .composerContent))
             .animation(adaptiveComposerAnimation, value: isExpandedComposer)
             .animation(adaptiveComposerAnimation, value: inlineSpeechRecorder.phase)
+    }
+
+    private var imagePreviews: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 8) {
+                ForEach(images) { image in
+                    ZStack(alignment: .topTrailing) {
+                        ChatPendingImagePreview(attachment: image.attachment)
+                        Button { removeImage(image.id) } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 24, height: 24)
+                                .background(.black.opacity(0.58), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(String(format: NSLocalizedString("移除附件 %@", comment: ""), image.attachment.fileName))
+                        .padding(4)
+                    }
+                }
+            }.padding(.horizontal, 2)
+        }
+        .frame(height: 80)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(glassRoundedBackground(cornerRadius: 18))
+    }
+
+    func attachmentMenuButton(size: CGFloat, participatesInGlassContainer: Bool = false, embeddedInCard: Bool = false) -> some View {
+        Menu {
+            Button {
+                if beginImageSelection() { showImagePicker = true }
+            } label: {
+                Label(NSLocalizedString("选择照片", comment: "Choose photos"), systemImage: "photo.on.rectangle")
+            }
+            Button {
+                if beginImageSelection() { showCamera = true }
+            } label: {
+                Label(NSLocalizedString("拍照", comment: "Take photo"), systemImage: "camera")
+            }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+        } label: {
+            Image(systemName: embeddedInCard ? "plus" : "paperclip")
+                .etFont(.system(size: max(14, size * 0.45), weight: .semibold))
+                .foregroundColor(TelegramColors.attachButtonColor)
+                .frame(width: size, height: size)
+                .background {
+                    if embeddedInCard { Circle().fill(Color.primary.opacity(0.08)) }
+                    else { glassCircleBackground }
+                }
+        }
+        .buttonStyle(ComposerPressButtonStyle(usesSystemGlassFeedback: participatesInGlassContainer && isLiquidGlassEnabled))
+        .disabled(!canAttachImages || isPreparingImages || inlineSpeechRecorder.phase.isActive)
+        .accessibilityLabel(NSLocalizedString("添加附件", comment: ""))
     }
 
     func startInlineSpeechRecording() {

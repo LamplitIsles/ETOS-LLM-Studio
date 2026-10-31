@@ -115,7 +115,7 @@ struct ContentView: View {
                 unsupportedIncomingFile = false
             }
         } message: {
-            Text(NSLocalizedString("当前聊天暂不支持发送文件或图片。", comment: "Unsupported chat attachment"))
+            Text(NSLocalizedString("当前聊天暂不支持通过此方式导入文件。", comment: "Unsupported incoming file"))
         }
         // MARK: - 公告弹窗
         .sheet(isPresented: $announcementManager.shouldShowAlert) {
@@ -413,6 +413,7 @@ struct ContentView: View {
     }
 
     private func pushNativeSettings(destination: SettingsNavigationDestination?) {
+        cflModel.navigationDidLeavePage()
         settingsDestination = nil
         isNativeSettingsPresented = true
         if let destination {

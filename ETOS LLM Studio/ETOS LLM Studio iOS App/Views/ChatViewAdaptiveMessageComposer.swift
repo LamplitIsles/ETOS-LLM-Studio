@@ -81,6 +81,10 @@ extension TelegramMessageComposer {
 
     private var adaptiveComposerRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            if adaptivePresentation != .expandedText && adaptivePresentation != .speech {
+                attachmentMenuButton(size: adaptiveControlSize)
+                    .transition(accessibilityReduceMotion ? .opacity : .scale(scale: 0.82, anchor: .trailing).combined(with: .opacity))
+            }
             adaptiveCenterContainer(participatesInGlassContainer: false)
 
             if adaptiveShowsInlineActionButton {
@@ -110,6 +114,11 @@ extension TelegramMessageComposer {
     @available(iOS 26.0, *)
     private var adaptiveGlassComposerRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            if adaptivePresentation != .expandedText && adaptivePresentation != .speech {
+                attachmentMenuButton(size: adaptiveControlSize, participatesInGlassContainer: true)
+                    .glassEffectID("adaptive-attachment", in: adaptiveGlassNamespace)
+                    .transition(accessibilityReduceMotion ? .opacity : .scale(scale: 0.82, anchor: .trailing).combined(with: .opacity))
+            }
             adaptiveCenterContainer(participatesInGlassContainer: true)
                 .glassEffectID("adaptive-center", in: adaptiveGlassNamespace)
 
@@ -273,6 +282,7 @@ extension TelegramMessageComposer {
                 .contentShape(Rectangle())
         }
         .buttonStyle(ComposerPressButtonStyle())
+        .disabled(isPreparingImages)
         .accessibilityLabel(NSLocalizedString("开始语音输入", comment: ""))
     }
 
@@ -448,7 +458,7 @@ extension TelegramMessageComposer {
     }
 
     private var adaptiveHasContent: Bool {
-        adaptiveHasSendableText
+        adaptiveHasSendableText || cflState.hasImages
     }
 
     private var adaptiveActionIconName: String {

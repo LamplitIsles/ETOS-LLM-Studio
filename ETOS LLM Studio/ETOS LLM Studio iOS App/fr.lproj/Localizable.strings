@@ -8651,5 +8651,18 @@ If seulement le Archiver state changes, Aucun re-embedding est performed.";
 
 "支持导入旧版 ETOS JSON 数据包。" = "Importe les paquets de données JSON des anciennes versions d’ETOS.";
 "使用系统语音识别，确认后将文字放入输入框。" = "Utilise la reconnaissance vocale du système et ajoute le texte au champ de saisie après confirmation.";
-"当前聊天暂不支持发送文件或图片。" = "Cette conversation ne permet pas encore d’envoyer des fichiers ou des images.";
 "预览会读取分享链接并在本地生成描述，不会运行快捷指令。" = "L’aperçu lit les liens partagés et génère les descriptions localement, sans exécuter les raccourcis.";
+
+"选择照片" = "Choisir des photos";
+"无法添加图片，请检查图片格式和大小。" = "Impossible d’ajouter les images. Vérifiez leur format et leur taille.";
+"图片属于之前的会话，请切回或移除图片。" = "Ces images appartiennent à une conversation précédente. Revenez-y ou supprimez-les.";
+"无法恢复图片，请检查连接或重新选择。" = "Impossible de restaurer les images. Vérifiez la connexion ou sélectionnez-les à nouveau.";
+"包含 %d 张图片" = "Contient %d images";
+"恢复到输入框" = "Restaurer dans la zone de saisie";
+"图片加载失败，点按重试" = "Échec du chargement de l’image. Touchez pour réessayer.";
+"未发送的图片仅暂存在内存中，退出应用后会丢失。" = "Les images non envoyées sont conservées en mémoire et seront perdues à la fermeture de l’app.";
+"无法确认内容是否已保存在本机。请先检查保存状态。" = "Impossible de confirmer l’enregistrement local du contenu. Vérifiez d’abord son état.";
+"内容已保存在本机，请在下方处理。" = "Contenu enregistré localement. Consultez-le ci-dessous.";
+"内容未发送，可以继续编辑。" = "Le contenu n’a pas été envoyé. Vous pouvez continuer à le modifier.";
+"发送失败，可以恢复内容后重新编辑。" = "Échec de l’envoi. Restaurez le contenu pour le modifier.";
+"当前聊天暂不支持通过此方式导入文件。" = "Cette discussion ne permet pas d’importer des fichiers de cette façon.";

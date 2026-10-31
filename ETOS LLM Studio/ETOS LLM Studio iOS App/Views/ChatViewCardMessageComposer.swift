@@ -71,6 +71,9 @@ extension TelegramMessageComposer {
 
     private var cardToolbar: some View {
         HStack(spacing: 6) {
+            if adaptivePresentation != .speech {
+                attachmentMenuButton(size: 40, embeddedInCard: true)
+            }
             Spacer(minLength: 0)
 
             if adaptivePresentation != .speech, composerSupportsSpeech {
@@ -100,6 +103,7 @@ extension TelegramMessageComposer {
                 .contentShape(Circle())
         }
         .buttonStyle(ComposerPressButtonStyle())
+        .disabled(isPreparingImages)
         .accessibilityLabel(NSLocalizedString("开始语音输入", comment: ""))
     }
 }

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 actor MemoryStore: CFLPendingStore {
     var entries: [CFLPending] = []
@@ -28,6 +31,7 @@ actor MemoryStore: CFLPendingStore {
         failSaveNumber = number; commitBeforeFailure = afterCommit; failLoad = unreadable
     }
     func restoreReads() { failLoad = false }
+    func setEntries(_ value: [CFLPending]) { entries = value }
     func pauseNextSave() { pauseSave = true }
     func saveIsPaused() -> Bool { pausedSave != nil }
     func resumeSave() { pausedSave?.resume(); pausedSave = nil }
@@ -309,8 +313,184 @@ func message(operation: String, role: String = "user") -> ChordJSON {
              "createdAt": .number(1), "operationId": .string(operation), "turnId": .null])
 }
 
+actor FakeImageHTTP: CFLImageHTTP {
+    var requests: [URLRequest] = []
+    var fail = false
+    var hold = false
+    var missingPreview = false
+    var missingOriginal = false
+    var continuation: CheckedContinuation<Void, Never>?
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        if hold { await withCheckedContinuation { continuation = $0 }; hold = false }
+        if fail { throw CFLFailure.requestFailed }
+        if request.httpMethod == "GET" {
+            let original = request.url!.path.hasSuffix("/original")
+            let missing = original ? missingOriginal : missingPreview
+            let response = HTTPURLResponse(url: request.url!, statusCode: missing ? 404 : 200, httpVersion: nil,
+                                           headerFields: ["Content-Type": original ? "image/png" : "image/jpeg"])!
+            return (original ? Data([137, 80, 78, 71, 13, 10, 26, 10, 1]) : Data([255, 216, 255, 1]), response)
+        }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        let payload = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        let images = payload["images"] as! [[String: Any]]
+        let refs = images.enumerated().map { index, item in
+            ["attachmentId": "stored_\(index)", "name": item["name"]!, "mediaType": item["mediaType"]!, "availability": "available"]
+        }
+        return (try JSONSerialization.data(withJSONObject: ["sessionId": payload["sessionId"]!, "operationId": payload["operationId"]!, "images": refs]), response)
+    }
+    func setFailure() { fail = true }
+    func setMissing(preview: Bool, original: Bool = false) { missingPreview = preview; missingOriginal = original }
+    func setHold() { hold = true }
+    func isHeld() -> Bool { continuation != nil }
+    func release() { continuation?.resume(); continuation = nil }
+    func allRequests() -> [URLRequest] { requests }
+}
+
+func imageSnapshot(before: String? = nil) -> ChordJSON {
+    let limits: ChordJSON = .object(["mediaTypes": .array([.string("image/png")]), "maxImagesPerMessage": .number(2), "maxImageBytes": .number(100), "maxMessageImageBytes": .number(150)])
+    let images: [ChordJSON] = (0..<7).map { .object(["attachmentId": .string("output_\($0)"), "name": .string("out.png"), "mediaType": .string("image/png"), "availability": .string($0 == 0 ? "missing" : "available")]) }
+    let view: ChordJSON = .object(["version": .number(2), "sessionId": .string("A"), "name": .string("test"), "activeTurnId": .null,
+        "contextUsage": .null, "compaction": .null, "recovery": .array([]), "capabilities": .object(["text": .bool(true), "stop": .bool(true), "images": limits]),
+        "messages": .array([.object(["id": .string("agent"), "role": .string("agent"), "text": .string(""), "createdAt": .number(1), "operationId": .null, "turnId": .null, "images": .array(images)])]), "before": before.map(ChordJSON.string) ?? .null])
+    return .object(["serviceId": .string("lamplit.chat.v2"), "mode": .string("singleton"), "instances": .array([.object(["members": .array([.object(["name": .string("view"), "kind": .string("state"), "sequence": .number(0), "ops": .array([.array([.string("r"), view])])])])])])])
+}
+
+func checkImages() async throws {
+    let legacy = Data("[{\"target\":\"x\",\"sessionId\":\"A\",\"operationId\":\"old\",\"text\":\"hello\",\"createdAt\":0,\"dispatched\":true,\"status\":\"unknown\"}]".utf8)
+    let decodedLegacy = try JSONDecoder().decode([CFLPending].self, from: legacy)
+    precondition(decodedLegacy.first?.images == nil)
+    let png = Data([137, 80, 78, 71, 13, 10, 26, 10, 1]), jpeg = Data([255, 216, 255, 1])
+    let first = CFLPreparedImage(id: "one", name: "one.png", mediaType: "image/png", original: png, preview: jpeg, model: jpeg)
+    let second = CFLPreparedImage(id: "two", name: "two.png", mediaType: "image/png", original: png, preview: jpeg, model: jpeg)
+    let socket = FakeSocket(snapshot: imageSnapshot()), http = FakeImageHTTP(), store = MemoryStore()
+    let client = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+    await client.connect()
+    let initial = await client.currentState()
+    precondition(initial.imageLimits?.maxImagesPerMessage == 2 && initial.messages.first?.images?.count == 7 && initial.messages.first?.text == "")
+    do { try await client.validateImages([first, second, first]); preconditionFailure("count accepted") } catch {}
+    let operation = try await client.send("", images: [first, second], expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision)
+    let submissions = await socket.arguments(for: "submit")
+    let payload = submissions[0][0].object!
+    precondition(payload["operationId"] == .string(operation) && payload["text"] == .string("") && payload["images"]?.array?.count == 2)
+    let records = await store.entries
+    precondition(records.first?.images?.map(\.attachmentId) == ["stored_0", "stored_1"])
+    let requests = await http.allRequests()
+    let upload = try JSONSerialization.jsonObject(with: requests[0].httpBody!) as! [String: Any]
+    precondition(upload["operationId"] as? String == operation && upload["sessionId"] as? String == "A" && requests[0].value(forHTTPHeaderField: "Origin") == "https://example.com")
+    let uploaded = upload["images"] as! [[String: Any]]
+    precondition(uploaded.map { $0["id"] as! String } == ["one", "two"])
+    let available = initial.messages[0].images![1]
+    let media = try await client.media(available, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision)
+    precondition(media == jpeg)
+    do { _ = try await client.media(initial.messages[0].images![0]); preconditionFailure("missing accepted") } catch {}
+    await client.disconnect()
+
+    let boundarySocket = FakeSocket(snapshot: imageSnapshot()), boundaryHTTP = FakeImageHTTP()
+    let boundary = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: boundaryHTTP, transport: { boundarySocket })
+    await boundary.connect()
+    let a = await boundary.currentState()
+    try await boundarySocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await boundary.currentState().sessionId != "B" { await Task.yield() }
+    let b = await boundary.currentState()
+    precondition(b.sessionRevision == a.sessionRevision + 1)
+    do { _ = try await boundary.send("", images: [first], expectedSessionId: "A", expectedSessionRevision: a.sessionRevision); preconditionFailure("A sent to B") } catch CFLFailure.sessionChanged {}
+    do { _ = try await boundary.media(available, expectedSessionId: "A", expectedSessionRevision: a.sessionRevision); preconditionFailure("A media loaded in B") } catch CFLFailure.sessionChanged {}
+    try await boundarySocket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+    while await boundary.currentState().sessionId != "A" { await Task.yield() }
+    let nextA = await boundary.currentState()
+    precondition(nextA.sessionRevision == b.sessionRevision + 1)
+    do { _ = try await boundary.send("", images: [first], expectedSessionId: "A", expectedSessionRevision: a.sessionRevision); preconditionFailure("stale A sent") } catch CFLFailure.sessionChanged {}
+    do { _ = try await boundary.media(available, expectedSessionId: "A", expectedSessionRevision: a.sessionRevision); preconditionFailure("stale A media loaded") } catch CFLFailure.sessionChanged {}
+    let boundaryRequests = await boundaryHTTP.allRequests()
+    let boundaryMethods = await boundarySocket.methods()
+    precondition(boundaryRequests.isEmpty && !boundaryMethods.contains("submit"))
+    _ = try await boundary.send("plain text")
+    await boundary.disconnect()
+
+    let fallbackSocket = FakeSocket(snapshot: imageSnapshot(before: "older")), fallbackHTTP = FakeImageHTTP()
+    let historyRef: ChordJSON = .object(["attachmentId": .string("history_1"), "name": .string("history.png"), "mediaType": .string("image/png"), "availability": .string("available")])
+    let historyMessage: ChordJSON = .object(["id": .string("older-agent"), "role": .string("agent"), "text": .string(""), "createdAt": .number(0), "operationId": .null, "turnId": .null, "images": .array([historyRef])])
+    await fallbackSocket.setHistory(["older": .object(["messages": .array([historyMessage]), "before": .null])])
+    let fallbackClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: fallbackHTTP, transport: { fallbackSocket })
+    await fallbackClient.connect()
+    let fallbackState = await fallbackClient.currentState()
+    await fallbackHTTP.setMissing(preview: true)
+    let original = try await fallbackClient.media(available, expectedSessionId: "A", expectedSessionRevision: fallbackState.sessionRevision)
+    precondition(original == png)
+    try await fallbackClient.loadEarlier()
+    let historyState = await fallbackClient.currentState()
+    let historyOriginal = try await fallbackClient.media(historyState.messages[0].images![0], expectedSessionId: "A", expectedSessionRevision: fallbackState.sessionRevision)
+    precondition(historyOriginal == png)
+    let fallbackRequests = await fallbackHTTP.allRequests()
+    precondition(fallbackRequests.map { $0.url!.path } == ["/api/chat/media/output_1/preview", "/api/chat/media/output_1/original", "/api/chat/media/history_1/preview", "/api/chat/media/history_1/original"])
+    await fallbackHTTP.setMissing(preview: true, original: true)
+    do { _ = try await fallbackClient.media(available); preconditionFailure("missing original accepted") } catch CFLFailure.requestFailed {}
+    await fallbackClient.disconnect()
+
+    let staleMediaSocket = FakeSocket(snapshot: imageSnapshot()), staleMediaHTTP = FakeImageHTTP()
+    let staleMediaClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: staleMediaHTTP, transport: { staleMediaSocket })
+    await staleMediaClient.connect(); await staleMediaHTTP.setMissing(preview: true); await staleMediaHTTP.setHold()
+    let staleMedia = Task { try await staleMediaClient.media(available) }
+    while !(await staleMediaHTTP.isHeld()) { await Task.yield() }
+    try await staleMediaSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await staleMediaClient.currentState().sessionId != "B" { await Task.yield() }
+    await staleMediaHTTP.release()
+    do { _ = try await staleMedia.value; preconditionFailure("stale preview retried") } catch CFLFailure.sessionChanged {}
+    let staleMediaRequests = await staleMediaHTTP.allRequests()
+    precondition(staleMediaRequests.count == 1 && staleMediaRequests[0].url!.path.hasSuffix("/preview"))
+    await staleMediaClient.disconnect()
+
+    let failingSocket = FakeSocket(snapshot: imageSnapshot()), failingHTTP = FakeImageHTTP()
+    await failingHTTP.setFailure()
+    let failingClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: failingHTTP, transport: { failingSocket })
+    await failingClient.connect()
+    do { _ = try await failingClient.send("text", images: [first]); preconditionFailure("failed upload sent") } catch {}
+    let failedMethods = await failingSocket.methods()
+    precondition(!failedMethods.contains("submit"))
+    await failingClient.disconnect()
+
+    let switchingSocket = FakeSocket(snapshot: imageSnapshot()), switchingHTTP = FakeImageHTTP()
+    let switching = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: switchingHTTP, transport: { switchingSocket })
+    await switching.connect(); await switchingHTTP.setHold()
+    let send = Task { try await switching.send("text", images: [first]) }
+    while !(await switchingHTTP.isHeld()) { await Task.yield() }
+    try await switchingSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await switching.currentState().sessionId != "B" { await Task.yield() }
+    try await switchingSocket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+    while await switching.currentState().sessionId != "A" { await Task.yield() }
+    await switchingHTTP.release()
+    do { _ = try await send.value; preconditionFailure("stale upload sent") } catch {}
+    let switchedMethods = await switchingSocket.methods()
+    precondition(!switchedMethods.contains("submit"))
+    await switching.disconnect()
+
+    let lostSocket = FakeSocket(snapshot: imageSnapshot(), dropSubmit: true), pendingStore = MemoryStore()
+    let lost = CFLChatClient(target: "https://example.com", store: pendingStore, imageHTTP: FakeImageHTTP(), transport: { lostSocket })
+    await lost.connect()
+    let lostOperation = try await lost.send("caption", images: [first])
+    await lost.disconnect()
+    let saved = await pendingStore.entries
+    precondition(saved.count == 1 && saved[0].operationId == lostOperation && saved[0].dispatched && saved[0].images?.count == 1)
+    var expired = saved[0]
+    expired = CFLPending(target: expired.target, sessionId: expired.sessionId, operationId: expired.operationId, text: expired.text,
+                         createdAt: Date(timeIntervalSinceNow: -120), dispatched: true, status: .unknown, images: expired.images)
+    await pendingStore.setEntries([expired])
+    let restoreSocket = FakeSocket(snapshot: imageSnapshot())
+    let restored = CFLChatClient(target: "https://example.com", store: pendingStore, imageHTTP: FakeImageHTTP(), transport: { restoreSocket })
+    await restored.connect(); try await restored.reconcile()
+    let finalize = await restoreSocket.arguments(for: "finalizeSubmission")
+    let restoredMethods = await restoreSocket.methods()
+    precondition(!restoredMethods.contains("submit") && finalize.count == 1)
+    let restoredSubmission = finalize[0][0].object?["submission"]?.object
+    precondition(restoredSubmission?["operationId"] == .string(lostOperation) && restoredSubmission?["images"]?.array?.count == 1)
+    await restored.disconnect()
+    print("CFL image checks passed")
+}
+
 @main struct CFLChatChecks {
     static func main() async throws {
+        if CommandLine.arguments.dropFirst().elementsEqual(["--images-only"]) { try await checkImages(); return }
         try await checkHistoryWindows()
         if CommandLine.arguments.dropFirst().elementsEqual(["--history-only"]) {
             print("CFL history window checks passed")

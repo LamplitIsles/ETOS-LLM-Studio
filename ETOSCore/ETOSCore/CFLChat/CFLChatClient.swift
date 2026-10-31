@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// A single active CFL session. State and pending records retain server string identities.
 public actor CFLChatClient {
@@ -6,6 +9,7 @@ public actor CFLChatClient {
     private let target: String
     private let store: any CFLPendingStore
     private let transportFactory: TransportFactory
+    private let imageHTTP: any CFLImageHTTP
     private var entries: [CFLPending] = []
     private var loaded = false
     private var writing = false
@@ -42,13 +46,14 @@ public actor CFLChatClient {
     private var checks: Set<CheckKey> = []
     private var finalized: Set<CheckKey> = []
     private var submitting: Set<String> = []
+    private var sending = false
     private var olderMessages: [CFLMessage] = []
     private var latestMessages: [CFLMessage] = []
     private var latestBefore: String?
 
     /// target is a stable, credential-free identifier for the connection; use one active client per store.
-    public init(target: String, store: any CFLPendingStore, transport: @escaping TransportFactory) {
-        self.target = target; self.store = store; self.transportFactory = transport
+    public init(target: String, store: any CFLPendingStore, imageHTTP: any CFLImageHTTP = CFLImageURLSession.shared, transport: @escaping TransportFactory) {
+        self.target = target; self.store = store; self.imageHTTP = imageHTTP; self.transportFactory = transport
     }
     public func currentState() -> CFLChatState { state }
     public func states() -> AsyncStream<CFLChatState> {
@@ -272,10 +277,17 @@ public actor CFLChatClient {
               fields["contextUsage"] != nil, fields["compaction"] != nil, fields["recovery"]?.array != nil else { throw CFLFailure.protocolError }
         let view = try decode(CFLView.self, value)
         guard view.version == 2, !view.sessionId.isEmpty, view.messages.count <= 30,
-              view.messages.allSatisfy({ !$0.id.isEmpty && ["user", "agent", "notice"].contains($0.role) }) else { throw CFLFailure.protocolError }
+              view.messages.allSatisfy({ !$0.id.isEmpty && ["user", "agent", "notice"].contains($0.role) && ($0.images?.allSatisfy(\.valid) ?? true) }) else { throw CFLFailure.protocolError }
+        var imageLimits: CFLImageLimits?
+        if let images = capabilities["images"], images != .bool(false) {
+            let limits = try decode(CFLImageLimits.self, images)
+            guard limits.valid else { throw CFLFailure.protocolError }
+            imageLimits = limits
+        }
         let changedSession = state.sessionId != view.sessionId
         if changedSession {
             sessionRevision += 1
+            state.sessionRevision = sessionRevision
             deadlineTask?.cancel(); deadlineTask = nil
             checks.removeAll(); finalized.removeAll()
         }
@@ -300,6 +312,7 @@ public actor CFLChatClient {
         if olderMessages.isEmpty && !historyLoaded { state.before = view.before }
         state.messages = olderMessages + view.messages
         state.sessionId = view.sessionId; state.name = view.name; state.activeTurnId = view.activeTurnId; state.streamingReply = view.streamingReply; state.replyCompletedTurnId = view.replyCompletedTurnId
+        state.imageLimits = imageLimits
         showPending(); publish(); requestRetirement()
     }
     public func loadEarlier() async throws {
@@ -312,22 +325,127 @@ public actor CFLChatClient {
         let page: CFLPage = try decode(CFLPage.self, raw)
         guard state.sessionId == session, generation == current, sessionRevision == sessionVersion,
               historyRevision == revision else { throw CFLFailure.sessionChanged }
-        guard page.messages.count <= 30 else { throw CFLFailure.protocolError }
+        guard page.messages.count <= 30, page.messages.allSatisfy({ $0.images?.allSatisfy(\.valid) ?? true }) else { throw CFLFailure.protocolError }
         let ids = Set(state.messages.map(\.id)); let added = page.messages.filter { !ids.contains($0.id) }
         olderMessages = added + olderMessages; state.messages = added + state.messages
         historyLoaded = true; state.before = page.before; publish(); requestRetirement()
+    }
+    /// Validate a complete proposed draft against the latest advertised limits.
+    public func validateImages(_ images: [CFLPreparedImage]) throws {
+        guard let limits = state.imageLimits else { throw CFLFailure.invalidInput }
+        try validate(images, limits: limits)
+    }
+    private func validate(_ images: [CFLPreparedImage], limits: CFLImageLimits) throws {
+        guard images.count <= limits.maxImagesPerMessage,
+              Set(images.map(\.id)).count == images.count,
+              images.reduce(0, { $0 + $1.original.count }) <= limits.maxMessageImageBytes else { throw CFLFailure.invalidInput }
+        for image in images {
+            let ref = CFLImageRef(attachmentId: image.id, name: image.name, mediaType: image.mediaType, availability: "available")
+            let bytes = [UInt8](image.original.prefix(12))
+            let signature: Bool
+            switch image.mediaType {
+            case "image/jpeg": signature = bytes.starts(with: [255, 216, 255])
+            case "image/png": signature = bytes.starts(with: [137, 80, 78, 71, 13, 10, 26, 10])
+            case "image/gif": signature = bytes.starts(with: Array("GIF87a".utf8)) || bytes.starts(with: Array("GIF89a".utf8))
+            case "image/webp": signature = bytes.count >= 12 && bytes.starts(with: Array("RIFF".utf8)) && Array(bytes[8..<12]) == Array("WEBP".utf8)
+            default: signature = false
+            }
+            guard ref.valid, limits.mediaTypes.contains(image.mediaType), signature,
+                  image.original.count <= limits.maxImageBytes,
+                  !image.preview.isEmpty, image.preview.count <= 160_000, image.preview.starts(with: [255, 216, 255]),
+                  !image.model.isEmpty, image.model.count <= 320_000, image.model.starts(with: [255, 216, 255]) else { throw CFLFailure.invalidInput }
+        }
+    }
+    private func request(path: String, method: String) throws -> URLRequest {
+        guard let origin = CFLHTTPSOrigin.normalized(target), !origin.isEmpty, origin == target,
+              let url = URL(string: origin + path) else { throw CFLFailure.invalidInput }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue(origin, forHTTPHeaderField: "Origin")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        return request
+    }
+    private func imageResponse(_ request: URLRequest, allowNotFound: Bool = false) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await imageHTTP.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.url == request.url else { throw CFLFailure.protocolError }
+        guard (200...299).contains(http.statusCode) || (allowNotFound && http.statusCode == 404) else { throw http.statusCode == 401 || http.statusCode == 403 ? CFLFailure.accessDenied : CFLFailure.requestFailed }
+        return (data, http)
+    }
+    private func upload(_ images: [CFLPreparedImage], session: String, operation: String) async throws -> [CFLImageRef] {
+        let items: [[String: Any]] = images.enumerated().map { index, image in
+            ["id": image.id, "order": index, "name": image.name, "mediaType": image.mediaType,
+             "original": image.original.base64EncodedString(), "preview": image.preview.base64EncodedString(), "model": image.model.base64EncodedString()]
+        }
+        var request = try request(path: "/api/chat/images", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["sessionId": session, "operationId": operation, "images": items])
+        guard (request.httpBody?.count ?? 0) <= 36_000_000 else { throw CFLFailure.invalidInput }
+        let (data, _) = try await imageResponse(request)
+        struct Result: Decodable { let sessionId: String; let operationId: String; let images: [CFLImageRef] }
+        guard data.count <= 100_000, let result = try? JSONDecoder().decode(Result.self, from: data),
+              result.sessionId == session, result.operationId == operation, result.images.count == images.count,
+              Set(result.images.map(\.attachmentId)).count == images.count,
+              zip(result.images, images).allSatisfy({ ref, image in ref.valid && ref.availability == "available" && ref.name == image.name && ref.mediaType == image.mediaType }) else { throw CFLFailure.protocolError }
+        return result.images
+    }
+    /// Loads only an authenticated media ID from the currently connected origin.
+    /// If a preview is absent, falls back to the bounded original; an absent
+    /// original remains a failure. Discard results when the page disappears.
+    public func media(_ ref: CFLImageRef, original: Bool = false,
+                      expectedSessionId: String? = nil, expectedSessionRevision: Int? = nil) async throws -> Data {
+        guard ref.valid, ref.availability == "available" else { throw CFLFailure.invalidInput }
+        guard active, state.connection == .online, let session = state.sessionId else { throw CFLFailure.offline }
+        guard expectedSessionId.map({ $0 == session }) ?? true,
+              expectedSessionRevision.map({ $0 == sessionRevision }) ?? true else { throw CFLFailure.sessionChanged }
+        try Task.checkCancellation()
+        let current = generation, revision = sessionRevision
+        func checkCurrent() throws {
+            guard !Task.isCancelled, active, generation == current, sessionRevision == revision, state.sessionId == session,
+                  state.connection == .online else { throw CFLFailure.sessionChanged }
+        }
+        let request = try request(path: "/api/chat/media/\(ref.attachmentId)/\(original ? "original" : "preview")", method: "GET")
+        var (data, response) = try await imageResponse(request, allowNotFound: !original)
+        try checkCurrent()
+        var readOriginal = original
+        if response.statusCode == 404 {
+            let fallback = try self.request(path: "/api/chat/media/\(ref.attachmentId)/original", method: "GET")
+            (data, response) = try await imageResponse(fallback)
+            readOriginal = true
+            try checkCurrent()
+        }
+        let type = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init)?.lowercased()
+        guard data.count <= (readOriginal ? 32 * 1024 * 1024 : 160_000), !data.isEmpty,
+              let type, CFLImageLimits.types.contains(type), readOriginal || type == "image/jpeg" else { throw CFLFailure.protocolError }
+        return data
     }
     /// Returns the locally durable operation ID, not an admission or reply receipt.
     /// After this returns, inspect pending state even if the connection was lost.
     /// CFLPendingStorageUncertain identifies an undispatched input whose first save
     /// could not be verified; preserve it until the store can be read again.
-    @discardableResult public func send(_ text: String) async throws -> String {
+    @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [],
+                                        expectedSessionId: String? = nil, expectedSessionRevision: Int? = nil) async throws -> String {
+        guard !sending else { throw CFLFailure.requestFailed }
+        sending = true
+        defer { sending = false }
         let current = generation
         try await load()
         guard active, !disconnecting, generation == current, state.connection == .online, let session = state.sessionId else { throw CFLFailure.offline }
+        let revision = sessionRevision
+        guard expectedSessionId.map({ $0 == session }) ?? true,
+              expectedSessionRevision.map({ $0 == revision }) ?? true else { throw CFLFailure.sessionChanged }
+        try Task.checkCancellation()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "/compact", text.unicodeScalars.count <= 16000 else { throw CFLFailure.invalidInput }
-        var entry = CFLPending(target: target, sessionId: session, operationId: UUID().uuidString.lowercased(), text: text, createdAt: Date(), dispatched: false, status: .unknown)
+        guard (!trimmed.isEmpty || !images.isEmpty), trimmed != "/compact", text.utf16.count <= 16000 else { throw CFLFailure.invalidInput }
+        let operation = UUID().uuidString.lowercased()
+        var refs: [CFLImageRef]?
+        if !images.isEmpty {
+            guard let limits = state.imageLimits else { throw CFLFailure.invalidInput }
+            try validate(images, limits: limits)
+            refs = try await upload(images, session: session, operation: operation)
+            guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
+                  state.connection == .online, state.sessionId == session, state.imageLimits == limits else { throw CFLFailure.sessionChanged }
+        }
+        var entry = CFLPending(target: target, sessionId: session, operationId: operation, text: text, createdAt: Date(), dispatched: false, status: .unknown, images: refs)
         do { try await persist(entries + [entry]) }
         catch {
             guard loaded else { throw CFLPendingStorageUncertain(pending: entry) }
@@ -336,7 +454,7 @@ public actor CFLChatClient {
             }
             throw error
         }
-        guard active, !disconnecting, generation == current, state.connection == .online, state.sessionId == session else {
+        guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision, state.connection == .online, state.sessionId == session else {
             setError(.sessionChanged); publish(); return entry.operationId
         }
         entry.dispatched = true
@@ -353,7 +471,7 @@ public actor CFLChatClient {
             }
             return entry.operationId
         }
-        guard active, !disconnecting, generation == current, state.connection == .online, state.sessionId == session else {
+        guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision, state.connection == .online, state.sessionId == session else {
             setError(.sessionChanged); publish(); return entry.operationId
         }
         submitting.insert(entry.operationId)
@@ -373,7 +491,11 @@ public actor CFLChatClient {
         return entry.operationId
     }
     private func submission(_ pending: CFLPending) -> ChordJSON {
-        .object(["operationId": .string(pending.operationId), "text": .string(pending.text)])
+        var fields: [String: ChordJSON] = ["operationId": .string(pending.operationId), "text": .string(pending.text)]
+        if let images = pending.images, !images.isEmpty {
+            fields["images"] = .array(images.map { .object(["attachmentId": .string($0.attachmentId), "name": .string($0.name), "mediaType": .string($0.mediaType), "availability": .string($0.availability)]) })
+        }
+        return .object(fields)
     }
     private func accept(_ value: ChordJSON, entry: CFLPending) async throws {
         guard value != .null else { return }

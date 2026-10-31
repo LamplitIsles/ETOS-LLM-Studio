@@ -8574,5 +8574,18 @@
 
 "支持导入旧版 ETOS JSON 数据包。" = "Imports legacy ETOS JSON data packages.";
 "使用系统语音识别，确认后将文字放入输入框。" = "Uses system speech recognition and adds the text to the input after confirmation.";
-"当前聊天暂不支持发送文件或图片。" = "This chat does not support sending files or images yet.";
 "预览会读取分享链接并在本地生成描述，不会运行快捷指令。" = "Preview reads sharing links and generates descriptions locally. It does not run shortcuts.";
+
+"选择照片" = "Choose Photos";
+"无法添加图片，请检查图片格式和大小。" = "Unable to add images. Check their format and size.";
+"图片属于之前的会话，请切回或移除图片。" = "These images belong to a previous conversation. Switch back or remove them.";
+"无法恢复图片，请检查连接或重新选择。" = "Unable to restore images. Check your connection or select them again.";
+"包含 %d 张图片" = "Contains %d images";
+"恢复到输入框" = "Restore to composer";
+"图片加载失败，点按重试" = "Image failed to load. Tap to retry.";
+"未发送的图片仅暂存在内存中，退出应用后会丢失。" = "Unsent images are kept in memory and will be lost when you quit the app.";
+"无法确认内容是否已保存在本机。请先检查保存状态。" = "Could not confirm whether the content was saved locally. Check its status first.";
+"内容已保存在本机，请在下方处理。" = "Content saved locally. Review it below.";
+"内容未发送，可以继续编辑。" = "Content was not sent. You can continue editing.";
+"发送失败，可以恢复内容后重新编辑。" = "Send failed. Restore the content to edit it.";
+"当前聊天暂不支持通过此方式导入文件。" = "This chat cannot import files using this method.";

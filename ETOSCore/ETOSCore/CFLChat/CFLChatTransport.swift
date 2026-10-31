@@ -31,3 +31,27 @@ public final class CFLWebSocketTransport: CFLChatTransport, @unchecked Sendable 
     }
     public func close() async { task.cancel(with: .goingAway, reason: nil) }
 }
+
+/// HTTP requests are built by the client with fixed same-origin paths. Implementations
+/// must not follow redirects; tests can inject an in-memory implementation.
+public protocol CFLImageHTTP: Sendable {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse)
+}
+
+private final class CFLImageRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+public final class CFLImageURLSession: CFLImageHTTP, @unchecked Sendable {
+    public static let shared = CFLImageURLSession()
+    private let session: URLSession
+    public init() {
+        session = URLSession(configuration: .default, delegate: CFLImageRedirectDelegate(), delegateQueue: nil)
+    }
+    public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await session.data(for: request)
+    }
+}
