@@ -167,6 +167,26 @@ struct CFLReceipt: Decodable, Sendable {
 }
 public enum CFLConnection: Equatable, Sendable { case offline, connecting, online, accessDenied, protocolError }
 public enum CFLFailure: Error, Equatable, Sendable { case offline, accessDenied, invalidInput, storage, protocolError, requestFailed, sessionChanged }
+
+/// Classifies the original Markdown destination, before any URL decoding.
+public enum CFLMarkdownImage: Equatable, Sendable {
+    case external(String), api(String), workspace(String), invalid
+
+    public static func resolve(_ source: String) -> Self {
+        if source.range(of: #"^https?://"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return .external(source)
+        }
+        if source.hasPrefix("/api/") { return .api(source) }
+        guard let path = source.removingPercentEncoding,
+              !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              path.range(of: #"[\x{0000}-\x{001f}\x{007f}-\x{009f}\\]"#, options: .regularExpression) == nil,
+              path.range(of: #"^[a-z][a-z\d+.-]*:"#, options: [.regularExpression, .caseInsensitive]) == nil,
+              !path.hasPrefix("//"),
+              path.range(of: #"^/api(?:/|$)"#, options: [.regularExpression, .caseInsensitive]) == nil,
+              path.range(of: #"\.(?:png|jpe?g|webp|gif)$"#, options: [.regularExpression, .caseInsensitive]) != nil else { return .invalid }
+        return .workspace(path)
+    }
+}
 public enum CFLPendingStatus: String, Codable, Equatable, Sendable { case unknown, submitted, failed }
 public struct CFLPending: Codable, Equatable, Sendable, Identifiable {
     public var id: String { operationId }

@@ -71,6 +71,8 @@ struct ETIOSStreamingMarkdownLiveView: View {
     let streamingDisplayMode: ChatStreamingDisplayMode
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.markdownRemoteImagesEnabled) private var remoteImagesEnabled
+    @Environment(\.cflMarkdownImages) private var cflMarkdownImages
     @State private var preparedBlocks: [ETStreamingMarkdownBlockID: ETIOSPreparedStreamingMarkdownBlock] = [:]
     @State private var displayedSnapshot: ETStreamingMarkdownSnapshot?
 
@@ -227,6 +229,7 @@ struct ETIOSStreamingMarkdownLiveView: View {
             if enableAdvancedRenderer, prepared.payload.containsMermaidContent {
                 ETMathWebMarkdownView(
                     content: prepared.payload.mathRenderText,
+                    imageSources: prepared.payload.webImageSources.sources,
                     enableMarkdown: true,
                     isOutgoing: isOutgoing,
                     customTextHex: ChatAppearanceColorCodec.hexRGBA(from: textColor),
@@ -239,13 +242,16 @@ struct ETIOSStreamingMarkdownLiveView: View {
                 )
             } else {
                 let markdownContent = resolvedMarkdownContent(prepared.payload)
+                let renderedSources = enableAdvancedRenderer && enableMathRendering && prepared.payload.containsMathContent && !prepared.payload.containsMermaidContent
+                    ? (prepared.payload.mathImageSources ?? prepared.payload.imageSources) : prepared.payload.imageSources
+                let cflImages = cflMarkdownImages?.rendered(sources: renderedSources.sources)
                 let mathTextColor = ETIOSMathColorComponents(textColor)
                 Markdown(markdownContent)
                     .markdownImageProvider(
-                        ETIOSMarkdownImageProvider(textColor: mathTextColor, fontScale: fontScale)
+                        ETIOSMarkdownImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled, cflImages: cflImages)
                     )
                     .markdownInlineImageProvider(
-                        ETIOSMarkdownInlineImageProvider(textColor: mathTextColor, fontScale: fontScale)
+                        ETIOSMarkdownInlineImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled, cflImages: cflImages)
                     )
                     .etChatMarkdownBaseStyle(
                         textColor: textColor,

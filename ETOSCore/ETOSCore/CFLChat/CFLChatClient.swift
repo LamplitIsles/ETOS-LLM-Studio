@@ -378,6 +378,36 @@ public actor CFLChatClient {
         guard (200...299).contains(http.statusCode) || (allowNotFound && http.statusCode == 404) else { throw http.statusCode == 401 || http.statusCode == 403 ? CFLFailure.accessDenied : CFLFailure.requestFailed }
         return (data, http)
     }
+    /// Read an original Markdown destination using this connection's authorized HTTP transport.
+    /// The UI must cancel on disappearance and discard results if its owning client/target changes.
+    public func markdownImage(_ source: String, expectedSessionId: String, expectedSessionRevision: Int) async throws -> Data {
+        guard active, !disconnecting, state.connection == .online, let session = state.sessionId else { throw CFLFailure.offline }
+        guard session == expectedSessionId, sessionRevision == expectedSessionRevision else { throw CFLFailure.sessionChanged }
+        try Task.checkCancellation()
+        let current = generation, revision = sessionRevision
+        let path: String
+        switch CFLMarkdownImage.resolve(source) {
+        case .workspace(let literal):
+            let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
+            guard let encoded = literal.addingPercentEncoding(withAllowedCharacters: allowed) else { throw CFLFailure.invalidInput }
+            path = "/api/chat/workspace-image?path=" + encoded
+        case .api(let raw):
+            // A relative API URL may not change authority or escape the API path.
+            guard raw.removingPercentEncoding != nil, let parts = URLComponents(string: raw), parts.scheme == nil, parts.host == nil,
+                  parts.fragment == nil, parts.percentEncodedPath.hasPrefix("/api/"),
+                  parts.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({ segment in
+                      guard let decoded = String(segment).removingPercentEncoding else { return false }
+                      return decoded != "." && decoded != ".." && !decoded.contains("/") && !decoded.contains("\\") && decoded.rangeOfCharacter(from: .controlCharacters) == nil
+                  }) else { throw CFLFailure.invalidInput }
+            path = raw
+        case .external, .invalid: throw CFLFailure.invalidInput
+        }
+        let request = try request(path: path, method: "GET")
+        let (data, _) = try await imageResponse(request)
+        guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
+              state.sessionId == session, state.connection == .online else { throw CFLFailure.sessionChanged }
+        return data
+    }
     private func upload(_ images: [CFLPreparedImage], session: String, operation: String) async throws -> [CFLImageRef] {
         let items: [[String: Any]] = images.enumerated().map { index, image in
             ["id": image.id, "order": index, "name": image.name, "mediaType": image.mediaType,

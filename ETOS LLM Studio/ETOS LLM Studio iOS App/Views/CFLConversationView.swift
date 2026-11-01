@@ -35,6 +35,8 @@ struct CFLDisplayMessage: Identifiable, Sendable {
     let images: [CFLImageRef]
     let sessionRevision: Int
     let clientID: UUID
+    var markdownSources: CFLMarkdownImageSources? = nil
+    var markdownSourcesRevision = 0
     var isReminder = false
 }
 
@@ -75,11 +77,17 @@ struct CFLReminderBubble: View {
 /// The UUID belongs only to this view state; CFL identities remain unchanged.
 private struct CFLNativeMessageBubble: View {
     let item: CFLDisplayMessage
-    let model: CFLConversationModel
+    @ObservedObject var model: CFLConversationModel
     @ObservedObject private var config = AppConfigStore.shared
     @ObservedObject private var background = ChatBackgroundModel.shared
     @StateObject private var renderState: ChatMessageRenderState
+    @StateObject private var markdownImageStatus = CFLMarkdownImageStatus()
     @State private var showActions = false
+
+    private var imageStoreContext: CFLMarkdownImageStore.Context {
+        .init(target: item.id.target, session: item.id.session, revision: item.sessionRevision,
+              clientID: item.clientID)
+    }
 
     init(item: CFLDisplayMessage, model: CFLConversationModel) {
         self.item = item
@@ -109,6 +117,7 @@ private struct CFLNativeMessageBubble: View {
                     onSwitchToNextVersion: {},
                     onOpenMore: { _ in showActions = true }
                 )
+                .id("\(markdownImageStatus.attempt)|\(item.markdownSourcesRevision)|\(item.clientID)|\(item.sessionRevision)|\(String(describing: model.imageContext))")
                 .confirmationDialog(NSLocalizedString("消息操作", comment: "Message actions"), isPresented: $showActions) {
                     if !item.outgoing {
                         if TTSManager.shared.currentSpeakingMessageID == renderState.message.id && TTSManager.shared.isSpeaking {
@@ -123,11 +132,21 @@ private struct CFLNativeMessageBubble: View {
                     Button(NSLocalizedString("取消", comment: "Cancel"), role: .cancel) {}
                 }
                 .environment(\.markdownRemoteImagesEnabled, false)
+                .environment(\.cflMarkdownImages, item.markdown ? CFLMarkdownImageContext(model: model, target: item.id.target, session: item.id.session, revision: item.sessionRevision, clientID: item.clientID, status: markdownImageStatus, originalSources: item.markdownSources, sourceRevision: item.markdownSourcesRevision) : nil)
                 .onChange(of: item.text) { _, text in
                     var next = renderState.message
                     next.content = text
                     renderState.update(with: next)
                     renderState.updateVisualMessage(next)
+                }
+                .onChange(of: item.markdownSourcesRevision) { _, _ in
+                    markdownImageStatus.invalidate()
+                }
+                if markdownImageStatus.inlineFailed {
+                    Button { markdownImageStatus.retry() } label: {
+                        Label(NSLocalizedString("图片加载失败，点按重试", comment: "Retry loading image"), systemImage: "photo.badge.exclamationmark")
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             if !item.images.isEmpty {
@@ -135,6 +154,14 @@ private struct CFLNativeMessageBubble: View {
                                  target: item.id.target, session: item.id.session, revision: item.sessionRevision, clientID: item.clientID)
             }
         }
+        .onChange(of: model.imagePageActive) { _, active in
+            if !active { markdownImageStatus.invalidate() }
+        }
+        .onChange(of: model.imageContext) { _, _ in markdownImageStatus.invalidate() }
+        .onChange(of: imageStoreContext, initial: true) { _, context in
+            markdownImageStatus.updateContext(context)
+        }
+        .onDisappear { markdownImageStatus.invalidate() }
     }
 }
 
@@ -213,6 +240,12 @@ final class CFLConversationModel: ObservableObject {
     private struct ReplyCache: Sendable {
         let source: String
         let chunks: [CFLReplyPresentation.Chunk]
+        let imageSources: CFLMarkdownImageSources
+        let chunkImages: [Int: ChunkImageState]
+    }
+    private struct ChunkImageState: Sendable {
+        let targets: [CFLMarkdownImageTarget]
+        let revision: Int
     }
     private struct ProjectionResult: Sendable {
         let messages: [CFLDisplayMessage]
@@ -251,12 +284,22 @@ final class CFLConversationModel: ObservableObject {
             let source = CFLReplyPresentation.visibleSource(text, streaming: streaming)
             let chunks = cache[id].flatMap { $0.source == source ? $0.chunks : nil }
                 ?? CFLReplyPresentation.chunks(source)
-            nextCache[id] = ReplyCache(source: source, chunks: chunks)
+            let imageSources = cache[id].flatMap { $0.source == source ? $0.imageSources : nil }
+                ?? CFLMarkdownImageSources(markdown: source)
+            var chunkImages: [Int: ChunkImageState] = [:]
+            for chunk in chunks where chunk.text.contains("![") {
+                let normalized = ETPreparedMarkdownRenderPayload.normalizedMarkdownForStreaming(chunk.text)
+                let targets = imageSources.targets(in: normalized)
+                let previous = cache[id]?.chunkImages[chunk.id]
+                let revision = previous.map { $0.targets == targets ? $0.revision : $0.revision &+ 1 } ?? 1
+                chunkImages[chunk.id] = ChunkImageState(targets: targets, revision: revision)
+            }
+            nextCache[id] = ReplyCache(source: source, chunks: chunks, imageSources: imageSources, chunkImages: chunkImages)
             if chunks.isEmpty && !images.isEmpty {
                 return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: 0), text: "", outgoing: false, markdown: true, images: images, sessionRevision: input.revision, clientID: input.clientID)]
             }
             return chunks.enumerated().map { index, chunk in
-                CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: chunk.id), text: chunk.text, outgoing: false, markdown: true, images: index == chunks.count - 1 ? images : [], sessionRevision: input.revision, clientID: input.clientID)
+                CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: chunk.id), text: chunk.text, outgoing: false, markdown: true, images: index == chunks.count - 1 ? images : [], sessionRevision: input.revision, clientID: input.clientID, markdownSources: imageSources, markdownSourcesRevision: chunkImages[chunk.id]?.revision ?? 0)
             }
         }
         let messages = input.messages.flatMap { message in
@@ -460,6 +503,21 @@ final class CFLConversationModel: ObservableObject {
         do {
             let data = try await client.media(image, original: original, expectedSessionId: context.session, expectedSessionRevision: context.revision)
             guard imagePageActive, imagePageRevision == pageRevision, imageContext == context else { throw CFLFailure.sessionChanged }
+            return data
+        } catch {
+            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }
+            throw error
+        }
+    }
+
+    func markdownImage(_ source: String, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> Data {
+        guard imagePageActive, let context = imageContext,
+              isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),
+              let client else { throw CFLFailure.sessionChanged }
+        let pageRevision = imagePageRevision
+        do {
+            let data = try await client.markdownImage(source, expectedSessionId: context.session, expectedSessionRevision: context.revision)
+            guard !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context else { throw CFLFailure.sessionChanged }
             return data
         } catch {
             if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }

@@ -32,8 +32,8 @@ public final class CFLWebSocketTransport: CFLChatTransport, @unchecked Sendable 
     public func close() async { task.cancel(with: .goingAway, reason: nil) }
 }
 
-/// HTTP requests are built by the client with fixed same-origin paths. Implementations
-/// must not follow redirects; tests can inject an in-memory implementation.
+/// HTTP transport seam. For authenticated CFL requests, implementations must not
+/// follow redirects; tests can inject an in-memory implementation.
 public protocol CFLImageHTTP: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
 }
@@ -57,6 +57,73 @@ public final class CFLImageURLSession: CFLImageHTTP, @unchecked Sendable {
     public init() { session = Self.makeSession() }
     public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         try await session.data(for: request)
+    }
+}
+
+/// Builds a fresh GET for the initial destination and every redirect. Never copy
+/// headers from the proposed redirect request, which can contain credentials.
+enum CFLExternalImageRequest {
+    static func make(_ url: URL) -> URLRequest? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == "https",
+              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.httpShouldHandleCookies = false
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        return request
+    }
+}
+
+final class CFLExternalImageDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(request.url.flatMap(CFLExternalImageRequest.make))
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // Let the system validate TLS normally; do not answer HTTP or proxy auth challenges.
+        if challenge.protectionSpace.authenticationMethod == "NSURLAuthenticationMethodServerTrust" {
+            completionHandler(.performDefaultHandling, nil)
+        } else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+    }
+}
+
+private final class CFLExternalImageURLSession: CFLImageHTTP, @unchecked Sendable {
+    static let shared = CFLExternalImageURLSession()
+    private let session: URLSession
+    private init() {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCredentialStorage = nil
+        config.urlCache = nil
+        session = URLSession(configuration: config, delegate: CFLExternalImageDelegate(), delegateQueue: nil)
+    }
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await session.data(for: request)
+    }
+}
+
+/// A separate, credential-free HTTPS pipeline for external Markdown images.
+/// The caller owns task cancellation and discards results after its view or context changes.
+public struct CFLExternalImageLoader: Sendable {
+    private let http: any CFLImageHTTP
+    public init() { http = CFLExternalImageURLSession.shared }
+    // Internal seam for test-owned fake responses; production always uses the isolated session.
+    init(http: any CFLImageHTTP) { self.http = http }
+
+    public func data(for source: String) async throws -> Data {
+        guard let url = URL(string: source), let request = CFLExternalImageRequest.make(url) else { throw CFLFailure.invalidInput }
+        try Task.checkCancellation()
+        let (data, response) = try await http.data(for: request)
+        try Task.checkCancellation()
+        guard let response = response as? HTTPURLResponse, let finalURL = response.url,
+              CFLExternalImageRequest.make(finalURL) != nil else { throw CFLFailure.protocolError }
+        guard (200...299).contains(response.statusCode) else { throw CFLFailure.requestFailed }
+        return data
     }
 }
 

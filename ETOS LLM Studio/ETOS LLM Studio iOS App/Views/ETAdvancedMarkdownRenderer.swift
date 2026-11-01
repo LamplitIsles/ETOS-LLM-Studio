@@ -20,6 +20,15 @@ extension EnvironmentValues {
         get { self[MarkdownRemoteImagesKey.self] }
         set { self[MarkdownRemoteImagesKey.self] = newValue }
     }
+
+    var cflMarkdownImages: CFLMarkdownImageContext? {
+        get { self[CFLMarkdownImagesKey.self] }
+        set { self[CFLMarkdownImagesKey.self] = newValue }
+    }
+}
+
+private struct CFLMarkdownImagesKey: EnvironmentKey {
+    static let defaultValue: CFLMarkdownImageContext? = nil
 }
 
 struct ETAdvancedMarkdownRenderer: View {
@@ -36,6 +45,7 @@ struct ETAdvancedMarkdownRenderer: View {
     var streamingChannel: ETStreamingMarkdownChannel = .content
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.markdownRemoteImagesEnabled) private var remoteImagesEnabled
+    @Environment(\.cflMarkdownImages) private var cflMarkdownImages
     @ObservedObject private var appConfig = AppConfigStore.shared
     @State private var preparedRuleRequest: ChatAppearanceTextRuleRenderRequest?
     @State private var ruleAttributedText: AttributedString?
@@ -45,8 +55,13 @@ struct ETAdvancedMarkdownRenderer: View {
         if let preparedContent, preparedContent.sourceText == content {
             return preparedContent
         }
-        guard asynchronouslyPreparedContent?.sourceText == content else { return nil }
-        return asynchronouslyPreparedContent
+        if let asynchronouslyPreparedContent, asynchronouslyPreparedContent.sourceText == content {
+            return asynchronouslyPreparedContent
+        }
+        // Keep the previous CFL subtree until its replacement is ready. The
+        // bubble changes identity when its effective image targets change.
+        if cflMarkdownImages != nil { return asynchronouslyPreparedContent ?? preparedContent }
+        return nil
     }
 
     private var shouldUseStreamingRenderer: Bool {
@@ -107,6 +122,7 @@ struct ETAdvancedMarkdownRenderer: View {
                     if shouldUseWebRenderer(prepared) {
                         ETMathWebMarkdownView(
                             content: prepared.mathRenderText,
+                            imageSources: prepared.webImageSources.sources,
                             enableMarkdown: enableMarkdown,
                             isOutgoing: isOutgoing,
                             customTextHex: customTextColor.flatMap { ChatAppearanceColorCodec.hexRGBA(from: $0) },
@@ -121,6 +137,7 @@ struct ETAdvancedMarkdownRenderer: View {
                         let markdownContent = resolvedMarkdownContent(for: prepared)
                         markdownTextView(
                             markdownContent: markdownContent,
+                            renderedSources: renderedSources(for: prepared),
                             sampleText: prepared.sourceText,
                             textColor: textColor,
                             fontScale: fontScale,
@@ -197,9 +214,18 @@ struct ETAdvancedMarkdownRenderer: View {
         return nativeMathMarkdownContent
     }
 
+    private func renderedSources(for prepared: ETPreparedMarkdownRenderPayload) -> CFLMarkdownImageSources {
+        if enableAdvancedRenderer, enableMathRendering, prepared.containsMathContent,
+           !prepared.containsMermaidContent, let sources = prepared.mathImageSources {
+            return sources.sources
+        }
+        return prepared.imageSources.sources
+    }
+
     @ViewBuilder
     private func markdownTextView(
         markdownContent: MarkdownContent,
+        renderedSources: CFLMarkdownImageSources,
         sampleText: String,
         textColor: Color,
         fontScale: Double,
@@ -209,12 +235,13 @@ struct ETAdvancedMarkdownRenderer: View {
         let emphasisTextColor = resolvedStyleColor(customTextStyleColors?.emphasis, fallback: textColor)
         let strongTextColor = resolvedStyleColor(customTextStyleColors?.strong, fallback: textColor)
         let codeTextColor = resolvedStyleColor(customTextStyleColors?.code, fallback: textColor)
+        let cflImages = cflMarkdownImages?.rendered(sources: renderedSources)
         Markdown(markdownContent)
             .markdownImageProvider(
-                ETIOSMarkdownImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled)
+                ETIOSMarkdownImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled, cflImages: cflImages)
             )
             .markdownInlineImageProvider(
-                ETIOSMarkdownInlineImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled)
+                ETIOSMarkdownInlineImageProvider(textColor: mathTextColor, fontScale: fontScale, remoteImagesEnabled: remoteImagesEnabled, cflImages: cflImages)
             )
             .etChatMarkdownBaseStyle(
                 textColor: textColor,

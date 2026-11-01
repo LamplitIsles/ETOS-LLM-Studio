@@ -7,18 +7,187 @@
 // ============================================================================
 
 import Foundation
+import Combine
 import SwiftUI
 import MarkdownUI
 import UIKit
+import ETOSCore
 
 #if canImport(SwiftMath)
 import SwiftMath
 #endif
 
+@MainActor
+final class CFLMarkdownImageStatus: ObservableObject {
+    @Published private(set) var inlineFailed = false
+    @Published var attempt = 0
+    private let store = CFLMarkdownImageStore()
+
+    func data(for key: Data, context: CFLMarkdownImageStore.Context, load: @escaping @MainActor () async throws -> Data) async throws -> Data {
+        try await store.data(for: key, context: context, load: load)
+    }
+
+    func updateContext(_ context: CFLMarkdownImageStore.Context) {
+        store.updateContext(context)
+        inlineFailed = store.inlineFailed
+    }
+
+    var stamp: UInt64 { store.stamp }
+
+    func inlineFailure(_ url: URL, stamp: UInt64) {
+        store.inlineFailure(url.absoluteString, stamp: stamp)
+        inlineFailed = store.inlineFailed
+    }
+
+    func inlineSuccess(_ url: URL, stamp: UInt64) {
+        store.inlineSuccess(url.absoluteString, stamp: stamp)
+        inlineFailed = store.inlineFailed
+    }
+
+    func invalidate() {
+        store.invalidate()
+        inlineFailed = false
+    }
+
+    func discard(_ key: Data) { store.discard(key) }
+
+    func retry() {
+        store.clearInlineFailures()
+        inlineFailed = false
+        attempt += 1
+    }
+}
+
+/// A rendering context is tied to the connection and page that produced the message.
+struct CFLMarkdownImageContext {
+    let model: CFLConversationModel
+    let target: String?
+    let session: String?
+    let revision: Int
+    let clientID: UUID
+    let status: CFLMarkdownImageStatus
+    let originalSources: CFLMarkdownImageSources?
+    var sourceRevision = 0
+    var renderedSources: CFLMarkdownImageSources? = nil
+
+    func rendered(sources: CFLMarkdownImageSources) -> Self {
+        var result = self
+        result.renderedSources = sources
+        return result
+    }
+
+    func source(for url: URL) -> String? {
+        guard let source = originalSources?.source(for: url),
+              let renderedSource = renderedSources?.source(for: url),
+              CFLMarkdownImageSources.areEquivalent(source, renderedSource) else { return nil }
+        return source
+    }
+
+    @MainActor
+    func load(_ url: URL) async throws -> UIImage {
+        let data = try await data(for: url)
+        guard let image = UIImage(data: data) else {
+            discard(for: url)
+            throw CFLFailure.protocolError
+        }
+        return image
+    }
+
+    private func cacheKey(for target: CFLMarkdownImage) throws -> Data {
+        switch target {
+        case .workspace(let path): return Data([0]) + Data(path.utf8)
+        case .external(let path): return Data([1]) + Data(path.utf8)
+        case .api(let path): return Data([2]) + Data(path.utf8)
+        case .invalid: throw CFLFailure.invalidInput
+        }
+    }
+
+    @MainActor
+    func discard(for url: URL) {
+        guard let source = source(for: url), let key = try? cacheKey(for: CFLMarkdownImage.resolve(source)) else { return }
+        status.discard(key)
+    }
+
+    @MainActor
+    func data(for url: URL) async throws -> Data {
+        guard model.imagePageActive,
+              model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else {
+            throw CFLFailure.sessionChanged
+        }
+        let pageRevision = model.imagePageRevision
+        do {
+            guard let source = source(for: url) else { throw CFLFailure.invalidInput }
+            let resolvedTarget = CFLMarkdownImage.resolve(source)
+            let key = try cacheKey(for: resolvedTarget)
+            let context = CFLMarkdownImageStore.Context(target: target, session: session, revision: revision,
+                                                        clientID: clientID)
+            status.updateContext(context)
+            let data = try await status.data(for: key, context: context) {
+                switch resolvedTarget {
+                case .external(let destination):
+                    return try await CFLExternalImageLoader().data(for: destination)
+                case .workspace, .api:
+                    return try await model.markdownImage(source, target: self.target, session: session, revision: revision, clientID: clientID)
+                case .invalid:
+                    throw CFLFailure.invalidInput
+                }
+            }
+            guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision,
+                  model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else {
+                throw CFLFailure.sessionChanged
+            }
+            return data
+        } catch {
+            guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision,
+                  model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else {
+                throw CFLFailure.sessionChanged
+            }
+            throw error
+        }
+    }
+}
+
+private struct CFLMarkdownBlockImage: View {
+    let url: URL
+    let context: CFLMarkdownImageContext
+    @State private var image: UIImage?
+    @State private var failed = false
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else if failed {
+                Button { attempt += 1 } label: {
+                    Label(NSLocalizedString("图片加载失败，点按重试", comment: "Retry loading image"), systemImage: "photo.badge.exclamationmark")
+                }
+                .buttonStyle(.plain)
+            } else {
+                ProgressView()
+            }
+        }
+        .task(id: "\(url.absoluteString)|\(context.source(for: url) ?? "")|\(context.clientID)|\(context.revision)|\(context.model.imagePageRevision)|\(attempt)") {
+            image = nil
+            failed = false
+            do {
+                let loaded = try await context.load(url)
+                guard !Task.isCancelled else { return }
+                image = loaded
+            } catch {
+                guard !Task.isCancelled, (error as? CFLFailure) != .sessionChanged, context.model.imagePageActive,
+                      context.model.isCurrentMediaContext(target: context.target, session: context.session, revision: context.revision, clientID: context.clientID) else { return }
+                failed = true
+            }
+        }
+    }
+}
+
 struct ETIOSMarkdownImageProvider: ImageProvider {
     let textColor: ETIOSMathColorComponents
     let fontScale: Double
     var remoteImagesEnabled = true
+    var cflImages: CFLMarkdownImageContext? = nil
 
     @ViewBuilder
     func makeImage(url: URL?) -> some View {
@@ -28,6 +197,8 @@ struct ETIOSMarkdownImageProvider: ImageProvider {
                 textColor: textColor,
                 fontScale: fontScale
             )
+        } else if let cflImages, let url {
+            CFLMarkdownBlockImage(url: url, context: cflImages)
         } else if remoteImagesEnabled {
             DefaultImageProvider.default.makeImage(url: url)
         } else {
@@ -40,9 +211,40 @@ struct ETIOSMarkdownInlineImageProvider: InlineImageProvider {
     let textColor: ETIOSMathColorComponents
     let fontScale: Double
     var remoteImagesEnabled = true
+    var cflImages: CFLMarkdownImageContext? = nil
 
     func image(with url: URL, label: String) async throws -> Image {
         guard let request = ETNativeMathMarkdownCodec.request(from: url) else {
+            if let cflImages {
+                let stamp: UInt64? = await MainActor.run {
+                    let model = cflImages.model
+                    guard model.imagePageActive,
+                          model.isCurrentMediaContext(target: cflImages.target, session: cflImages.session,
+                                                      revision: cflImages.revision, clientID: cflImages.clientID) else { return nil }
+                    cflImages.status.updateContext(.init(target: cflImages.target, session: cflImages.session,
+                                                         revision: cflImages.revision, clientID: cflImages.clientID))
+                    return cflImages.status.stamp
+                }
+                guard let stamp else { return Image(systemName: "photo") }
+                do {
+                    let image = try await cflImages.load(url)
+                    await MainActor.run {
+                        if !Task.isCancelled && cflImages.model.imagePageActive && cflImages.model.isCurrentMediaContext(target: cflImages.target, session: cflImages.session, revision: cflImages.revision, clientID: cflImages.clientID) {
+                            cflImages.status.inlineSuccess(url, stamp: stamp)
+                        }
+                    }
+                    return Image(uiImage: image)
+                } catch {
+                    if !Task.isCancelled && (error as? CFLFailure) != .sessionChanged {
+                        await MainActor.run {
+                            if cflImages.model.imagePageActive && cflImages.model.isCurrentMediaContext(target: cflImages.target, session: cflImages.session, revision: cflImages.revision, clientID: cflImages.clientID) {
+                                cflImages.status.inlineFailure(url, stamp: stamp)
+                            }
+                        }
+                    }
+                    return Image(systemName: "photo.badge.exclamationmark")
+                }
+            }
             if remoteImagesEnabled {
                 return try await DefaultInlineImageProvider.default.image(with: url, label: label)
             }

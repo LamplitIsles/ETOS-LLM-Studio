@@ -10,9 +10,75 @@ import Foundation
 import SwiftUI
 import ETOSCore
 import WebKit
+import ImageIO
+import UniformTypeIdentifiers
+
+/// Routes Markdown images in Mermaid's web view through the same scoped loader
+/// as the native renderer. WebKit never receives CFL credentials.
+private final class CFLMarkdownWebImageHandler: NSObject, WKURLSchemeHandler {
+    private struct Identity: Equatable {
+        let sourceRevision: Int
+        let clientID: UUID
+        let target: String?
+        let session: String?
+        let revision: Int
+    }
+    private var identity: Identity?
+    private var context: CFLMarkdownImageContext?
+    private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    func update(_ context: CFLMarkdownImageContext?) {
+        let next = context.map { Identity(sourceRevision: $0.sourceRevision, clientID: $0.clientID,
+                                          target: $0.target, session: $0.session, revision: $0.revision) }
+        if next != identity { cancelAll() }
+        identity = next
+        self.context = context
+    }
+
+    func cancelAll() {
+        for task in tasks.values { task.cancel() }
+        tasks.removeAll()
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        let key = ObjectIdentifier(urlSchemeTask as AnyObject)
+        guard let context, let requestURL = urlSchemeTask.request.url,
+              let components = URLComponents(url: requestURL, resolvingAgainstBaseURL: false),
+              components.host == "load", components.percentEncodedPath.hasPrefix("/"),
+              let source = String(components.percentEncodedPath.dropFirst()).removingPercentEncoding,
+              let url = URL(string: source, relativeTo: nil) else {
+            urlSchemeTask.didFailWithError(CFLFailure.invalidInput)
+            return
+        }
+        tasks[key] = Task { @MainActor [weak self] in
+            defer { self?.tasks.removeValue(forKey: key) }
+            do {
+                let data = try await context.data(for: url)
+                guard !Task.isCancelled else { return }
+                guard let image = CGImageSourceCreateWithData(data as CFData, nil),
+                      let type = CGImageSourceGetType(image) as String?,
+                      let mime = UTType(type)?.preferredMIMEType else {
+                    context.discard(for: url)
+                    throw CFLFailure.protocolError
+                }
+                let response = URLResponse(url: requestURL, mimeType: mime, expectedContentLength: data.count, textEncodingName: nil)
+                urlSchemeTask.didReceive(response)
+                urlSchemeTask.didReceive(data)
+                urlSchemeTask.didFinish()
+            } catch {
+                if !Task.isCancelled { urlSchemeTask.didFailWithError(error) }
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+        tasks.removeValue(forKey: ObjectIdentifier(urlSchemeTask as AnyObject))?.cancel()
+    }
+}
 
 struct ETMathWebMarkdownView: View {
     let content: String
+    let imageSources: CFLMarkdownImageSources
     let enableMarkdown: Bool
     let isOutgoing: Bool
     let customTextHex: String?
@@ -24,12 +90,14 @@ struct ETMathWebMarkdownView: View {
     let lineSpacingEm: Double
 
     @Environment(\.copyCompletionNoticeAction) private var showCopyCompletionNotice
+    @Environment(\.cflMarkdownImages) private var cflMarkdownImages
     @State private var renderedHeight: CGFloat = 28
 
     var body: some View {
         GeometryReader { geometry in
             ETMathWebViewRepresentable(
                 content: content,
+                imageSources: imageSources,
                 enableMarkdown: enableMarkdown,
                 isOutgoing: isOutgoing,
                 customTextHex: customTextHex,
@@ -39,6 +107,7 @@ struct ETMathWebMarkdownView: View {
                 prefersDarkPalette: prefersDarkPalette,
                 fontScale: fontScale,
                 lineSpacingEm: lineSpacingEm,
+                cflImageContext: cflMarkdownImages,
                 availableWidth: max(1, geometry.size.width),
                 onCopyCompleted: showCopyCompletionNotice,
                 renderedHeight: $renderedHeight
@@ -88,6 +157,7 @@ window.__etNotifyHeight && window.__etNotifyHeight();
 
 private struct ETMathWebViewRepresentable: UIViewRepresentable {
     let content: String
+    let imageSources: CFLMarkdownImageSources
     let enableMarkdown: Bool
     let isOutgoing: Bool
     let customTextHex: String?
@@ -97,6 +167,7 @@ private struct ETMathWebViewRepresentable: UIViewRepresentable {
     let prefersDarkPalette: Bool
     let fontScale: Double
     let lineSpacingEm: Double
+    let cflImageContext: CFLMarkdownImageContext?
     let availableWidth: CGFloat
     let onCopyCompleted: () -> Void
     @Binding var renderedHeight: CGFloat
@@ -110,6 +181,10 @@ private struct ETMathWebViewRepresentable: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        if cflImageContext != nil {
+            config.websiteDataStore = .nonPersistent()
+            config.setURLSchemeHandler(context.coordinator.imageHandler, forURLScheme: "cfl-image")
+        }
         let controller = WKUserContentController()
 
         controller.add(context.coordinator, name: Coordinator.heightMessageName)
@@ -129,6 +204,7 @@ private struct ETMathWebViewRepresentable: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.onCopyCompleted = onCopyCompleted
+        context.coordinator.imageHandler.update(cflImageContext?.rendered(sources: imageSources))
         let stableWidth = max(1, floor(availableWidth))
         let payload = ETMathWebPayload(
             content: content,
@@ -163,7 +239,8 @@ private struct ETMathWebViewRepresentable: UIViewRepresentable {
             customCodeTextHex: customCodeTextHex,
             prefersDarkPalette: prefersDarkPalette,
             fontScale: fontScale,
-            lineSpacingEm: lineSpacingEm
+            lineSpacingEm: lineSpacingEm,
+            cflImagePolicy: cflImageContext != nil
         )
         context.coordinator.render(
             payload,
@@ -175,6 +252,7 @@ private struct ETMathWebViewRepresentable: UIViewRepresentable {
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.navigationDelegate = nil
         webView.stopLoading()
+        coordinator.imageHandler.cancelAll()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.heightMessageName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.copyMessageName)
     }
@@ -203,6 +281,7 @@ private struct ETMathWebViewRepresentable: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         static let heightMessageName = "etMathHeight"
         static let copyMessageName = "etMathCopy"
+        let imageHandler = CFLMarkdownWebImageHandler()
 
         @Binding var renderedHeight: CGFloat
         var onCopyCompleted: () -> Void

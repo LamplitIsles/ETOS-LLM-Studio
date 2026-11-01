@@ -365,15 +365,19 @@ actor FakeImageHTTP: CFLImageHTTP {
     var hold = false
     var missingPreview = false
     var missingOriginal = false
+    var status = 200
     var continuation: CheckedContinuation<Void, Never>?
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
         if hold { await withCheckedContinuation { continuation = $0 }; hold = false }
         if fail { throw CFLFailure.requestFailed }
+        if request.url!.path == "/api/auth/status" {
+            return (Data("{\"state\":\"signed_in\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
         if request.httpMethod == "GET" {
             let original = request.url!.path.hasSuffix("/original")
             let missing = original ? missingOriginal : missingPreview
-            let response = HTTPURLResponse(url: request.url!, statusCode: missing ? 404 : 200, httpVersion: nil,
+            let response = HTTPURLResponse(url: request.url!, statusCode: missing ? 404 : status, httpVersion: nil,
                                            headerFields: ["Content-Type": original ? "image/png" : "image/jpeg"])!
             return (original ? Data([137, 80, 78, 71, 13, 10, 26, 10, 1]) : Data([255, 216, 255, 1]), response)
         }
@@ -386,11 +390,159 @@ actor FakeImageHTTP: CFLImageHTTP {
         return (try JSONSerialization.data(withJSONObject: ["sessionId": payload["sessionId"]!, "operationId": payload["operationId"]!, "images": refs]), response)
     }
     func setFailure() { fail = true }
+    func setStatus(_ value: Int) { status = value }
     func setMissing(preview: Bool, original: Bool = false) { missingPreview = preview; missingOriginal = original }
     func setHold() { hold = true }
     func isHeld() -> Bool { continuation != nil }
     func release() { continuation?.resume(); continuation = nil }
     func allRequests() -> [URLRequest] { requests }
+}
+
+final class ImageTestCredentials: CFLCredentialStore, @unchecked Sendable {
+    func load(origin: String) throws -> CFLCredentials? {
+        CFLCredentials(accessToken: "fixture-token", refreshToken: "fixture-refresh", expiresAt: .distantFuture)
+    }
+    func save(_ credentials: CFLCredentials, origin: String) throws { }
+}
+
+func checkMarkdownImages() async throws {
+    let examples: [(String, CFLMarkdownImage)] = [
+        ("work/a%20b.png", .workspace("work/a b.png")),
+        ("work/a%2520b.png", .workspace("work/a%20b.png")),
+        ("/目录/猫.jpg", .workspace("/目录/猫.jpg")),
+        ("https://local.test/a.png", .external("https://local.test/a.png")),
+        ("/api/image?id=1", .api("/api/image?id=1")),
+        ("/API/image.png", .invalid), ("%2Fapi%2Fimage.png", .invalid),
+        ("//host/image.png", .invalid), ("%FF.png", .invalid), ("a%00.png", .invalid),
+        ("a\\b.png", .invalid), ("file:a.png", .invalid), ("a.png?x=1", .invalid), ("a.svg", .invalid)
+    ]
+    for (input, expected) in examples { precondition(CFLMarkdownImage.resolve(input) == expected, input) }
+    let socket = FakeSocket(snapshot: imageSnapshot()), http = FakeImageHTTP(), store = MemoryStore()
+    let auth = CFLAuthorization(store: ImageTestCredentials(), http: http)
+    try await auth.select(origin: "https://example.com")
+    let client = CFLChatClient(target: "https://example.com", store: store,
+        imageHTTP: CFLAuthorizedHTTP(authorization: auth, http: http), transport: { socket })
+    await client.connect()
+    let state = await client.currentState()
+    func read(_ source: String) async throws -> Data {
+        try await client.markdownImage(source, expectedSessionId: "A", expectedSessionRevision: state.sessionRevision)
+    }
+    // The snapshot has no workspace image declaration; the server response decides readability.
+    let workspaceData = try await read("work/a%2520b%20猫.png")
+    precondition(workspaceData == Data([255, 216, 255, 1]))
+    let requests = await http.allRequests()
+    let request = requests.last!
+    precondition(request.url?.absoluteString == "https://example.com/api/chat/workspace-image?path=work%2Fa%2520b%20%E7%8C%AB.png")
+    precondition(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token")
+    precondition(request.value(forHTTPHeaderField: "Origin") == "https://example.com")
+    _ = try await read("/api/image?id=1")
+    for source in ["https://outside.test/a.png", "http://outside.test/a.png", "/api/../secret", "/api/%2e%2e/secret", "/api/%2F%2Fevil", "/api/a#fragment", "/api/%ff"] {
+        do { _ = try await read(source); preconditionFailure(source) } catch CFLFailure.invalidInput { }
+    }
+    let requestCount = await http.allRequests().count
+    precondition(requestCount == 2)
+    await http.setStatus(404)
+    do { _ = try await read("missing.png"); preconditionFailure() } catch CFLFailure.requestFailed { }
+    await http.setStatus(403)
+    do { _ = try await read("denied.png"); preconditionFailure() } catch CFLFailure.offline { }
+    let denialRequests = await http.allRequests()
+    precondition(denialRequests.suffix(2).map { $0.url!.path } == ["/api/chat/workspace-image", "/api/auth/status"])
+    await http.setStatus(302)
+    do { _ = try await read("/api/image"); preconditionFailure() } catch CFLFailure.requestFailed { }
+    await http.setStatus(200)
+    _ = try await read("missing.png") // The server can permit a later retry.
+    _ = try await read("/api/image") // A failed read can be retried.
+    await http.setHold()
+    let late = Task { try await read("a.png") }
+    while !(await http.isHeld()) { await Task.yield() }
+    try await socket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await client.currentState().sessionId != "B" { await Task.yield() }
+    try await socket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+    while await client.currentState().sessionId != "A" { await Task.yield() }
+    await http.release()
+    do { _ = try await late.value; preconditionFailure() } catch CFLFailure.sessionChanged { }
+    let next = await client.currentState()
+    await http.setHold()
+    let cancelled = Task { try await client.markdownImage("a.png", expectedSessionId: "A", expectedSessionRevision: next.sessionRevision) }
+    while !(await http.isHeld()) { await Task.yield() }
+    cancelled.cancel(); await http.release()
+    do { _ = try await cancelled.value; preconditionFailure() } catch { }
+    await http.setHold()
+    let disconnected = Task { try await client.markdownImage("/api/image", expectedSessionId: "A", expectedSessionRevision: next.sessionRevision) }
+    while !(await http.isHeld()) { await Task.yield() }
+    await client.disconnect()
+    await http.release()
+    do { _ = try await disconnected.value; preconditionFailure() } catch CFLFailure.sessionChanged { }
+    print("CFL Markdown image checks passed")
+}
+
+actor FakeExternalImageHTTP: CFLImageHTTP {
+    var requests: [URLRequest] = []
+    var responseURL: URL?
+    var status = 200
+    var held: CheckedContinuation<Void, Never>?
+    var hold = false
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        if hold { await withCheckedContinuation { held = $0 }; hold = false }
+        return (Data([1, 2, 3]), HTTPURLResponse(url: responseURL ?? request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }
+    func last() -> URLRequest? { requests.last }
+    func count() -> Int { requests.count }
+    func setResponse(_ url: URL?, status: Int) { responseURL = url; self.status = status }
+    func setHold() { hold = true }
+    func isHeld() -> Bool { held != nil }
+    func release() { held?.resume(); held = nil }
+}
+
+func checkExternalMarkdownImages() async throws {
+    let fake = FakeExternalImageHTTP(), loader = CFLExternalImageLoader(http: fake)
+    let bytes = try await loader.data(for: "https://127.0.0.1/image.png")
+    precondition(bytes == Data([1, 2, 3]))
+    let first = await fake.last()!
+    precondition(first.httpMethod == "GET" && !first.httpShouldHandleCookies)
+    for header in ["Authorization", "Cookie", "Referer", "Proxy-Authorization"] { precondition(first.value(forHTTPHeaderField: header) == nil) }
+    for bad in ["http://127.0.0.1/image.png", "http://example.test/image.png", "file:///tmp/image.png", "https://user:password@example.test/a", "data:image/png;base64,AA=="] {
+        do { _ = try await loader.data(for: bad); preconditionFailure(bad) } catch CFLFailure.invalidInput { }
+    }
+    precondition(CFLMarkdownImage.resolve("http://example.test/image.png") == .external("http://example.test/image.png"))
+    let count = await fake.count(); precondition(count == 1)
+    await fake.setResponse(URL(string: "https://other.test/redirected.png")!, status: 200)
+    _ = try await loader.data(for: "https://example.test/image.png")
+    await fake.setResponse(nil, status: 404)
+    do { _ = try await loader.data(for: "https://example.test/image.png"); preconditionFailure() } catch CFLFailure.requestFailed { }
+    await fake.setResponse(URL(string: "file:///tmp/image.png")!, status: 200)
+    do { _ = try await loader.data(for: "https://example.test/image.png"); preconditionFailure() } catch CFLFailure.protocolError { }
+    await fake.setResponse(URL(string: "http://example.test/image.png")!, status: 200)
+    do { _ = try await loader.data(for: "https://example.test/image.png"); preconditionFailure() } catch CFLFailure.protocolError { }
+    await fake.setResponse(nil, status: 200)
+    await fake.setHold()
+    let cancelled = Task { try await loader.data(for: "https://example.test/image.png") }
+    while !(await fake.isHeld()) { await Task.yield() }
+    cancelled.cancel(); await fake.release()
+    do { _ = try await cancelled.value; preconditionFailure() } catch is CancellationError { }
+
+    // Invoke the actual redirect delegate without starting a task or making a request.
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let task = session.dataTask(with: URL(string: "https://example.test/image.png")!)
+    let response = HTTPURLResponse(url: task.originalRequest!.url!, statusCode: 302, httpVersion: nil, headerFields: nil)!
+    let delegate = CFLExternalImageDelegate()
+    for destination in ["https://other.test/image.png", "https://localhost/image.png", "https://192.168.1.1/image.png"] {
+        var proposed = URLRequest(url: URL(string: destination)!)
+        for header in ["Authorization", "Cookie", "Referer", "Proxy-Authorization"] { proposed.setValue("secret", forHTTPHeaderField: header) }
+        var redirected: URLRequest?
+        delegate.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: proposed) { redirected = $0 }
+        precondition(redirected?.url == proposed.url && redirected?.httpMethod == "GET" && redirected?.httpShouldHandleCookies == false)
+        for header in ["Authorization", "Cookie", "Referer", "Proxy-Authorization"] { precondition(redirected?.value(forHTTPHeaderField: header) == nil) }
+    }
+    for destination in ["http://other.test/image.png", "http://localhost/image.png", "file:///tmp/image.png", "https://user:password@example.test/a"] {
+        let proposed = URLRequest(url: URL(string: destination)!)
+        var redirected: URLRequest? = proposed
+        delegate.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: proposed) { redirected = $0 }
+        precondition(redirected == nil)
+    }
+    print("CFL external Markdown image checks passed")
 }
 
 func imageSnapshot(before: String? = nil) -> ChordJSON {
@@ -534,8 +686,13 @@ func checkImages() async throws {
     print("CFL image checks passed")
 }
 
-@main struct CFLChatChecks {
+#if !CFL_SOURCE_CHECKS
+@main
+#endif
+struct CFLChatChecks {
     static func main() async throws {
+        if CommandLine.arguments.dropFirst().elementsEqual(["--external-images-only"]) { try await checkExternalMarkdownImages(); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--markdown-images-only"]) { try await checkMarkdownImages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--reminders-only"]) { try await checkReminderSources(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--images-only"]) { try await checkImages(); return }
         try await checkReminderSources()

@@ -28,6 +28,96 @@ struct CFLImagePresentationTests {
         #expect(model.imagePageActive && model.imagePageRevision != revision)
     }
 
+    @Test("Markdown image retry clears the failure and starts a fresh attempt")
+    func markdownImageRetryStartsFreshAttempt() {
+        let status = CFLMarkdownImageStatus()
+        status.inlineFailure(URL(string: "https://example.invalid/image.png")!, stamp: status.stamp)
+        status.retry()
+        #expect(!status.inlineFailed && status.attempt == 1)
+    }
+
+    @Test("Markdown images cannot load after the page leaves its context")
+    func markdownImageDoesNotLoadAfterNavigation() async {
+        let changes = PassthroughSubject<String, Never>()
+        let model = CFLConversationModel(draftChanges: changes.eraseToAnyPublisher())
+        let context = CFLMarkdownImageContext(model: model, target: "https://example.invalid", session: "session",
+                                              revision: 1, clientID: UUID(), status: CFLMarkdownImageStatus(), originalSources: nil)
+        model.pageDidDisappear()
+        do {
+            _ = try await context.load(URL(string: "https://example.invalid/test.png")!)
+            Issue.record("An inactive page must not load an image")
+        } catch {
+            #expect((error as? CFLFailure) == .sessionChanged)
+        }
+    }
+
+    @Test("Rendered Markdown keeps the original workspace image destination")
+    func markdownImagesSurvivePreparationAndMath() async throws {
+        let markdown = "![space](work/a%20b.png)\n\ninline ![percent](work/a%2520b.png) and $x$"
+        let prepared = await ETPreparedMarkdownRenderPayload.build(from: markdown)
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        let context = CFLMarkdownImageContext(model: model, target: nil, session: nil, revision: 0,
+                                              clientID: UUID(), status: CFLMarkdownImageStatus(),
+                                              originalSources: CFLMarkdownImageSources(markdown: markdown))
+        let mathSources = try #require(prepared.mathImageSources)
+        for rendered in [prepared.imageSources, mathSources] {
+            let mapping = context.rendered(sources: rendered.sources)
+            #expect(mapping.source(for: try #require(URL(string: "work/a%20b.png"))) == "work/a%20b.png")
+            #expect(mapping.source(for: try #require(URL(string: "work/a%2520b.png"))) == "work/a%2520b.png")
+        }
+    }
+
+    @Test("Images with conflicting original URLs stay unavailable across reply chunks")
+    func conflictingMarkdownDestinationsAreUnavailable() throws {
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        let context = CFLMarkdownImageContext(model: model, target: nil, session: nil, revision: 0,
+                                              clientID: UUID(), status: CFLMarkdownImageStatus(),
+                                              originalSources: CFLMarkdownImageSources(markdown: "![a](work/a%.png)\n\n![b](work/a%25.png)"))
+            .rendered(sources: CFLMarkdownImageSources(markdown: "![a](work/a%.png)"))
+        #expect(context.source(for: try #require(URL(string: "work/a%.png"))) == nil)
+    }
+
+    @Test("Equivalent workspace spellings resolve to the same image")
+    func equivalentWorkspaceDestinationsRemainAvailable() throws {
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        let context = CFLMarkdownImageContext(model: model, target: nil, session: nil, revision: 0,
+                                              clientID: UUID(), status: CFLMarkdownImageStatus(),
+                                              originalSources: CFLMarkdownImageSources(markdown: "![a](<work/a b.png>)\n\n![b](work/a%20b.png)"))
+            .rendered(sources: CFLMarkdownImageSources(markdown: "![b](work/a%20b.png)"))
+        let source = try #require(context.source(for: URL(string: "work/a%20b.png")!))
+        #expect(CFLMarkdownImageSources.areEquivalent(source, "work/a%20b.png"))
+    }
+
+    @Test("Streaming keeps an image stable until its mapping changes")
+    func streamingImageRevisionTracksItsMapping() async throws {
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        var state = CFLChatState()
+        state.connection = .online
+        state.sessionId = "session"
+        state.sessionRevision = 1
+        func reply(_ text: String) throws -> CFLStreamingReply {
+            try JSONDecoder().decode(CFLStreamingReply.self, from: JSONSerialization.data(withJSONObject: [
+                "id": "reply", "turnId": "turn", "createdAt": 1, "text": text
+            ]))
+        }
+        state.streamingReply = try reply("![first](work/a%25.png)\n")
+        model.state = state
+        for _ in 0..<100 where model.visibleReply.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        let first = try #require(model.visibleReply.first)
+
+        state.streamingReply = try reply("![first](work/a%25.png)\nMore text\n")
+        model.state = state
+        for _ in 0..<100 where model.visibleReply.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+        let extended = try #require(model.visibleReply.first)
+        #expect(first.id == extended.id && first.markdownSourcesRevision == extended.markdownSourcesRevision)
+
+        state.streamingReply = try reply("![first](work/a%25.png)\nMore text\n![conflict](work/a%.png)\n")
+        model.state = state
+        for _ in 0..<100 where model.visibleReply.count < 3 { try await Task.sleep(for: .milliseconds(5)) }
+        let ambiguous = try #require(model.visibleReply.first)
+        #expect(first.id == ambiguous.id && first.markdownSourcesRevision != ambiguous.markdownSourcesRevision)
+    }
+
     @Test("A real navigation invalidates the page even when a picker covers it")
     func navigationOverridesPickerCoverage() {
         let changes = PassthroughSubject<String, Never>()

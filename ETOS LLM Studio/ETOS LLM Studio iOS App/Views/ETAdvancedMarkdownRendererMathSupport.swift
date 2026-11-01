@@ -20,6 +20,7 @@ struct ETMathWebShellConfiguration: Equatable {
         let prefersDarkPalette: Bool
         let fontScale: Double
         let lineSpacingEm: Double
+        var cflImagePolicy = false
 
         var htmlDocument: String {
             let defaultTextColor = isOutgoing ? "#FFFFFF" : (prefersDarkPalette ? "#FFFFFF" : "#1C1C1E")
@@ -70,6 +71,7 @@ struct ETMathWebShellConfiguration: Equatable {
 <html>
 <head>
   <meta charset="utf-8" />
+  \(cflImagePolicy ? "<meta http-equiv=\"Content-Security-Policy\" content=\"img-src cfl-image: data:\" /><meta name=\"referrer\" content=\"no-referrer\" />" : "")
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <link
     rel="stylesheet"
@@ -358,11 +360,13 @@ struct ETMathWebShellConfiguration: Equatable {
   <script>
     \(Self.javascriptRuntime(
             enableMarkdown: enableMarkdown,
+            cflImagePolicy: cflImagePolicy,
             syntaxHighlightingEnabled: customCodeTextHex == nil,
             codeCopyText: codeCopyText,
             codeCopiedText: codeCopiedText,
             codeExpandText: codeExpandText,
-            codeCollapseText: codeCollapseText
+            codeCollapseText: codeCollapseText,
+            imageRetryText: Self.javaScriptStringLiteral(NSLocalizedString("图片加载失败，点按重试", comment: "Retry loading image"))
         ))
   </script>
 

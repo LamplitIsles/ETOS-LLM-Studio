@@ -11,11 +11,26 @@ import Foundation
 @preconcurrency import MarkdownUI
 import ETOSCore
 
+nonisolated struct ETPreparedImageSources: Equatable, Sendable {
+    let text: String
+    let sources: CFLMarkdownImageSources
+
+    init(_ text: String) {
+        self.text = text
+        self.sources = CFLMarkdownImageSources(markdown: text.contains("![") ? text : "")
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text }
+}
+
 struct ETPreparedMarkdownRenderPayload: Equatable, @unchecked Sendable {
     let sourceText: String
     let sourceUTF8Length: Int
     let normalizedText: String
     let mathRenderText: String
+    let imageSources: ETPreparedImageSources
+    let mathImageSources: ETPreparedImageSources?
+    let webImageSources: ETPreparedImageSources
     let markdownContent: MarkdownContent
     let nativeMathMarkdownContent: MarkdownContent?
     let mathSegments: [ETMathContentSegment]
@@ -35,17 +50,20 @@ struct ETPreparedMarkdownRenderPayload: Equatable, @unchecked Sendable {
             }
         }
         let containsMermaid = containsMermaidFence(in: normalizedText)
+        let webText = ETMathContentParser.normalizedMathDelimiters(in: normalizedText)
+        let nativeMathText = containsMath && !containsMermaid && ETNativeMathMarkdownCodec.isAvailable
+            ? ETNativeMathMarkdownCodec.transformedMarkdown(from: mathSegments) : nil
+        let imageSources = ETPreparedImageSources(normalizedText)
         return ETPreparedMarkdownRenderPayload(
             sourceText: sourceText,
             sourceUTF8Length: sourceText.utf8.count,
             normalizedText: normalizedText,
-            mathRenderText: ETMathContentParser.normalizedMathDelimiters(in: normalizedText),
+            mathRenderText: webText,
+            imageSources: imageSources,
+            mathImageSources: nativeMathText.map(ETPreparedImageSources.init),
+            webImageSources: containsMermaid ? ETPreparedImageSources(webText) : imageSources,
             markdownContent: MarkdownContent(normalizedText),
-            nativeMathMarkdownContent: buildNativeMathMarkdownContent(
-                mathSegments: mathSegments,
-                containsMath: containsMath,
-                containsMermaid: containsMermaid
-            ),
+            nativeMathMarkdownContent: nativeMathText.map(MarkdownContent.init),
             mathSegments: mathSegments,
             containsMathContent: containsMath,
             containsMermaidContent: containsMermaid,
@@ -53,18 +71,7 @@ struct ETPreparedMarkdownRenderPayload: Equatable, @unchecked Sendable {
         )
     }
 
-    nonisolated private static func buildNativeMathMarkdownContent(
-        mathSegments: [ETMathContentSegment],
-        containsMath: Bool,
-        containsMermaid: Bool
-    ) -> MarkdownContent? {
-        guard containsMath, !containsMermaid, ETNativeMathMarkdownCodec.isAvailable else {
-            return nil
-        }
-        return MarkdownContent(ETNativeMathMarkdownCodec.transformedMarkdown(from: mathSegments))
-    }
-
-    nonisolated private static func normalizedMarkdownForStreaming(_ text: String) -> String {
+    nonisolated static func normalizedMarkdownForStreaming(_ text: String) -> String {
         let lines = text.components(separatedBy: "\n")
         var normalizedLines: [String] = []
         normalizedLines.reserveCapacity(lines.count)

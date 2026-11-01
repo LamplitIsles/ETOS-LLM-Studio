@@ -11,14 +11,17 @@ import Foundation
 extension ETMathWebShellConfiguration {
     nonisolated static func javascriptRuntime(
         enableMarkdown: Bool,
+        cflImagePolicy: Bool,
         syntaxHighlightingEnabled: Bool,
         codeCopyText: String,
         codeCopiedText: String,
         codeExpandText: String,
-        codeCollapseText: String
+        codeCollapseText: String,
+        imageRetryText: String
     ) -> String {
         """
     const __enableMarkdown = \(enableMarkdown ? "true" : "false");
+    const __cflImagePolicy = \(cflImagePolicy ? "true" : "false");
     const __syntaxHighlightingEnabled = \(syntaxHighlightingEnabled ? "true" : "false");
     const __state = {
       raw: "",
@@ -452,10 +455,43 @@ extension ETMathWebShellConfiguration {
 
       if (__enableMarkdown && window.marked) {
         const tokenized = __tokenizeDisplayMath(raw);
-        container.innerHTML = window.marked.parse(tokenized.markdown, {
+        const rendered = window.marked.parse(tokenized.markdown, {
           breaks: !rawHasMath,
-          gfm: true
+          gfm: true,
+          walkTokens: __cflImagePolicy ? function(token) {
+            if (token.type === "image" && typeof token.href === "string") {
+              token.href = "cfl-image://load/" + encodeURIComponent(token.href);
+            }
+          } : undefined
         });
+        if (__cflImagePolicy) {
+          const template = document.createElement("template");
+          template.innerHTML = rendered;
+          const previous = Array.from(container.querySelectorAll("[data-cfl-source]"));
+          template.content.querySelectorAll('img[src^="cfl-image:"]').forEach((image) => {
+            const source = image.getAttribute("src");
+            const index = previous.findIndex((old) => old.dataset.cflSource === source);
+            if (index >= 0) {
+              image.replaceWith(previous.splice(index, 1)[0]);
+              return;
+            }
+            image.dataset.cflSource = source;
+            image.addEventListener("error", () => {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.dataset.cflSource = source;
+              button.textContent = \(imageRetryText);
+              button.addEventListener("click", () => {
+                button.replaceWith(image);
+                image.src = source + "?retry=" + Date.now();
+              });
+              image.replaceWith(button);
+            });
+          });
+          container.replaceChildren(template.content);
+        } else {
+          container.innerHTML = rendered;
+        }
         __renderMathBlocks(container, tokenized.blocks);
         __prepareMermaidBlocks(container);
       } else if (!__enableMarkdown) {
