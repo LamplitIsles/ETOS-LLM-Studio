@@ -5,8 +5,10 @@ set -eu
 ROOT_PATH="${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
 IOS_PLIST_PATH="$ROOT_PATH/ETOS LLM Studio/Config/iOSInfo.plist"
 
-# 扩展只携带自身需要的翻译，新增文案必须先同步，不能带着缺失翻译发布。
-python3 "$ROOT_PATH/scripts/sync-extension-localizations.py" --check
+# 主 App 的 Cloud 归档不包含扩展；其他 scheme 仍检查扩展翻译。
+if [ "${CI_XCODE_SCHEME:-}" != "ETOS LLM Studio Cloud" ]; then
+    python3 "$ROOT_PATH/scripts/sync-extension-localizations.py" --check
+fi
 
 # 云端构建写入完整 Commit，界面展示时再截为 7 位；源码向导必须依赖精确版本。
 if [ -n "${CI_COMMIT:-}" ]; then
