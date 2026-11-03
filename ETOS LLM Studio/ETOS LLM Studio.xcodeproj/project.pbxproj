@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A56E00E731BD4C5EAA765A01 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; productRef = A56E00E731BD4C5EAA765A02 /* ExyteChat */; };
+		A56E00E731BD4C5EAA765A04 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = A56E00E731BD4C5EAA765A05 /* Kingfisher */; };
 		0743409A302B0CBB00F29D76 /* ETOS Agent Share.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07434090302B0CB900F29D76 /* ETOS Agent Share.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		07434143302B3FC300F29D76 /* ETOSCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07434142302B3FC300F29D76 /* ETOSCore.framework */; };
 		077CD2622E962D8D00AD6556 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 077CD2612E962D8D00AD6556 /* MarkdownUI */; };
@@ -151,6 +153,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A56E00E731BD4C5EAA765A01 /* ExyteChat in Frameworks */,
+				A56E00E731BD4C5EAA765A04 /* Kingfisher in Frameworks */,
 				07BEEE072FB6DAAB000D31FC /* SQLCipher in Frameworks */,
 				077CD2622E962D8D00AD6556 /* MarkdownUI in Frameworks */,
 				0A4A16A12FBF4B979722D001 /* Markdown in Frameworks */,
@@ -246,6 +250,8 @@
 			);
 			name = "ETOS LLM Studio App";
 			packageProductDependencies = (
+				A56E00E731BD4C5EAA765A02 /* ExyteChat */,
+				A56E00E731BD4C5EAA765A05 /* Kingfisher */,
 				077CD2612E962D8D00AD6556 /* MarkdownUI */,
 				0A4A16A12FBF4B979722D002 /* Markdown */,
 				09A06C4B2F75031D0089D1E1 /* SwiftMath */,
@@ -367,6 +373,8 @@
 			mainGroup = 073CA6D22E8CFD65004516A0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				A56E00E731BD4C5EAA765A03 /* XCRemoteSwiftPackageReference "Chat" */,
+				A56E00E731BD4C5EAA765A06 /* XCRemoteSwiftPackageReference "Kingfisher" */,
 				077CD2602E962D8D00AD6556 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				0A4A16A12FBF4B979722D003 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 				09A06C4A2F75031D0089D1E1 /* XCRemoteSwiftPackageReference "SwiftMath" */,
@@ -1133,6 +1141,22 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		A56E00E731BD4C5EAA765A06 /* XCRemoteSwiftPackageReference "Kingfisher" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/onevcat/Kingfisher";
+			requirement = {
+				kind = exactVersion;
+				version = 8.15.0;
+			};
+		};
+		A56E00E731BD4C5EAA765A03 /* XCRemoteSwiftPackageReference "Chat" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/exyte/Chat.git";
+			requirement = {
+				kind = exactVersion;
+				version = 3.3.7;
+			};
+		};
 		0A4A16A12FBF4B979722D003 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
@@ -1168,6 +1192,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A56E00E731BD4C5EAA765A05 /* Kingfisher */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A56E00E731BD4C5EAA765A06 /* XCRemoteSwiftPackageReference "Kingfisher" */;
+			productName = Kingfisher;
+		};
+		A56E00E731BD4C5EAA765A02 /* ExyteChat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A56E00E731BD4C5EAA765A03 /* XCRemoteSwiftPackageReference "Chat" */;
+			productName = ExyteChat;
+		};
 		0A4A16A12FBF4B979722D002 /* Markdown */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 0A4A16A12FBF4B979722D003 /* XCRemoteSwiftPackageReference "swift-markdown" */;

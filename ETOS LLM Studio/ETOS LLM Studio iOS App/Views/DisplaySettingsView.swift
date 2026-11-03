@@ -155,40 +155,6 @@ struct DisplaySettingsView: View {
                 }
 
                 Section {
-                    Picker(
-                        NSLocalizedString("流式显示", comment: "Streaming response display mode"),
-                        selection: $appConfig.chatStreamingDisplayMode
-                    ) {
-                        ForEach(ChatStreamingDisplayMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode.rawValue)
-                        }
-                    }
-                } header: {
-                    Text(NSLocalizedString("流式显示", comment: "Streaming response display section"))
-                } footer: {
-                    Text(NSLocalizedString("即时模式优先响应速度，并让新增文字快速淡入；柔和模式会合并更多流式分片，以更舒缓的节奏显示新增文字。", comment: "Streaming response display mode description"))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    NavigationLink {
-                        ChatAnimationSettingsView()
-                    } label: {
-                        HStack {
-                            Label(NSLocalizedString("聊天动画", comment: ""), systemImage: "sparkles")
-                            Spacer()
-                            Text(
-                                isAnyChatAnimationEnabled
-                                    ? NSLocalizedString("已启用", comment: "")
-                                    : NSLocalizedString("已停用", comment: "")
-                            )
-                            .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section {
                     NavigationLink {
                         ChatAppearanceProfileSettingsView()
                     } label: {
@@ -282,13 +248,6 @@ struct DisplaySettingsView: View {
                 }
 
                 Section {
-                    Picker(NSLocalizedString("输入栏样式", comment: "聊天输入栏样式选择器"), selection: chatComposerStyleBinding) {
-                        ForEach(ChatComposerStyle.allCases) { style in
-                            Text(chatComposerStyleTitle(style))
-                                .tag(style)
-                        }
-                    }
-
                     NavigationLink {
                         ChatQuickActionSettingsView()
                     } label: {
@@ -296,10 +255,6 @@ struct DisplaySettingsView: View {
                     }
                 } header: {
                     Text(NSLocalizedString("聊天界面", comment: "设置聊天界面分组"))
-                } footer: {
-                    Text(NSLocalizedString("胶囊样式保持紧凑；卡片样式会将附件、请求控制、语音和发送操作收进同一输入区域，并随文本自然增高。", comment: "聊天输入栏样式说明"))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -353,7 +308,6 @@ struct DisplaySettingsView: View {
                 .bool("hide_assistant_bubble", label: NSLocalizedString("关闭助手气泡", comment: "向导设置字段"), get: { enableNoBubbleUI }, set: { enableNoBubbleUI = $0 }),
                 .bool("chat_top_blur_fade", label: NSLocalizedString("顶部毛玻璃渐隐", comment: "向导设置字段"), get: { enableChatTopBlurFade }, set: { enableChatTopBlurFade = $0 }),
                 .bool("timeline_navigation", label: NSLocalizedString("四键消息导航", comment: "向导设置字段"), get: { appConfig.chatTimelineNavigationEnabled }, set: { appConfig.chatTimelineNavigationEnabled = $0 }),
-                .string("streaming_display_mode", label: NSLocalizedString("流式显示模式", comment: "向导设置字段"), allowedValues: ChatStreamingDisplayMode.allCases.map(\.rawValue), get: { appConfig.chatStreamingDisplayMode }, set: { appConfig.chatStreamingDisplayMode = $0 }),
                 .bool("auto_reasoning_preview", label: NSLocalizedString("自动预览思考过程", comment: "向导设置字段"), get: { enableAutoReasoningPreview }, set: { enableAutoReasoningPreview = $0 }),
                 .bool("responsive_reasoning_preview_height", label: NSLocalizedString("响应式思考预览高度", comment: "向导设置字段"), get: { appConfig.enableResponsiveReasoningPreviewHeight }, set: { appConfig.enableResponsiveReasoningPreviewHeight = $0 }),
                 .double("reasoning_preview_height_percent", label: NSLocalizedString("思考预览高度百分比", comment: "向导设置字段"), range: 1...100, get: { appConfig.reasoningPreviewHeightPercent }, set: { appConfig.reasoningPreviewHeightPercent = $0 })
@@ -362,7 +316,6 @@ struct DisplaySettingsView: View {
             return [
                 .string("app_language", label: NSLocalizedString("App 语言", comment: "向导设置字段"), allowedValues: AppLanguagePreference.allCases.map(\.rawValue), get: { appConfig.appLanguage }, set: { appLanguageBinding.wrappedValue = $0 }),
                 .bool("colorful_settings_icons", label: NSLocalizedString("彩色设置图标", comment: "向导设置字段"), get: { appConfig.settingsColorfulIconsEnabled }, set: { appConfig.settingsColorfulIconsEnabled = $0 }),
-                .string("chat_composer_style", label: NSLocalizedString("输入栏样式", comment: "向导设置字段"), allowedValues: ChatComposerStyle.allCases.map(\.rawValue), get: { ChatComposerStyle.normalized(appConfig.chatComposerStyle).rawValue }, set: { appConfig.chatComposerStyle = $0 }),
                 .bool("hardware_return_sends_message", label: NSLocalizedString("按 Return 发送消息", comment: "向导设置字段"), get: { appConfig.iOSHardwareKeyboardReturnSendsMessage }, set: { appConfig.iOSHardwareKeyboardReturnSendsMessage = $0 })
             ]
         default:
@@ -400,26 +353,6 @@ struct DisplaySettingsView: View {
             get: { LiquidGlassTintSetting.normalized(appConfig.liquidGlassTintOpacity) },
             set: { appConfig.liquidGlassTintOpacity = LiquidGlassTintSetting.normalized($0) }
         )
-    }
-
-    private var chatComposerStyleBinding: Binding<ChatComposerStyle> {
-        Binding(
-            get: { ChatComposerStyle.normalized(appConfig.chatComposerStyle) },
-            set: { appConfig.chatComposerStyle = $0.rawValue }
-        )
-    }
-
-    private func chatComposerStyleTitle(_ style: ChatComposerStyle) -> String {
-        switch style {
-        case .capsule:
-            return NSLocalizedString("胶囊", comment: "胶囊聊天输入栏样式")
-        case .card:
-            return NSLocalizedString("卡片", comment: "卡片聊天输入栏样式")
-        }
-    }
-
-    private var isAnyChatAnimationEnabled: Bool {
-        appConfig.chatScrollAnimationEnabled || appConfig.chatSendAnimationEnabled
     }
 
     private var selectedBackgroundIsVideo: Bool {

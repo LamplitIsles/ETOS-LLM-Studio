@@ -3,11 +3,36 @@ import UIKit
 import AVFoundation
 import ETOSCore
 
+struct ChatComposerCircleBackground: View {
+    let usesLiquidGlass: Bool
+    let tint: Color
+    let stroke: Color
+    let shadow: Color
+
+    var body: some View {
+        Group {
+            if #available(iOS 26.0, *), usesLiquidGlass {
+                Circle().fill(Color.clear)
+                    .glassEffect(.clear.interactive(), in: Circle())
+                    .overlay(Circle().fill(tint))
+                    .overlay(Circle().stroke(stroke, lineWidth: 0.5))
+                    .shadow(color: shadow, radius: 6, x: 0, y: 2)
+            } else {
+                Circle().fill(.ultraThinMaterial)
+                    .overlay(Circle().fill(tint))
+                    .overlay(Circle().stroke(stroke, lineWidth: 0.5))
+                    .shadow(color: shadow, radius: 6, x: 0, y: 2)
+            }
+        }
+    }
+}
+
 struct ChatScrollNavigationButton: View {
     let systemName: String
     let accessibilityLabel: String
     let isEnabled: Bool
     let usesLiquidGlass: Bool
+    var circleSize: CGFloat = 40
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var config = AppConfigStore.shared
@@ -18,27 +43,25 @@ struct ChatScrollNavigationButton: View {
     }
     private var stroke: Color { Color.white.opacity(colorScheme == .dark ? 0.18 : 0.28) }
     private var shadow: Color { Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1) }
+    private var usesSystemGlassFeedback: Bool {
+        if #available(iOS 26.0, *) { return usesLiquidGlass }
+        return false
+    }
     private var icon: some View {
         Image(systemName: systemName)
-            .etFont(.system(size: 16, weight: .semibold))
+            .etFont(.system(size: max(14, circleSize * 0.45), weight: .semibold))
             .foregroundColor(TelegramColors.attachButtonColor)
-            .frame(width: 40, height: 40)
+            .frame(width: circleSize, height: circleSize)
             .contentShape(Circle())
     }
     var body: some View {
         Button(action: action) {
-            Group {
-                if #available(iOS 26.0, *), usesLiquidGlass {
-                    icon.background(Circle().fill(tint)).glassEffect(.clear.interactive(), in: Circle())
-                } else {
-                    icon.background(Circle().fill(.ultraThinMaterial).overlay(Circle().fill(tint)))
-                }
+            icon.background {
+                ChatComposerCircleBackground(usesLiquidGlass: usesLiquidGlass, tint: tint, stroke: stroke, shadow: shadow)
             }
-            .overlay(Circle().stroke(stroke, lineWidth: 0.5))
-            .shadow(color: shadow, radius: 6, x: 0, y: 2)
         }
-        .buttonStyle(.plain)
-        .frame(width: 44, height: 44)
+        .buttonStyle(ComposerPressButtonStyle(usesSystemGlassFeedback: usesSystemGlassFeedback))
+        .frame(width: max(44, circleSize), height: max(44, circleSize))
         .contentShape(Rectangle())
         .accessibilityLabel(accessibilityLabel)
         .disabled(!isEnabled)

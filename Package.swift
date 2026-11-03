@@ -16,6 +16,8 @@ let package = Package(
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.16.0"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
+        .package(url: "https://github.com/exyte/Chat.git", exact: "3.3.7"),
+        .package(url: "https://github.com/onevcat/Kingfisher", exact: "8.15.0"),
     ],
     targets: [
         .target(
@@ -40,6 +42,8 @@ let package = Package(
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
+                .product(name: "ExyteChat", package: "Chat", condition: .when(platforms: [.iOS])),
+                .product(name: "Kingfisher", package: "Kingfisher", condition: .when(platforms: [.iOS])),
             ],
             path: "ETOS LLM Studio/ETOS LLM Studio iOS App",
             exclude: ["ETOS LLM Studio iOS App.entitlements", "Assets.xcassets", "PrivacyInfo.xcprivacy", "ar.lproj", "en.lproj", "es.lproj", "fr.lproj", "ja.lproj", "ru.lproj", "zh-Hans.lproj", "zh-Hant-HK.lproj"],

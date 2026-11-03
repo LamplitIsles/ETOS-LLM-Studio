@@ -240,8 +240,6 @@ extension AppConfigStore {
         case .modelPickerFolderPathsByProvider:
             modelPickerFolderPathsByProvider = Self.decodeStringDictionary(from: value) ?? [:]
         case .chatQuickActionIDs: chatQuickActionIDs = value
-        case .chatComposerStyle:
-            chatComposerStyle = ChatComposerStyle.normalized(value).rawValue
         case .chatComposerDraft: chatComposerDraft = value
         case .backgroundCropTarget: backgroundCropTarget = value
         case .shortcutBridgeShortcutName: shortcutBridgeShortcutName = value
@@ -558,8 +556,6 @@ extension AppConfigStore {
             return VideoFrameExtractionMode.normalized(value).rawValue
         case .chatStreamingDisplayMode:
             return ChatStreamingDisplayMode.normalized(value).rawValue
-        case .chatComposerStyle:
-            return ChatComposerStyle.normalized(value).rawValue
         case .localLinuxDefaultSessionMode:
             return LocalAgentMode(rawValue: value)?.rawValue ?? LocalAgentMode.chat.rawValue
         case .localLinuxDefaultMountAccess:

@@ -1,12 +1,76 @@
 @testable import ETOSCore
 import Combine
+import ExyteChat
 import Foundation
+import ImageIO
+import UIKit
+import UniformTypeIdentifiers
 import Testing
 @testable import ETOS_LLM_Studio_App
 
 @MainActor
 @Suite("CFL image presentation")
 struct CFLImagePresentationTests {
+    @Test("Only a definite failure or unsent message needs user action")
+    func pendingPresentationDistinguishesUnknownOutcomes() {
+        var pending = CFLPending(target: "https://example.invalid", sessionId: "session", operationId: "op",
+                                 text: "hello", createdAt: Date(), dispatched: false, status: .unknown)
+        #expect(!CFLPendingPresentation.needsAction(pending, busy: true))
+        #expect(CFLPendingPresentation.needsAction(pending, busy: false))
+        pending.dispatched = true
+        #expect(!CFLPendingPresentation.needsAction(pending, busy: false))
+        pending.status = .submitted
+        #expect(!CFLPendingPresentation.needsAction(pending, busy: false))
+        pending.status = .failed
+        #expect(CFLPendingPresentation.needsAction(pending, busy: false))
+    }
+
+    @Test("Animated image data is decoded as animation while ordinary images remain static")
+    func animatedImagesKeepTheirFrames() throws {
+        func frame(_ color: UIColor) -> CGImage {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 3, height: 3))
+            return renderer.image { context in color.setFill(); context.fill(CGRect(x: 0, y: 0, width: 3, height: 3)) }.cgImage!
+        }
+        let bytes = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(bytes, UTType.gif.identifier as CFString, 2, nil))
+        let properties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.15]] as CFDictionary
+        CGImageDestinationAddImage(destination, frame(.red), properties)
+        CGImageDestinationAddImage(destination, frame(.blue), properties)
+        #expect(CGImageDestinationFinalize(destination))
+        let animated = try #require(CFLImageDecoder.decode(bytes as Data, maxPixelSize: 600))
+        #expect(animated.animated)
+        let png = try #require(UIImage(cgImage: frame(.red)).pngData())
+        #expect(try #require(CFLImageDecoder.decode(png, maxPixelSize: 600)).animated == false)
+        #expect(CFLImageDecoder.decode(Data([0, 1, 2]), maxPixelSize: 600) == nil)
+    }
+
+    @Test("Animated formats request originals and ordinary photos retain thumbnails")
+    func animatedFormatsRequestOriginals() {
+        func ref(_ type: String) -> CFLImageRef {
+            CFLImageRef(attachmentId: "test", name: "test", mediaType: type, availability: "available")
+        }
+        #expect(CFLImageDecoder.needsOriginal(ref("image/gif")))
+        #expect(CFLImageDecoder.needsOriginal(ref("image/webp")))
+        #expect(!CFLImageDecoder.needsOriginal(ref("image/png")))
+        #expect(!CFLImageDecoder.needsOriginal(ref("image/jpeg")))
+    }
+
+    @Test("Exyte refreshes a completed image without changing its message identity")
+    func imageSlotRemainsStableWhenItCompletes() {
+        let client = UUID()
+        let id = CFLDisplayMessage.ID(target: "https://example.invalid", session: "session", message: "image", offset: 0)
+        let preparing = CFLDisplayMessage(id: id, text: "", outgoing: false, markdown: true, images: [],
+                                          sessionRevision: 1, clientID: client, imageState: .preparing)
+        let ready = CFLDisplayMessage(id: id, text: "", outgoing: false, markdown: true,
+                                      images: [CFLImageRef(attachmentId: "photo", name: "image.png", mediaType: "image/png", availability: "available")],
+                                      sessionRevision: 1, clientID: client, imageState: .ready)
+        let before = CFLTimelineRow.message(preparing).message
+        let after = CFLTimelineRow.message(ready).message
+        #expect(before.id == after.id)
+        #expect(before != after)
+        #expect(CFLTimelineRow.message(preparing).message == before)
+    }
+
     @Test("Editing a draft and changing it back invalidates the old send snapshot")
     func returningToTheSameDraftDoesNotRestoreItsRevision() {
         let changes = PassthroughSubject<String, Never>()

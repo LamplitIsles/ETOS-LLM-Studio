@@ -438,7 +438,6 @@ public final class AppConfigStore: ObservableObject {
     }
     @Published public var chatQuickActionIDs: String { didSet { write(.chatQuickActionIDs, chatQuickActionIDs) } }
     @Published public var enableSlashCommands: Bool { didSet { write(.enableSlashCommands, enableSlashCommands) } }
-    @Published public var chatComposerStyle: String { didSet { write(.chatComposerStyle, chatComposerStyle) } }
     @Published public var iOSHardwareKeyboardReturnSendsMessage: Bool {
         didSet { write(.iOSHardwareKeyboardReturnSendsMessage, iOSHardwareKeyboardReturnSendsMessage) }
     }
@@ -664,9 +663,6 @@ public final class AppConfigStore: ObservableObject {
         ) ?? [:]
         chatQuickActionIDs = Self.textValue(.chatQuickActionIDs, userDefaults: userDefaults)
         enableSlashCommands = Self.boolValue(.enableSlashCommands, userDefaults: userDefaults)
-        chatComposerStyle = ChatComposerStyle.normalized(
-            Self.textValue(.chatComposerStyle, userDefaults: userDefaults)
-        ).rawValue
         iOSHardwareKeyboardReturnSendsMessage = Self.boolValue(
             .iOSHardwareKeyboardReturnSendsMessage,
             userDefaults: userDefaults

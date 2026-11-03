@@ -377,7 +377,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case chatQuickActionIDs = "ui.chatQuickActionIDs"
     case enableSlashCommands = "chat.slashCommands.enabled"
     case customChatSlashCommands = "chat.slashCommands.custom"
-    case chatComposerStyle = "chat.composer.style"
     case iOSHardwareKeyboardReturnSendsMessage = "chat.composer.hardwareKeyboard.returnSendsMessage.iOS"
     case chatComposerDraft = "chat.composer.draft"
     case providerDetailGroupByMainstream = "providerDetail.groupByMainstream"
@@ -654,8 +653,6 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
              .watchBackgroundLastSource,
              .chatComposerDraft:
             return .text("")
-        case .chatComposerStyle:
-            return .text(ChatComposerStyle.capsule.rawValue)
         case .iOSHardwareKeyboardReturnSendsMessage:
             return .bool(true)
         case .watchAttachmentSourceHistory,

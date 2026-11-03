@@ -475,7 +475,6 @@ extension AppConfigStore {
             return .text(Self.encodeStringDictionary(modelPickerFolderPathsByProvider))
         case .chatQuickActionIDs: return .text(chatQuickActionIDs)
         case .enableSlashCommands: return .bool(enableSlashCommands)
-        case .chatComposerStyle: return .text(chatComposerStyle)
         case .iOSHardwareKeyboardReturnSendsMessage: return .bool(iOSHardwareKeyboardReturnSendsMessage)
         case .chatComposerDraft: return .text(chatComposerDraft)
         case .providerDetailGroupByMainstream: return .bool(providerDetailGroupByMainstream)

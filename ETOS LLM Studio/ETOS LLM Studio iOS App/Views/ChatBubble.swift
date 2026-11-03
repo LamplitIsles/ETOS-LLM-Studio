@@ -63,6 +63,7 @@ struct ChatBubble: View {
     let reportsLayoutIntegrityFrame: Bool
     let layoutRecoveryRevision: UInt
     let providers: [Provider]
+    let leadingAccessory: AnyView?
     
     @StateObject var audioPlayer = AudioPlayerManager()
     @State var imagePreview: ImagePreviewPayload?
@@ -121,7 +122,8 @@ struct ChatBubble: View {
         sendFlightContentOpacity: Double = 1,
         reportsLayoutIntegrityFrame: Bool = false,
         layoutRecoveryRevision: UInt = 0,
-        providers: [Provider] = []
+        providers: [Provider] = [],
+        leadingAccessory: AnyView? = nil
     ) {
         self.messageState = messageState
         self.layoutWidth = layoutWidth
@@ -169,6 +171,7 @@ struct ChatBubble: View {
         self.reportsLayoutIntegrityFrame = reportsLayoutIntegrityFrame
         self.layoutRecoveryRevision = layoutRecoveryRevision
         self.providers = providers
+        self.leadingAccessory = leadingAccessory
     }
     
     var message: ChatMessage {
@@ -191,13 +194,31 @@ struct ChatBubble: View {
             || renderState.isAwaitingStaticHandoff(channel: .reasoning)
     }
 
+    private var standardTextBubble: some View {
+        bubbleContainer {
+            textContentStack(includeToolCalls: true)
+        }
+        .modifier(
+            ChatBubbleOpenMoreGestureModifier(
+                isSelectionMode: false,
+                onToggleSelection: {},
+                onOpenMore: isSelectionMode ? nil : openMoreAction
+            )
+        )
+        .modifier(ChatSendFlightContentModifier(
+            layoutIdentity: bubbleContentLayoutIdentity,
+            opacity: sendFlightContentOpacity,
+            target: sendFlightTarget
+        ))
+    }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
             // 用户消息靠右；关闭助手气泡后的助手消息用左右 Spacer 居中阅读列。
             if isOutgoing || usesNoBubbleStyle {
                 Spacer(minLength: rowSideSpacerMinLength)
             }
-            
+
             VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 4) {
                 sourceConversationLabel
                     .opacity(sendFlightContentOpacity)
@@ -227,22 +248,13 @@ struct ChatBubble: View {
                                     onOpenMore: isSelectionMode ? nil : openMoreAction
                                 )
                             )
-                    } else {
-                        bubbleContainer {
-                            textContentStack(includeToolCalls: true)
+                    } else if isOutgoing, let leadingAccessory {
+                        HStack(alignment: .bottom, spacing: 4) {
+                            leadingAccessory
+                            standardTextBubble
                         }
-                        .modifier(
-                            ChatBubbleOpenMoreGestureModifier(
-                                isSelectionMode: false,
-                                onToggleSelection: {},
-                                onOpenMore: isSelectionMode ? nil : openMoreAction
-                            )
-                        )
-                        .modifier(ChatSendFlightContentModifier(
-                            layoutIdentity: bubbleContentLayoutIdentity,
-                            opacity: sendFlightContentOpacity,
-                            target: sendFlightTarget
-                        ))
+                    } else {
+                        standardTextBubble
                     }
                 }
 

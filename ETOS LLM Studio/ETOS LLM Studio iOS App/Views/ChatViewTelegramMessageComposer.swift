@@ -24,7 +24,6 @@ struct TelegramMessageComposer: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @ObservedObject var appConfig = AppConfigStore.shared
-    let sendFlightController: ChatSendFlightController
     @Binding var text: String
     var isSendActionPending: Bool { cflState.isSubmitting }
     var isSending: Bool { cflState.isResponding }
@@ -35,7 +34,7 @@ struct TelegramMessageComposer: View {
     }
     let sendAction: () -> Bool
     let stopAction: () -> Void
-    let focus: FocusState<Bool>.Binding
+    let focus: Binding<Bool>
     var availableHeight: CGFloat = .infinity
     var cflState: CFLComposerState
     var images: [CFLSelectedImage] = []
@@ -48,8 +47,6 @@ struct TelegramMessageComposer: View {
     var addCameraImage: (UIImage) -> Void = { _ in }
     var removeImage: (UUID) -> Void = { _ in }
 
-    @State var isExpandedComposer = false
-    @State var adaptiveHasSendableText = false
     @StateObject var inlineSpeechRecorder = InlineSpeechRecorderController()
     @Namespace var adaptiveGlassNamespace
     @State private var inlineSpeechStartTask: Task<Void, Never>?
@@ -61,21 +58,6 @@ struct TelegramMessageComposer: View {
     @State private var showCamera = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
 
-    private let inputBasePointSize: CGFloat = 16
-    private var measuredInputPointSize: CGFloat {
-        CGFloat(FontLibrary.scaledPointSize(Double(inputBasePointSize), scale: appConfig.fontCustomScale, isCustomFontEnabled: appConfig.fontUseCustomFonts))
-    }
-    private var inputUIFont: UIFont {
-        .systemFont(ofSize: measuredInputPointSize)
-    }
-    private var composerReservedHeight: CGFloat {
-        adaptiveControlSize + 16
-    }
-    private var estimatedCompactInputWidth: CGFloat {
-        max(0, UIScreen.main.bounds.width - 16 * 2 - adaptiveControlSize * 2 - 10 * 2)
-    }
-    private let textContainerInset: CGFloat = 8
-    private let textHorizontalPadding: CGFloat = 10
     var compactTextEdgeInset: CGFloat { 6 }
     private var isLiquidGlassEnabled: Bool {
         if #available(iOS 26.0, *) {
@@ -87,22 +69,12 @@ struct TelegramMessageComposer: View {
         ChatComposerHeightLimit(maximumHeight: availableHeight) {
             VStack(spacing: 8) {
                 if !images.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        imagePreviews
-                        Text(NSLocalizedString("未发送的图片仅暂存在内存中，退出应用后会丢失。", comment: "Image draft lifetime"))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }.padding(.horizontal, 16)
+                    imagePreviews.padding(.horizontal, 16)
                      .fixedSize(horizontal: false, vertical: true)
                      .layoutPriority(1)
                 }
-                if usesCardComposer {
-                    cardComposerLayout
-                        .zIndex(1)
-                } else {
-                    composerOverlayContent
-                        .frame(height: composerReservedHeight, alignment: .bottom)
-                        .zIndex(1)
-                }
+                composerOverlayContent
+                    .zIndex(1)
             }
             .padding(.bottom, 6)
         }
@@ -127,24 +99,6 @@ struct TelegramMessageComposer: View {
         .onChange(of: showCamera) { _, presented in
             if !presented { imagePickerDidDismiss() }
         }
-        .onChange(of: text) { _, newValue in
-            handleAutoExpand(for: newValue)
-        }
-        .onChange(of: appConfig.chatComposerStyle) { _, _ in
-            withAnimation(adaptiveComposerAnimation) {
-                isExpandedComposer = false
-            }
-            handleAutoExpand(for: text)
-        }
-        .onChange(of: focus.wrappedValue) { _, isFocused in
-            if isFocused {
-                handleAutoExpand(for: text)
-            } else if isExpandedComposer {
-                withAnimation(adaptiveComposerAnimation) {
-                    isExpandedComposer = false
-                }
-            }
-        }
         .alert(NSLocalizedString("语音输入错误", comment: ""), isPresented: $showInlineSpeechError) {
             Button(NSLocalizedString("好的", comment: ""), role: .cancel) { }
         } message: {
@@ -161,15 +115,11 @@ struct TelegramMessageComposer: View {
     }
 
     private var composerOverlayContent: some View {
-        // 保留向上展开的输入框及其发送动画锚点。
         adaptiveComposerContent
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .bottom)
-            // 测真实展开内容，不能把外层 60pt 占位当成输入框顶部。
-            .background(ChatSendFlightLayoutAnchor(controller: sendFlightController, region: .composerContent))
-            .animation(adaptiveComposerAnimation, value: isExpandedComposer)
             .animation(adaptiveComposerAnimation, value: inlineSpeechRecorder.phase)
     }
 
@@ -198,31 +148,54 @@ struct TelegramMessageComposer: View {
         .background(glassRoundedBackground(cornerRadius: 18))
     }
 
-    func attachmentMenuButton(size: CGFloat, participatesInGlassContainer: Bool = false, embeddedInCard: Bool = false) -> some View {
-        Menu {
-            Button {
-                if beginImageSelection() { showImagePicker = true }
-            } label: {
-                Label(NSLocalizedString("选择照片", comment: "Choose photos"), systemImage: "photo.on.rectangle")
+    @ViewBuilder
+    func attachmentMenuButton(size: CGFloat, participatesInGlassContainer: Bool = false) -> some View {
+        if isSending {
+            Button(action: stopAction) {
+                Image(systemName: "stop.fill")
+                    .etFont(.system(size: min(17, max(14, size * 0.45)), weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(Color.red.opacity(0.85)).shadow(color: glassShadowColor, radius: 6, x: 0, y: 2))
+                    .contentShape(Circle())
             }
-            Button {
-                if beginImageSelection() { showCamera = true }
-            } label: {
-                Label(NSLocalizedString("拍照", comment: "Take photo"), systemImage: "camera")
-            }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-        } label: {
-            Image(systemName: embeddedInCard ? "plus" : "paperclip")
-                .etFont(.system(size: max(14, size * 0.45), weight: .semibold))
-                .foregroundColor(TelegramColors.attachButtonColor)
-                .frame(width: size, height: size)
-                .background {
-                    if embeddedInCard { Circle().fill(Color.primary.opacity(0.08)) }
-                    else { glassCircleBackground }
+            .buttonStyle(ComposerPressButtonStyle())
+            .accessibilityLabel(NSLocalizedString("停止生成", comment: "Stop generation"))
+        } else {
+            Menu {
+                Button {
+                    if beginImageSelection() { showImagePicker = true }
+                } label: {
+                    Label(NSLocalizedString("选择照片", comment: "Choose photos"), systemImage: "photo.on.rectangle")
+                }.disabled(!canAttachImages)
+                Button {
+                    if beginImageSelection() { showCamera = true }
+                } label: {
+                    Label(NSLocalizedString("拍照", comment: "Take photo"), systemImage: "camera")
+                }.disabled(!canAttachImages || !UIImagePickerController.isSourceTypeAvailable(.camera))
+                if cflState.hasImages {
+                    Button {
+                        guard composerCanSend else { return }
+                        _ = sendAction()
+                    } label: {
+                        Label(NSLocalizedString("发送", comment: "Send message"), systemImage: "arrow.up")
+                    }.disabled(!composerCanSend)
                 }
+            } label: {
+                composerActionIcon("paperclip", size: size)
+            }
+            .buttonStyle(ComposerPressButtonStyle(usesSystemGlassFeedback: participatesInGlassContainer && isLiquidGlassEnabled))
+            .disabled((!canAttachImages && !cflState.hasImages) || isPreparingImages || inlineSpeechRecorder.phase.isActive)
+            .accessibilityLabel(NSLocalizedString("添加附件", comment: ""))
         }
-        .buttonStyle(ComposerPressButtonStyle(usesSystemGlassFeedback: participatesInGlassContainer && isLiquidGlassEnabled))
-        .disabled(!canAttachImages || isPreparingImages || inlineSpeechRecorder.phase.isActive)
-        .accessibilityLabel(NSLocalizedString("添加附件", comment: ""))
+    }
+
+    private func composerActionIcon(_ symbol: String, size: CGFloat) -> some View {
+        Image(systemName: symbol)
+            .etFont(.system(size: max(14, size * 0.45), weight: .semibold))
+            .foregroundColor(TelegramColors.attachButtonColor)
+            .frame(width: size, height: size)
+            .background { glassCircleBackground }
     }
 
     func startInlineSpeechRecording() {
@@ -320,89 +293,6 @@ struct TelegramMessageComposer: View {
         text += separator + trimmed
     }
 
-    private func handleAutoExpand(for newValue: String) {
-        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 复用自动展开时的文本规整结果，避免视图渲染时重复扫描草稿。
-        adaptiveHasSendableText = !trimmed.isEmpty
-        guard !usesCardComposer else {
-            isExpandedComposer = false
-            return
-        }
-        if trimmed.isEmpty {
-            if isExpandedComposer {
-                withAnimation(adaptiveComposerAnimation) {
-                    isExpandedComposer = false
-                }
-            }
-            return
-        }
-
-        let baseAvailableWidth = estimatedCompactInputWidth
-            - textHorizontalPadding * 2
-            - textContainerInset * 2
-        let availableWidth = baseAvailableWidth - Self.compactInlineControlsReservedWidth(
-            controlSize: adaptiveControlSize,
-            textEdgeInset: compactTextEdgeInset,
-            showsRequestControls: false,
-            showsSpeechButton: composerSupportsSpeech
-        )
-        let hasExplicitNewline = newValue.contains("\n")
-        var shouldExpand = hasExplicitNewline
-
-        if availableWidth > 0 {
-            let lineCount = measuredTextLineCount(for: newValue, width: availableWidth)
-            shouldExpand = hasExplicitNewline || lineCount > 1
-        }
-
-        if shouldExpand {
-            let wasFocused = focus.wrappedValue
-            guard !isExpandedComposer else { return }
-            withAnimation(adaptiveComposerAnimation) {
-                isExpandedComposer = true
-            }
-            if wasFocused {
-                focus.wrappedValue = true
-            }
-        } else if isExpandedComposer {
-            withAnimation(adaptiveComposerAnimation) {
-                isExpandedComposer = false
-            }
-        }
-    }
-
-    private func measuredTextLineCount(for value: String, width: CGFloat) -> Int {
-        let textStorage = NSTextStorage(string: value, attributes: [.font: inputUIFont])
-        let layoutManager = NSLayoutManager()
-        layoutManager.usesFontLeading = true
-
-        let textContainer = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
-        // 数实际行片段，避免单行字体 leading 被高度换算误判成两行。
-        textContainer.lineFragmentPadding = 0
-        textContainer.maximumNumberOfLines = 0
-        textContainer.lineBreakMode = .byWordWrapping
-
-        layoutManager.addTextContainer(textContainer)
-        textStorage.addLayoutManager(layoutManager)
-        layoutManager.ensureLayout(for: textContainer)
-
-        var lineCount = 0
-        layoutManager.enumerateLineFragments(forGlyphRange: layoutManager.glyphRange(for: textContainer)) { _, _, _, _, _ in
-            lineCount += 1
-        }
-        return max(lineCount, 1)
-    }
-
-    /// 返回紧凑态内置按钮相对普通文本边距额外占用的宽度。
-    static func compactInlineControlsReservedWidth(
-        controlSize: CGFloat,
-        textEdgeInset: CGFloat,
-        showsRequestControls: Bool,
-        showsSpeechButton: Bool
-    ) -> CGFloat {
-        let controlCount = (showsRequestControls ? 1 : 0) + (showsSpeechButton ? 1 : 0)
-        return CGFloat(controlCount) * max(0, controlSize - textEdgeInset)
-    }
-
     @ViewBuilder
     func actionCircleBackground(fill: Color) -> some View {
         if isLiquidGlassEnabled {
@@ -432,48 +322,8 @@ struct TelegramMessageComposer: View {
     }
 
     var glassCircleBackground: some View {
-        Group {
-            if isLiquidGlassEnabled {
-                if #available(iOS 26.0, *) {
-                    Circle()
-                        .fill(Color.clear)
-                        .glassEffect(.clear.interactive(), in: Circle())
-                        .overlay(
-                            Circle()
-                                .fill(glassOverlayColor)
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(glassStrokeColor, lineWidth: 0.5)
-                        )
-                        .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-                } else {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            Circle()
-                                .fill(glassOverlayColor)
-                        )
-                        .overlay(
-                            Circle()
-                                .stroke(glassStrokeColor, lineWidth: 0.5)
-                        )
-                        .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-                }
-            } else {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        Circle()
-                            .fill(glassOverlayColor)
-                    )
-                    .overlay(
-                        Circle()
-                            .stroke(glassStrokeColor, lineWidth: 0.5)
-                    )
-                    .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-            }
-        }
+        ChatComposerCircleBackground(usesLiquidGlass: isLiquidGlassEnabled, tint: glassOverlayColor,
+                                     stroke: glassStrokeColor, shadow: glassShadowColor)
     }
 
     func glassRoundedBackground(cornerRadius: CGFloat) -> some View {
