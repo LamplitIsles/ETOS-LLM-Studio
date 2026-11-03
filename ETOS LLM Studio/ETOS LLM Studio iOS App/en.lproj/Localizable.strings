@@ -8603,3 +8603,11 @@
 "CFL认证需要重新登录" = "Please sign in again";
 "CFL认证无法保存" = "Could not save sign-in credentials";
 "CFL认证暂时不可用" = "Sign-in is temporarily unavailable";
+
+"语音进度" = "Voice progress";
+"暂停语音" = "Pause voice message";
+"重试播放语音" = "Retry voice message";
+"播放语音" = "Play voice message";
+
+"图片生成失败" = "Image generation failed";
+"图片状态未确认" = "Image status unconfirmed";

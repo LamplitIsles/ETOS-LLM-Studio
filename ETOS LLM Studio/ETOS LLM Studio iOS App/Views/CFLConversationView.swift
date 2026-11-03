@@ -38,6 +38,10 @@ struct CFLDisplayMessage: Identifiable, Sendable {
     var markdownSources: CFLMarkdownImageSources? = nil
     var markdownSourcesRevision = 0
     var isReminder = false
+    var voice: CFLVoiceRef? = nil
+    var imageState: CFLImageState? = nil
+    var previews: [CFLLocalImagePreview] = []
+    var pending: CFLPending? = nil
 }
 
 /// A reminder is one server message, independently of its transport role.
@@ -78,6 +82,7 @@ struct CFLReminderBubble: View {
 private struct CFLNativeMessageBubble: View {
     let item: CFLDisplayMessage
     @ObservedObject var model: CFLConversationModel
+    @ObservedObject var voicePlayer: CFLVoicePlayer
     @ObservedObject private var config = AppConfigStore.shared
     @ObservedObject private var background = ChatBackgroundModel.shared
     @StateObject private var renderState: ChatMessageRenderState
@@ -89,9 +94,10 @@ private struct CFLNativeMessageBubble: View {
               clientID: item.clientID)
     }
 
-    init(item: CFLDisplayMessage, model: CFLConversationModel) {
+    init(item: CFLDisplayMessage, model: CFLConversationModel, voicePlayer: CFLVoicePlayer) {
         self.item = item
         self.model = model
+        self.voicePlayer = voicePlayer
         _renderState = StateObject(wrappedValue: ChatMessageRenderState(
             message: ChatMessage(role: item.outgoing ? .user : .assistant, content: item.text)
         ))
@@ -99,6 +105,9 @@ private struct CFLNativeMessageBubble: View {
 
     var body: some View {
         VStack(alignment: item.outgoing ? .trailing : .leading, spacing: 4) {
+            if let voice = item.voice {
+                CFLVoiceMessage(item: item, voice: voice, model: model, player: voicePlayer)
+            }
             if !item.text.isEmpty {
                 ChatBubble(
                     messageState: renderState,
@@ -149,9 +158,25 @@ private struct CFLNativeMessageBubble: View {
                     .buttonStyle(.plain)
                 }
             }
-            if !item.images.isEmpty {
-                CFLMessageImages(images: item.images, outgoing: item.outgoing, model: model,
+            if !item.images.isEmpty || !item.previews.isEmpty {
+                CFLMessageImages(images: item.images, previews: item.previews, outgoing: item.outgoing, model: model,
                                  target: item.id.target, session: item.id.session, revision: item.sessionRevision, clientID: item.clientID)
+            } else if let imageState = item.imageState, imageState != .ready {
+                HStack {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.12))
+                        if imageState == .preparing {
+                            ProgressView().accessibilityLabel(NSLocalizedString("生成中", comment: "Generating"))
+                        } else {
+                            VStack(spacing: 4) {
+                                Image(systemName: "photo.badge.exclamationmark")
+                                Text(NSLocalizedString(imageState == .failed ? "图片生成失败" : "图片状态未确认", comment: "Image generation status"))
+                                    .font(.caption2).multilineTextAlignment(.center)
+                            }.foregroundStyle(.secondary).padding(4)
+                        }
+                    }.frame(width: 180, height: 120)
+                    Spacer(minLength: 40)
+                }
             }
         }
         .onChange(of: model.imagePageActive) { _, active in
@@ -207,16 +232,43 @@ private final class CFLWebAuthentication: NSObject, ASWebAuthenticationPresentat
 
 @MainActor
 final class CFLConversationModel: ObservableObject {
+    private struct PendingAnchor: Equatable, Sendable {
+        let session: String
+        let after: String?
+        var predecessor: String? = nil
+    }
+    private var pendingAnchors: [String: PendingAnchor] = [:]
+    private var nextSendAnchor: PendingAnchor?
     @Published var state = CFLChatState() {
         didSet {
             if oldValue.sessionId != state.sessionId || oldValue.sessionRevision != state.sessionRevision {
                 cancelImageSelection()
+                pendingAnchors.removeAll()
+                nextSendAnchor = nil
             }
-            let operations = Set(state.messages.compactMap(\.operationId))
-            visiblePending = state.pending.filter { !operations.contains($0.operationId) || $0.sessionId != state.sessionId }
+            if let session = state.sessionId {
+                let previous = Set(oldValue.localDrafts.map(\.operationId) + oldValue.pending.filter { $0.sessionId == session }.map(\.operationId))
+                let incoming = state.localDrafts.filter { $0.sessionId == session }.map { ($0.operationId, Optional<String>.none) } +
+                    state.pending.filter { $0.sessionId == session }.map { ($0.operationId, $0.retrySource) }
+                for (operation, source) in incoming where !previous.contains(operation) && pendingAnchors[operation] == nil {
+                    if let source, let anchor = pendingAnchors[source] {
+                        pendingAnchors[operation] = anchor
+                    } else {
+                        pendingAnchors[operation] = nextSendAnchor?.session == session
+                            ? nextSendAnchor : PendingAnchor(session: session, after: oldValue.messages.last?.id)
+                        if nextSendAnchor?.session == session { nextSendAnchor = nil }
+                    }
+                }
+                let active = Set(incoming.flatMap { [$0.0, $0.1].compactMap { $0 } })
+                pendingAnchors = pendingAnchors.filter { $0.value.session == session && active.contains($0.key) }
+            }
+            visiblePending = state.pending.filter { $0.sessionId != state.sessionId }
             hasUnknownPending = state.pending.contains { $0.status == .unknown }
             let input = ProjectionInput(target: connectedOrigin, session: state.sessionId, revision: state.sessionRevision, clientID: clientID, messages: state.messages,
-                                        reply: state.connection == .online ? state.streamingReply : nil)
+                                        reply: state.connection == .online ? state.streamingReply : nil,
+                                        drafts: state.localDrafts, previews: state.localPreviews, pending: state.pending,
+                                        anchors: pendingAnchors)
+            releaseUnusedPreviews()
             guard input != latestProjection else { return }
             if input.session != latestProjection?.session {
                 visibleMessages = []
@@ -236,6 +288,10 @@ final class CFLConversationModel: ObservableObject {
         let clientID: UUID
         let messages: [CFLMessage]
         let reply: CFLStreamingReply?
+        let drafts: [CFLLocalDraft]
+        let previews: [CFLLocalImagePreview]
+        let pending: [CFLPending]
+        let anchors: [String: PendingAnchor]
     }
     private struct ReplyCache: Sendable {
         let source: String
@@ -280,7 +336,7 @@ final class CFLConversationModel: ObservableObject {
     nonisolated private static func project(_ input: ProjectionInput, cache: [String: ReplyCache]) -> ProjectionResult {
         let messageIDs = Set(input.messages.map(\.id))
         var nextCache: [String: ReplyCache] = [:]
-        func rows(id: String, text: String, streaming: Bool, images: [CFLImageRef] = []) -> [CFLDisplayMessage] {
+        func rows(id: String, text: String, streaming: Bool, images: [CFLImageRef] = [], imageState: CFLImageState? = nil) -> [CFLDisplayMessage] {
             let source = CFLReplyPresentation.visibleSource(text, streaming: streaming)
             let chunks = cache[id].flatMap { $0.source == source ? $0.chunks : nil }
                 ?? CFLReplyPresentation.chunks(source)
@@ -295,32 +351,112 @@ final class CFLConversationModel: ObservableObject {
                 chunkImages[chunk.id] = ChunkImageState(targets: targets, revision: revision)
             }
             nextCache[id] = ReplyCache(source: source, chunks: chunks, imageSources: imageSources, chunkImages: chunkImages)
-            if chunks.isEmpty && !images.isEmpty {
-                return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: 0), text: "", outgoing: false, markdown: true, images: images, sessionRevision: input.revision, clientID: input.clientID)]
+            if chunks.isEmpty && (!images.isEmpty || imageState != nil) {
+                return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: 0), text: "", outgoing: false, markdown: true, images: images, sessionRevision: input.revision, clientID: input.clientID, imageState: imageState)]
             }
             return chunks.enumerated().map { index, chunk in
-                CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: chunk.id), text: chunk.text, outgoing: false, markdown: true, images: index == chunks.count - 1 ? images : [], sessionRevision: input.revision, clientID: input.clientID, markdownSources: imageSources, markdownSourcesRevision: chunkImages[chunk.id]?.revision ?? 0)
+                CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: id, offset: chunk.id), text: chunk.text, outgoing: false, markdown: true, images: index == chunks.count - 1 ? images : [], sessionRevision: input.revision, clientID: input.clientID, markdownSources: imageSources, markdownSourcesRevision: chunkImages[chunk.id]?.revision ?? 0, imageState: index == chunks.count - 1 ? imageState : nil)
             }
         }
-        let messages = input.messages.flatMap { message in
+        func messageRows(_ message: CFLMessage) -> [CFLDisplayMessage] {
+            let operation = message.operationId
+            if let operation, let source = input.pending.first(where: { $0.sessionId == input.session && $0.operationId == operation })?.retrySource,
+               input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }),
+               !input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == operation }) {
+                return []
+            }
+            if let voice = message.voice {
+                let audio = CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: -1), text: "", outgoing: false, markdown: false, images: [], sessionRevision: input.revision, clientID: input.clientID, voice: voice)
+                if message.text.isEmpty && (message.images?.isEmpty ?? true) { return [audio] }
+                if message.isReminder {
+                    return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: 0), text: message.text, outgoing: false, markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID, isReminder: true), audio]
+                }
+                if message.role == "agent" {
+                    return rows(id: message.id, text: message.text, streaming: false, images: message.images ?? []) + [audio]
+                }
+                return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: 0), text: message.text, outgoing: message.role == "user", markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID), audio]
+            }
             if message.isReminder {
                 return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: 0), text: message.text,
                                           outgoing: false, markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID, isReminder: true)]
             }
-            if message.role == "agent" { return rows(id: message.id, text: message.text, streaming: false, images: message.images ?? []) }
-            return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: 0), text: message.text,
-                                      outgoing: message.role == "user", markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID)]
+            if message.role == "agent" { return rows(id: message.id, text: message.text, streaming: message.textState == .streaming, images: message.images ?? [], imageState: message.imageState) }
+            let previews = input.previews.filter { preview in
+                preview.sessionId == input.session && preview.operationId == operation &&
+                    (message.images ?? []).contains(where: { $0.attachmentId == preview.attachmentId })
+            }
+            let rowID = previews.first.map { "local:\($0.originOperationId)" } ?? operation.map { "local:\($0)" } ?? message.id
+            return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: rowID, offset: 0), text: message.text,
+                                      outgoing: message.role == "user", markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID, previews: previews)]
+        }
+        var groups = input.messages.map { (source: Optional($0.id), rows: messageRows($0)) }.filter { !$0.rows.isEmpty }
+        let messageOperations = Set(input.messages.compactMap { message -> String? in
+            guard let operation = message.operationId else { return nil }
+            if let source = input.pending.first(where: { $0.sessionId == input.session && $0.operationId == operation })?.retrySource,
+               input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }),
+               !input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == operation }) { return nil }
+            return operation
+        })
+        var tails: [String: String] = [:]
+        func insert(_ row: CFLDisplayMessage, operation: String, source: String?) {
+            let observed = input.messages.firstIndex { $0.operationId == operation }
+            let anchor = input.anchors[operation]
+            let after = anchor?.after
+            var index = groups.count
+            if let observed {
+                for next in input.messages.dropFirst(observed + 1) {
+                    if let found = groups.firstIndex(where: { $0.source == next.id }) { index = found; break }
+                }
+            } else {
+                let key = after ?? ""
+                let previousMessage = anchor?.predecessor.flatMap { predecessor in
+                    input.messages.first(where: { $0.operationId == predecessor })?.id
+                }
+                let previousIndex = anchor?.predecessor.flatMap { predecessor in
+                    groups.firstIndex(where: { $0.source == "pending:\(predecessor)" || (previousMessage != nil && $0.source == previousMessage) })
+                } ?? -1
+                let tailIndex = tails[key].flatMap { tail in groups.firstIndex(where: { $0.source == tail }) } ?? -1
+                let afterIndex = after.flatMap { anchor in groups.firstIndex(where: { $0.source == anchor }) } ?? -1
+                let latest = max(previousIndex, tailIndex, afterIndex)
+                if latest >= 0 { index = latest + 1 }
+                else if anchor != nil && after == nil { index = 0 }
+                tails[key] = "pending:\(operation)"
+            }
+            groups.insert((source: source ?? "pending:\(operation)", rows: [row]), at: index)
+        }
+        for draft in input.drafts where draft.sessionId == input.session && !messageOperations.contains(draft.operationId) {
+            let row = CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: "local:\(draft.operationId)", offset: 0), text: draft.text, outgoing: true, markdown: false, images: [], sessionRevision: input.revision, clientID: input.clientID, previews: draft.images)
+            insert(row, operation: draft.operationId, source: nil)
+        }
+        let pendingRows = input.pending.filter { pending in
+            pending.sessionId == input.session && !messageOperations.contains(pending.operationId) &&
+                !input.drafts.contains(where: { $0.sessionId == pending.sessionId && $0.operationId == pending.operationId })
+        }
+        for pending in pendingRows {
+            let previews = input.previews.filter { $0.sessionId == input.session && $0.operationId == (pending.retrySource ?? pending.operationId) }.sorted { $0.order < $1.order }
+            let identity = previews.first?.originOperationId ?? pending.retrySource ?? pending.operationId
+            let row = CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: "local:\(identity)", offset: 0), text: pending.text, outgoing: true, markdown: false, images: pending.images ?? [], sessionRevision: input.revision, clientID: input.clientID, previews: previews, pending: pending)
+            insert(row, operation: pending.operationId, source: input.messages.first(where: { $0.operationId == pending.operationId })?.id)
         }
         let reply: [CFLDisplayMessage]
         if let streaming = input.reply, !messageIDs.contains(streaming.id) {
             reply = rows(id: streaming.id, text: streaming.text, streaming: true)
         } else { reply = [] }
-        return ProjectionResult(messages: messages, reply: reply, cache: nextCache)
+        return ProjectionResult(messages: groups.flatMap(\.rows), reply: reply, cache: nextCache)
     }
     @Published private(set) var visiblePending: [CFLPending] = []
     @Published private(set) var visibleMessages: [CFLDisplayMessage] = []
     @Published private(set) var visibleReply: [CFLDisplayMessage] = []
     @Published private(set) var hasUnknownPending = false
+    private func releaseUnusedPreviews() {
+        guard let client, let session = state.sessionId else { return }
+        let visible = Set(state.messages.compactMap(\.operationId))
+        let inFlight = Set(state.pending.filter { $0.sessionId == session }.flatMap { [$0.operationId, $0.retrySource].compactMap { $0 } })
+        let drafts = Set(state.localDrafts.filter { $0.sessionId == session }.map(\.operationId))
+        let unused = Set(state.localPreviews.filter { $0.sessionId == session && !visible.contains($0.operationId) && !inFlight.contains($0.operationId) && !drafts.contains($0.operationId) }.map(\.operationId))
+        guard !unused.isEmpty else { return }
+        Task { for operation in unused { await client.releasePreviews(sessionId: session, operationId: operation) } }
+    }
     @Published var busy = false
     @Published var notice: String?
     @Published private(set) var signInError: String?
@@ -510,6 +646,21 @@ final class CFLConversationModel: ObservableObject {
         }
     }
 
+    func voice(_ voice: CFLVoiceRef, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> Data {
+        guard imagePageActive, let context = imageContext,
+              isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),
+              let client else { throw CFLFailure.sessionChanged }
+        let pageRevision = imagePageRevision
+        do {
+            let data = try await client.voice(voice, expectedSessionId: context.session, expectedSessionRevision: context.revision)
+            guard !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context else { throw CFLFailure.sessionChanged }
+            return data
+        } catch {
+            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }
+            throw error
+        }
+    }
+
     func markdownImage(_ source: String, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> Data {
         guard imagePageActive, let context = imageContext,
               isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),
@@ -656,6 +807,7 @@ final class CFLConversationModel: ObservableObject {
         guard let client, !busy, !needsSignIn, uncertain == nil, !isPreparingImages,
               imagesBelongToCurrentSession, let context = imageContext else { return false }
         let captured = selectedImages
+        capturePendingAnchor(session: context.session)
         busy = true
         defer { busy = false }
         notice = nil
@@ -665,15 +817,22 @@ final class CFLConversationModel: ObservableObject {
             removeCapturedImages(captured.map(\.id))
             return imageContext == context
         } catch let error as CFLPendingStorageUncertain {
+            nextSendAnchor = nil
             uncertain = error.pending
             uncertainImageIDs = captured.map(\.id)
             uncertainDraftRevision = capturedRevision
             notice = NSLocalizedString("无法确认内容是否已保存在本机。请先检查保存状态。", comment: "CFL uncertain storage")
         } catch {
+            nextSendAnchor = nil
             if imageContext == context { recordAuthorizationFailure(error) }
             notice = message(for: error)
         }
         return false
+    }
+
+    func capturePendingAnchor(session: String) {
+        nextSendAnchor = PendingAnchor(session: session, after: state.messages.last?.id,
+                                       predecessor: state.pending.last(where: { $0.sessionId == session })?.operationId)
     }
 
     func retryConnection() async {
@@ -716,6 +875,24 @@ final class CFLConversationModel: ObservableObject {
         busy = true
         defer { busy = false }
         do { try await client.loadEarlier() } catch { notice = message(for: error) }
+    }
+
+    func retryHistory() async {
+        guard let client else { return }
+        await client.retryHistory()
+    }
+
+    func retry(_ pending: CFLPending) async {
+        guard let client, !busy, uncertain == nil, pending.sessionId == state.sessionId else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await client.retryFailed(sessionId: pending.sessionId, operationId: pending.operationId,
+                                             expectedSessionRevision: state.sessionRevision)
+        } catch let error as CFLPendingStorageUncertain {
+            uncertain = error.pending
+            notice = NSLocalizedString("无法确认内容是否已保存在本机。请先检查保存状态。", comment: "CFL uncertain storage")
+        } catch { notice = message(for: error) }
     }
 
     private func removeCapturedImages(_ ids: [UUID]) {
@@ -804,6 +981,7 @@ struct CFLConversationView: View {
     let openSettings: () -> Void
     @ObservedObject private var config = AppConfigStore.shared
     @ObservedObject private var draft = AppConfigStore.shared.composerDraftState
+    @StateObject private var voicePlayer = CFLVoicePlayer()
     @State private var pendingRemoval: CFLPending?
     @State private var sendFlightController = ChatSendFlightController()
     @State private var keepsBottomPinned = true
@@ -869,7 +1047,14 @@ struct CFLConversationView: View {
                                         .disabled(model.busy)
                                         .frame(maxWidth: .infinity)
                                 }
-                                if model.state.messages.isEmpty && model.state.connection == .online {
+                                if model.state.historySyncFailed {
+                                    HStack {
+                                        Text(NSLocalizedString("历史", comment: "History"))
+                                        Button(NSLocalizedString("重试", comment: "Retry")) { Task { await model.retryHistory() } }
+                                    }.font(.caption)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                if model.state.messages.isEmpty && model.state.localDrafts.isEmpty && model.state.pending.isEmpty && model.state.connection == .online {
                                     Text(NSLocalizedString("还没有消息。", comment: "CFL empty chat"))
                                         .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding()
                                 }
@@ -882,11 +1067,12 @@ struct CFLConversationView: View {
                                                              revision: message.sessionRevision, clientID: message.clientID)
                                         }
                                     } else {
-                                        CFLNativeMessageBubble(item: message, model: model)
+                                        CFLNativeMessageBubble(item: message, model: model, voicePlayer: voicePlayer)
                                     }
+                                    if let pending = message.pending { pendingRow(pending, showsContent: false) }
                                 }
                                 ForEach(model.visibleReply) { reply in
-                                    CFLNativeMessageBubble(item: reply, model: model)
+                                    CFLNativeMessageBubble(item: reply, model: model, voicePlayer: voicePlayer)
                                 }
                                 if model.state.connection == .online, let turn = model.state.activeTurnId,
                                    model.state.replyCompletedTurnId != turn {
@@ -955,8 +1141,12 @@ struct CFLConversationView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { Task { await config.flushPendingWrites() } }
         }
+        .onChange(of: model.imageContext) { _, _ in voicePlayer.stop() }
+        .onChange(of: model.imagePageActive) { _, active in
+            if !active { voicePlayer.stop() }
+        }
         .onAppear { model.pageDidAppear() }
-        .onDisappear { model.pageDidDisappear() }
+        .onDisappear { model.pageDidDisappear(); voicePlayer.stop() }
     }
 
     private var navigationBar: some View {
@@ -1045,6 +1235,8 @@ struct CFLConversationView: View {
             sendAction: {
                 let captured = draft.text
                 let capturedRevision = model.draftRevision
+                keepsBottomPinned = true
+                scrollToBottomRevision += 1
                 Task {
                     if await model.send(captured, draftRevision: capturedRevision) {
                         if model.draftRevision == capturedRevision && draft.text == captured { config.chatComposerDraft = "" }
@@ -1079,10 +1271,10 @@ struct CFLConversationView: View {
         )
     }
 
-    private func pendingRow(_ item: CFLPending) -> some View {
+    private func pendingRow(_ item: CFLPending, showsContent: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.text).textSelection(.enabled)
-            if let images = item.images, !images.isEmpty {
+            if showsContent { Text(item.text).textSelection(.enabled) }
+            if showsContent, let images = item.images, !images.isEmpty {
                 Text(String(format: NSLocalizedString("包含 %d 张图片", comment: "Pending images"), images.count))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -1091,6 +1283,10 @@ struct CFLConversationView: View {
                 Text(NSLocalizedString("属于其他会话", comment: "CFL other session")).font(.caption).foregroundStyle(.secondary)
             }
             if item.status == .failed || (item.status == .unknown && !item.dispatched) {
+                if item.status == .failed && item.dispatched && item.sessionId == model.state.sessionId {
+                    Button(NSLocalizedString("重试", comment: "Retry")) { Task { await model.retry(item) } }
+                        .font(.caption).disabled(model.busy || model.uncertain != nil || model.state.connection != .online)
+                }
                 if item.images?.isEmpty == false {
                     Button(NSLocalizedString("恢复到输入框", comment: "Recover image draft")) {
                         if draft.text.isEmpty && model.selectedImages.isEmpty {

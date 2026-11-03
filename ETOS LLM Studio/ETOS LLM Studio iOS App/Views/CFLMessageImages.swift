@@ -7,6 +7,7 @@ import ETOSCore
 /// Displays every server-provided image, including image-only assistant messages.
 struct CFLMessageImages: View {
     let images: [CFLImageRef]
+    var previews: [CFLLocalImagePreview] = []
     let outgoing: Bool
     @ObservedObject var model: CFLConversationModel
     let target: String?
@@ -14,22 +15,38 @@ struct CFLMessageImages: View {
     let revision: Int
     let clientID: UUID
 
+    private var items: [CFLPresentedImage] {
+        if images.isEmpty {
+            return previews.sorted { $0.order < $1.order }.map { CFLPresentedImage(id: $0.draftId, ref: nil, preview: $0.data) }
+        }
+        return images.map { ref in
+            let preview = previews.first { $0.attachmentId == ref.attachmentId }
+            return CFLPresentedImage(id: preview?.draftId ?? ref.attachmentId, ref: ref, preview: preview?.data)
+        }
+    }
+
     var body: some View {
         HStack {
             if outgoing { Spacer(minLength: 40) }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: min(images.count, 3)), spacing: 4) {
-                ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: min(items.count, 3)), spacing: 4) {
+                ForEach(items) { image in
                     CFLMessageImage(image: image, model: model, target: target, session: session, revision: revision, clientID: clientID)
                 }
             }
-            .frame(maxWidth: images.count == 1 ? 180 : 260)
+            .frame(maxWidth: items.count == 1 ? 180 : 260)
             if !outgoing { Spacer(minLength: 40) }
         }
     }
 }
 
+private struct CFLPresentedImage: Identifiable {
+    let id: String
+    let ref: CFLImageRef?
+    let preview: Data?
+}
+
 private struct CFLMessageImage: View {
-    let image: CFLImageRef
+    let image: CFLPresentedImage
     @ObservedObject var model: CFLConversationModel
     let target: String?
     let session: String?
@@ -65,8 +82,8 @@ private struct CFLMessageImage: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(image.name)
-        .task(id: "\(clientID)|\(target ?? "")|\(session ?? "")|\(revision)|\(model.imagePageRevision)|\(model.imagePageActive)|\(image.attachmentId)|\(attempt)") { await loadThumbnail() }
+        .accessibilityLabel(image.ref?.name ?? NSLocalizedString("图片", comment: "Image"))
+        .task(id: "\(clientID)|\(target ?? "")|\(session ?? "")|\(revision)|\(model.imagePageRevision)|\(model.imagePageActive)|\(image.id)|\(image.preview != nil)|\(attempt)") { await loadThumbnail() }
         .sheet(isPresented: $showingOriginal) {
             CFLOriginalImage(image: image, model: model, target: target, session: session, revision: revision, clientID: clientID)
         }
@@ -78,7 +95,10 @@ private struct CFLMessageImage: View {
         thumbnail = nil
         failed = false
         do {
-            let data = try await model.media(image, target: target, session: session, revision: revision, clientID: clientID)
+            let data: Data
+            if let preview = image.preview { data = preview }
+            else if let ref = image.ref { data = try await model.media(ref, target: target, session: session, revision: revision, clientID: clientID) }
+            else { failed = true; return }
             let decoded = await Task.detached(priority: .userInitiated) {
                 Self.thumbnail(data)
             }.value
@@ -105,7 +125,7 @@ private struct CFLMessageImage: View {
 }
 
 private struct CFLOriginalImage: View {
-    let image: CFLImageRef
+    let image: CFLPresentedImage
     @ObservedObject var model: CFLConversationModel
     let target: String?
     let session: String?
@@ -154,7 +174,10 @@ private struct CFLOriginalImage: View {
             let pageRevision = model.imagePageRevision
             failed = false
             do {
-                let data = try await model.media(image, target: target, session: session, revision: revision, clientID: clientID, original: true)
+                let data: Data
+                if let ref = image.ref { data = try await model.media(ref, target: target, session: session, revision: revision, clientID: clientID, original: true) }
+                else if let preview = image.preview { data = preview }
+                else { failed = true; return }
                 let result = await Task.detached(priority: .userInitiated) { UIImage(data: data) }.value
                 guard !Task.isCancelled, model.imagePageActive, model.imagePageRevision == pageRevision,
                       model.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { return }

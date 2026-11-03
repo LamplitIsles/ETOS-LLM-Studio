@@ -69,8 +69,30 @@ public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public let operationId: String?
     public let turnId: String?
     public let images: [CFLImageRef]?
+    public let imageState: CFLImageState?
+    public let textState: CFLTextState?
+    public let voice: CFLVoiceRef?
     public let source: CFLMessageSource?
     public var isReminder: Bool { source?.kind == "reminder" }
+    var valid: Bool {
+        guard !id.isEmpty, ["user", "agent", "notice"].contains(role), createdAt.isFinite,
+              images?.allSatisfy(\.valid) ?? true, voice?.valid ?? true else { return false }
+        if let imageState {
+            guard role == "agent" else { return false }
+            if imageState == .ready { return images?.count == 1 && images?.first?.availability == "available" }
+            return images == nil
+        }
+        return true
+    }
+}
+public enum CFLImageState: String, Codable, Equatable, Sendable { case preparing, ready, failed, unknown }
+public enum CFLTextState: String, Codable, Equatable, Sendable { case streaming, complete }
+public struct CFLVoiceRef: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public init(id: String) { self.id = id }
+    var valid: Bool {
+        id.utf8.count == 64 && id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
 }
 public struct CFLMessageSource: Codable, Equatable, Sendable {
     public let kind: String?
@@ -86,11 +108,23 @@ public struct CFLImageRef: Codable, Equatable, Sendable, Identifiable {
     public let name: String
     public let mediaType: String
     public let availability: String
+    public let sticker: CFLStickerIdentity?
+    public init(attachmentId: String, name: String, mediaType: String, availability: String, sticker: CFLStickerIdentity? = nil) {
+        self.attachmentId = attachmentId; self.name = name; self.mediaType = mediaType; self.availability = availability; self.sticker = sticker
+    }
     var valid: Bool {
         !attachmentId.isEmpty && attachmentId.utf8.count <= 100 && attachmentId.utf8.allSatisfy {
             (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
         } && !name.isEmpty && name.utf16.count <= 200 && CFLImageLimits.types.contains(mediaType)
-            && ["available", "missing"].contains(availability)
+            && ["available", "missing"].contains(availability) && (sticker?.valid ?? true)
+    }
+}
+public struct CFLStickerIdentity: Codable, Equatable, Sendable {
+    public let id: String, version: String
+    var valid: Bool {
+        !id.isEmpty && id.utf8.count <= 100 && id.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+        } && CFLVoiceRef(id: version).valid
     }
 }
 public struct CFLImageLimits: Codable, Equatable, Sendable {
@@ -164,6 +198,13 @@ struct CFLReceipt: Decodable, Sendable {
     let messageId: String?
     let turnId: String?
     let error: String?
+    let retryImages: CFLRetryImageMapping?
+}
+struct CFLRetryImageMapping: Decodable, Sendable {
+    struct Item: Decodable, Sendable { let sourceAttachmentId: String; let ref: CFLImageRef }
+    let sessionId: String
+    let sourceOperationId: String
+    let images: [Item]
 }
 public enum CFLConnection: Equatable, Sendable { case offline, connecting, online, accessDenied, protocolError }
 public enum CFLFailure: Error, Equatable, Sendable { case offline, accessDenied, invalidInput, storage, protocolError, requestFailed, sessionChanged }
@@ -200,6 +241,23 @@ public struct CFLPending: Codable, Equatable, Sendable, Identifiable {
     public var status: CFLPendingStatus
     /// Nil for existing text-only records. Never contains image bytes.
     public var images: [CFLImageRef]? = nil
+    /// A manually retried failed operation; operationId is the new attempt.
+    public var retrySource: String? = nil
+}
+public struct CFLLocalImageIdentity: Hashable, Sendable {
+    public let sessionId: String, originOperationId: String, draftId: String
+}
+public struct CFLLocalImagePreview: Equatable, Sendable, Identifiable {
+    public var id: CFLLocalImageIdentity { CFLLocalImageIdentity(sessionId: sessionId, originOperationId: originOperationId, draftId: draftId) }
+    public let sessionId: String, operationId: String, originOperationId: String, draftId: String
+    public let order: Int
+    public let attachmentId: String?
+    public let data: Data
+}
+public struct CFLLocalDraft: Equatable, Sendable, Identifiable {
+    public var id: String { operationId }
+    public let sessionId: String, operationId: String, text: String
+    public let images: [CFLLocalImagePreview]
 }
 /// The first save failed and its outcome could not be read back. No submit was dispatched.
 /// Preserve the input and identity until the pending store can be read again.
@@ -224,6 +282,11 @@ public struct CFLChatState: Sendable {
     public var pending: [CFLPending] = []
     /// Records belonging to other targets; switch back to their origin to reconcile or dismiss.
     public var otherTargetPending: [CFLPending] = []
+    /// Ephemeral upload-in-progress messages; never persisted.
+    public var localDrafts: [CFLLocalDraft] = []
+    /// Validated preview associations, retained until explicitly released.
+    public var localPreviews: [CFLLocalImagePreview] = []
+    public var historySyncFailed = false
     public var error: CFLFailure?
     public init() {}
 }

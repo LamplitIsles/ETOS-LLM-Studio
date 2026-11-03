@@ -8680,3 +8680,11 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 "CFL认证需要重新登录" = "Vuelve a iniciar sesión";
 "CFL认证无法保存" = "No se pudieron guardar las credenciales";
 "CFL认证暂时不可用" = "El inicio de sesión no está disponible";
+
+"语音进度" = "Progreso del mensaje de voz";
+"暂停语音" = "Pausar mensaje de voz";
+"重试播放语音" = "Reintentar la reproducción del mensaje de voz";
+"播放语音" = "Reproducir mensaje de voz";
+
+"图片生成失败" = "No se pudo generar la imagen";
+"图片状态未确认" = "Estado de la imagen sin confirmar";

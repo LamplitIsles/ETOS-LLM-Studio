@@ -8680,3 +8680,11 @@ If seulement le Archiver state changes, Aucun re-embedding est performed.";
 "CFL认证需要重新登录" = "Veuillez vous reconnecter";
 "CFL认证无法保存" = "Impossible d’enregistrer les identifiants";
 "CFL认证暂时不可用" = "Connexion temporairement indisponible";
+
+"语音进度" = "Progression du message vocal";
+"暂停语音" = "Mettre le message vocal en pause";
+"重试播放语音" = "Réessayer la lecture du message vocal";
+"播放语音" = "Lire le message vocal";
+
+"图片生成失败" = "Échec de la génération de l’image";
+"图片状态未确认" = "État de l’image non confirmé";
