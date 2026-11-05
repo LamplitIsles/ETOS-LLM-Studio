@@ -72,6 +72,16 @@ struct CFLTimelineRowsTests {
         }
     }
 
+    @Test("Embedded interface height is bounded by the native viewport")
+    func interfaceHeight() throws {
+        let short = try #require(CFLA2UIBridgePolicy.displayHeight(150.2, viewport: 600))
+        #expect(short.height == 151 && !short.scroll)
+        let tall = try #require(CFLA2UIBridgePolicy.displayHeight(900, viewport: 600))
+        #expect(tall.height == 600 && tall.scroll)
+        #expect(CFLA2UIBridgePolicy.displayHeight(.infinity, viewport: 600)?.height == nil)
+        #expect(CFLA2UIBridgePolicy.displayHeight(10_001, viewport: 600)?.height == nil)
+    }
+
     @Test("File rows retain their identity and show attachment metadata")
     func fileRowPresentation() {
         let client = UUID()

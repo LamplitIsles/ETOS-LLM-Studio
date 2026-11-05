@@ -7,6 +7,12 @@ import WebKit
 import ETOSCore
 
 enum CFLA2UIBridgePolicy {
+    static func displayHeight(_ value: Double, viewport: Double) -> (height: CGFloat, scroll: Bool)? {
+        guard value.isFinite, value > 0, value <= 10_000, viewport.isFinite, viewport > 0 else { return nil }
+        let limit = min(viewport, 1_200)
+        return (CGFloat(min(max(28, ceil(value)), limit)), value > limit)
+    }
+
     static func mediaPath(_ url: URL) -> String? {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               parts.scheme == "cfl-media", parts.host == "load", parts.user == nil, parts.password == nil,
@@ -117,6 +123,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
         private var page: URL?
         private var payload: CFLJSONValue?
         private var options: [String: Any] = [:]
+        private var viewportHeight: Double = 0
         private var ready = false
         private var stopped = false
 
@@ -130,6 +137,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
                 || (options["locale"] as? String) != locale || (options["fontScale"] as? Double) != fontScale
                 || (options["viewportHeight"] as? Double) != Double(viewportHeight)
             self.payload = payload
+            self.viewportHeight = Double(viewportHeight)
             options = ["dark": dark, "locale": locale, "fontScale": fontScale, "viewportHeight": Double(viewportHeight)]
             if pageChanged {
                 self.page = page; ready = false
@@ -154,9 +162,9 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             } else if message.name == "a2uiHeight", let number = message.body as? NSNumber,
                       CFGetTypeID(number) != CFBooleanGetTypeID() {
                 let value = number.doubleValue
-                guard value.isFinite, value > 0, value <= 10_000 else { fail(); return }
-                let next = max(28, ceil(value))
-                if abs(height - next) > 0.5 { height = next }
+                guard let size = CFLA2UIBridgePolicy.displayHeight(value, viewport: viewportHeight) else { fail(); return }
+                webView.scrollView.isScrollEnabled = size.scroll
+                if abs(height - size.height) > 0.5 { height = size.height }
             }
         }
 
