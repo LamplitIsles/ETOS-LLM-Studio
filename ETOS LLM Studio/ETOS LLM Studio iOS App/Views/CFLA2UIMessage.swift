@@ -141,7 +141,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             guard ready, !stopped, let webView, let payload,
                   let data = try? JSONEncoder().encode(payload),
                   let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return }
-            webView.callAsyncJavaScript("window.a2uiHost.show(payload, options)", arguments: ["payload": value, "options": options], in: nil, contentWorld: .page) { [weak self] result in
+            webView.callAsyncJavaScript("window.a2uiHost.show(payload, options)", arguments: ["payload": value, "options": options], in: nil, in: .page) { [weak self] result in
                 if case .failure = result { self?.fail() }
             }
         }
@@ -154,7 +154,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             } else if message.name == "a2uiHeight", let number = message.body as? NSNumber,
                       CFGetTypeID(number) != CFBooleanGetTypeID() {
                 let value = number.doubleValue
-                guard value.isFinite, value > 0, value <= 10_000 else { return }
+                guard value.isFinite, value > 0, value <= 10_000 else { fail(); return }
                 let next = max(28, ceil(value))
                 if abs(height - next) > 0.5 { height = next }
             }
