@@ -6,19 +6,21 @@ import shutil
 import subprocess
 import sys
 
+project_root = Path(__file__).resolve().parent.parent
 root = Path('/tmp/etos-cfl-4960-check')
 root.mkdir(mode=0o700)  # Fail if anything already exists; never remove someone else's files.
 try:
     executable = root / 'cfl-check'
     sources = [
         'ETOSCore/ETOSCore/CFLChat/ChordState.swift',
+        'ETOSCore/ETOSCore/CFLChat/CFLAuthorization.swift',
         'ETOSCore/ETOSCore/CFLChat/CFLChatModels.swift',
         'ETOSCore/ETOSCore/CFLChat/CFLChatTransport.swift',
         'ETOSCore/ETOSCore/CFLChat/CFLChatClient.swift',
         'swiftpm/RuntimeTests/CFLChatChecks.swift',
     ]
     environment = dict(os.environ, ETOS_CFL_TEST_ROOT=str(root), TMPDIR=str(root))
-    subprocess.run(['swiftc', '-module-cache-path', str(root / 'module-cache'), *sources, '-o', str(executable)], check=True, env=environment)
-    subprocess.run([str(executable)], check=True, env=environment)
+    subprocess.run(['swiftc', '-module-cache-path', str(root / 'module-cache'), *sources, '-o', str(executable)], check=True, env=environment, cwd=project_root)
+    subprocess.run([str(executable), *sys.argv[1:]], check=True, env=environment, cwd=project_root)
 finally:
     shutil.rmtree(root)

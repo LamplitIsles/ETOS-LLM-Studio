@@ -149,7 +149,7 @@ extension TelegramMessageComposer {
                 .contentShape(Rectangle())
         }
         .buttonStyle(ComposerPressButtonStyle())
-        .disabled(isPreparingImages)
+        .disabled(isPreparingAttachments)
         .accessibilityLabel(NSLocalizedString("开始语音输入", comment: ""))
     }
 

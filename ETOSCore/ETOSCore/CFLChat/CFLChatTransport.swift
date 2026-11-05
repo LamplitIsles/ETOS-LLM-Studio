@@ -36,6 +36,131 @@ public final class CFLWebSocketTransport: CFLChatTransport, @unchecked Sendable 
 /// follow redirects; tests can inject an in-memory implementation.
 public protocol CFLImageHTTP: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
+    /// Must stop reading once the limit is exceeded and must not follow redirects.
+    /// 401/403 bodies must not prevent the authorization wrapper inspecting status.
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse)
+    /// Uploads directly from a stable, app-owned file and bounds the response.
+    func uploadFile(for request: URLRequest, from file: URL, maximumResponseBytes: Int) async throws -> (Data, URLResponse)
+    /// The destination must already be an exclusive, caller-owned empty file.
+    func downloadFile(for request: URLRequest, to destination: URL, maximumBytes: Int) async throws -> URLResponse
+}
+public extension CFLImageHTTP {
+    /// Existing custom transports fail closed until they implement bounded reads.
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        throw CFLFailure.requestFailed
+    }
+    func uploadFile(for request: URLRequest, from file: URL, maximumResponseBytes: Int) async throws -> (Data, URLResponse) {
+        throw CFLFailure.requestFailed
+    }
+    func downloadFile(for request: URLRequest, to destination: URL, maximumBytes: Int) async throws -> URLResponse {
+        throw CFLFailure.requestFailed
+    }
+}
+
+/// Shared by the streaming delegate and fake tests; never retains over the limit.
+struct CFLBoundedDataBuffer {
+    private(set) var data = Data()
+    let maximumBytes: Int
+    init(maximumBytes: Int) { self.maximumBytes = maximumBytes }
+    mutating func append(_ chunk: Data) throws {
+        guard maximumBytes >= 0, chunk.count <= maximumBytes - data.count else { throw CFLFailure.protocolError }
+        data.append(chunk)
+    }
+}
+
+/// One request per delegate. Headers and chunks arrive on a serial delegate queue;
+/// cancellation is synchronized with completion so the continuation resumes once.
+final class CFLBoundedTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<(Data, URLResponse), Error>?
+    private var task: URLSessionDataTask?
+    private var session: URLSession?
+    private var cancelled = false
+    private var response: URLResponse?
+    private var buffer: CFLBoundedDataBuffer
+    private let destination: URL?
+    private var output: FileHandle?
+    private var written = 0
+    private let configuration: URLSessionConfiguration?
+    init(maximumBytes: Int, configuration: URLSessionConfiguration?, destination: URL? = nil) {
+        buffer = CFLBoundedDataBuffer(maximumBytes: maximumBytes); self.configuration = configuration; self.destination = destination
+    }
+
+    func run(_ request: URLRequest, uploadFile: URL? = nil) async throws -> (Data, URLResponse) {
+        try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                let config = configuration ?? URLSessionConfiguration.ephemeral
+                config.httpCookieStorage = nil; config.urlCache = nil
+                let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
+                let session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
+                let task: URLSessionDataTask
+                if let uploadFile { task = session.uploadTask(with: request, fromFile: uploadFile) }
+                else { task = session.dataTask(with: request) }
+                lock.lock()
+                if cancelled {
+                    lock.unlock(); session.invalidateAndCancel()
+                    continuation.resume(throwing: CancellationError()); return
+                }
+                self.continuation = continuation; self.session = session; self.task = task
+                lock.unlock()
+                task.resume()
+            }
+        }, onCancel: { self.cancel() })
+    }
+    private func cancel() {
+        lock.lock(); cancelled = true; lock.unlock()
+        finish(.failure(CancellationError()))
+    }
+    private func finish(_ result: Result<(Data, URLResponse), Error>) {
+        lock.lock()
+        let continuation = self.continuation, session = self.session
+        self.continuation = nil; self.session = nil; self.task = nil
+        lock.unlock()
+        guard let continuation else { return }
+        session?.invalidateAndCancel()
+        continuation.resume(with: result)
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let http = response as? HTTPURLResponse else {
+            completionHandler(.cancel); finish(.failure(CFLFailure.protocolError)); return
+        }
+        // The authorization wrapper must still inspect 401/403; other failure
+        // bodies are irrelevant and must not consume the file's byte budget.
+        guard (200...299).contains(http.statusCode) else {
+            completionHandler(.cancel); finish(.success((Data(), response))); return
+        }
+        guard response.expectedContentLength < 0 || response.expectedContentLength <= Int64(buffer.maximumBytes) else {
+            completionHandler(.cancel); finish(.failure(CFLFailure.protocolError)); return
+        }
+        if let destination {
+            do { output = try FileHandle(forWritingTo: destination) }
+            catch { completionHandler(.cancel); finish(.failure(error)); return }
+        }
+        self.response = response
+        completionHandler(.allow)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        // A transport may have already queued body callbacks when an error
+        // response is cancelled. Only successful responses may reach a sink.
+        guard response != nil else { return }
+        do {
+            if let output {
+                guard data.count <= buffer.maximumBytes - written else { throw CFLFailure.protocolError }
+                try output.write(contentsOf: data); written += data.count
+            } else { try buffer.append(data) }
+        } catch { finish(.failure(error)) }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let output { do { try output.close() } catch { finish(.failure(error)); return }; self.output = nil }
+        if let error { finish(.failure(error)); return }
+        guard let response else { finish(.failure(CFLFailure.protocolError)); return }
+        finish(.success((buffer.data, response)))
+    }
 }
 
 private final class CFLImageRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -48,15 +173,32 @@ private final class CFLImageRedirectDelegate: NSObject, URLSessionTaskDelegate, 
 public final class CFLImageURLSession: CFLImageHTTP, @unchecked Sendable {
     public static let shared = CFLImageURLSession()
     private let session: URLSession
+    private let boundedConfiguration: URLSessionConfiguration?
     private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil; config.urlCache = nil
         return URLSession(configuration: config, delegate: CFLImageRedirectDelegate(), delegateQueue: nil)
     }
     public static let socketSession = makeSession()
-    public init() { session = Self.makeSession() }
+    public init() { session = Self.makeSession(); boundedConfiguration = nil }
+    // Injected only by isolated URLProtocol tests.
+    init(boundedConfiguration: URLSessionConfiguration) {
+        session = Self.makeSession(); self.boundedConfiguration = boundedConfiguration
+    }
     public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         try await session.data(for: request)
+    }
+    public func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        guard maximumBytes >= 0 else { throw CFLFailure.invalidInput }
+        return try await CFLBoundedTransfer(maximumBytes: maximumBytes, configuration: boundedConfiguration).run(request)
+    }
+    public func uploadFile(for request: URLRequest, from file: URL, maximumResponseBytes: Int) async throws -> (Data, URLResponse) {
+        guard file.isFileURL, maximumResponseBytes >= 0 else { throw CFLFailure.invalidInput }
+        return try await CFLBoundedTransfer(maximumBytes: maximumResponseBytes, configuration: boundedConfiguration).run(request, uploadFile: file)
+    }
+    public func downloadFile(for request: URLRequest, to destination: URL, maximumBytes: Int) async throws -> URLResponse {
+        guard destination.isFileURL, maximumBytes >= 0 else { throw CFLFailure.invalidInput }
+        return try await CFLBoundedTransfer(maximumBytes: maximumBytes, configuration: boundedConfiguration, destination: destination).run(request).1
     }
 }
 
@@ -226,6 +368,21 @@ public struct CFLAuthorizedHTTP: CFLImageHTTP, CFLStickerCacheAuthority {
         catch { throw CFLFailure.offline }
     }
     public func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await perform(request, maximumBytes: nil)
+    }
+    public func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        guard maximumBytes >= 0 else { throw CFLFailure.invalidInput }
+        return try await perform(request, maximumBytes: maximumBytes)
+    }
+    public func uploadFile(for request: URLRequest, from file: URL, maximumResponseBytes: Int) async throws -> (Data, URLResponse) {
+        guard file.isFileURL, maximumResponseBytes >= 0 else { throw CFLFailure.invalidInput }
+        return try await perform(request, maximumBytes: maximumResponseBytes, uploadFile: file)
+    }
+    public func downloadFile(for request: URLRequest, to destination: URL, maximumBytes: Int) async throws -> URLResponse {
+        guard destination.isFileURL, maximumBytes >= 0 else { throw CFLFailure.invalidInput }
+        return try await perform(request, maximumBytes: maximumBytes, downloadFile: destination).1
+    }
+    private func perform(_ request: URLRequest, maximumBytes: Int?, uploadFile: URL? = nil, downloadFile: URL? = nil) async throws -> (Data, URLResponse) {
         let authorized: URLRequest
         do { authorized = try await authorization.authenticatedRequest(request) }
         catch CFLAuthorizationError.authorizationRequired {
@@ -236,7 +393,11 @@ public struct CFLAuthorizedHTTP: CFLImageHTTP, CFLStickerCacheAuthority {
         }
         catch CFLAuthorizationError.storage { throw CFLFailure.storage }
         catch { throw CFLFailure.offline }
-        let result = try await http.data(for: authorized)
+        let result: (Data, URLResponse)
+        if let uploadFile, let maximumBytes { result = try await http.uploadFile(for: authorized, from: uploadFile, maximumResponseBytes: maximumBytes) }
+        else if let downloadFile, let maximumBytes { result = (Data(), try await http.downloadFile(for: authorized, to: downloadFile, maximumBytes: maximumBytes)) }
+        else if let maximumBytes { result = try await http.boundedData(for: authorized, maximumBytes: maximumBytes) }
+        else { result = try await http.data(for: authorized) }
         if let response = result.1 as? HTTPURLResponse, response.statusCode == 401 || response.statusCode == 403 {
             // A thumbnail-specific 403 is a resource read failure; preserve it
             // for the caller without treating it as confirmed login loss.

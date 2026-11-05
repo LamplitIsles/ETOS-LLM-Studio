@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 #if canImport(ImageIO)
 import ImageIO
 import CoreGraphics
@@ -71,6 +74,7 @@ public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public let operationId: String?
     public let turnId: String?
     public let images: [CFLImageRef]?
+    public let files: [CFLFileRef]?
     public let imageState: CFLImageState?
     public let textState: CFLTextState?
     public let voice: CFLVoiceRef?
@@ -78,7 +82,7 @@ public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public var isReminder: Bool { source?.kind == "reminder" }
     var valid: Bool {
         guard !id.isEmpty, ["user", "agent", "notice"].contains(role), createdAt.isFinite,
-              images?.allSatisfy(\.valid) ?? true, voice?.valid ?? true else { return false }
+              images?.allSatisfy(\.valid) ?? true, files?.allSatisfy(\.valid) ?? true, voice?.valid ?? true else { return false }
         if let imageState {
             guard role == "agent" else { return false }
             if imageState == .ready { return images?.count == 1 && images?.first?.availability == "available" }
@@ -120,6 +124,57 @@ public struct CFLImageRef: Codable, Equatable, Sendable, Identifiable {
         } && !name.isEmpty && name.utf16.count <= 200 && CFLImageLimits.types.contains(mediaType)
             && ["available", "missing"].contains(availability) && (sticker?.valid ?? true)
     }
+}
+/// File metadata is untrusted; never use it as a path or HTTP header.
+public struct CFLFileRef: Codable, Equatable, Sendable, Identifiable {
+    public var id: String { attachmentId }
+    public let attachmentId: String, name: String, mediaType: String
+    public let size: Int
+    public let availability: String
+    public init(attachmentId: String, name: String, mediaType: String, size: Int, availability: String) {
+        self.attachmentId = attachmentId; self.name = name; self.mediaType = mediaType
+        self.size = size; self.availability = availability
+    }
+    var valid: Bool {
+        !attachmentId.isEmpty && attachmentId.utf8.count <= 100 && attachmentId.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+        } && (1...200).contains(name.unicodeScalars.count) && mediaType.unicodeScalars.count <= 255
+            && (0...100_000_000).contains(size) && ["available", "missing"].contains(availability)
+    }
+}
+public struct CFLFileLimits: Codable, Equatable, Sendable {
+    public let maxFilesPerMessage: Int, maxFileBytes: Int, maxMessageFileBytes: Int
+    var valid: Bool {
+        (1...6).contains(maxFilesPerMessage) && (1...100_000_000).contains(maxFileBytes) && (1...200_000_000).contains(maxMessageFileBytes)
+    }
+}
+/// File-backed draft; callers retain the snapshot if staging fails.
+public struct CFLPreparedFile: Sendable {
+    public let id: String, name: String, mediaType: String
+    public let size: Int
+    public let ownedFileURL: URL
+    public let sha256: String
+    init(id: String, name: String, mediaType: String, ownedFile: URL, size: Int, sha256: String) {
+        self.id = id; self.name = name; self.mediaType = mediaType
+        self.size = size; self.ownedFileURL = ownedFile; self.sha256 = sha256
+    }
+}
+struct CFLFileStagingStatus: Sendable {
+    let uploaded: [String]
+    let files: [CFLFileRef]?
+}
+/// Upload may have reached the server; no message was submitted. The user can
+/// explicitly select files again for a new operation.
+public struct CFLFileStagingUncertain: Error, Sendable {
+    public let sessionId: String, operationId: String
+}
+/// The remote file operation was permanently retired.
+public struct CFLFileOperationRetired: Error, Sendable { public init() {} }
+public struct CFLInputRecovery: Codable, Equatable, Sendable {
+    public let sourceId: String, operationId: String, text: String
+    public let images: [CFLImageRef]
+    public let files: [CFLFileRef]?
+    public let replacementEligible: Bool
 }
 public struct CFLStickerIdentity: Codable, Equatable, Sendable {
     public let id: String, version: String
@@ -277,12 +332,18 @@ struct CFLReceipt: Decodable, Sendable {
     let turnId: String?
     let error: String?
     let retryImages: CFLRetryImageMapping?
+    let retryFiles: CFLRetryFileMapping?
 }
 struct CFLRetryImageMapping: Decodable, Sendable {
     struct Item: Decodable, Sendable { let sourceAttachmentId: String; let ref: CFLImageRef }
     let sessionId: String
     let sourceOperationId: String
     let images: [Item]
+}
+struct CFLRetryFileMapping: Decodable, Sendable {
+    struct Item: Decodable, Sendable { let sourceAttachmentId: String; let ref: CFLFileRef }
+    let sessionId: String, sourceOperationId: String
+    let files: [Item]
 }
 public enum CFLConnection: Equatable, Sendable { case offline, connecting, online, accessDenied, protocolError }
 /// The supplied directory item is unavailable. HTTP read failures use CFLFailure.
@@ -334,12 +395,13 @@ public struct CFLPending: Codable, Equatable, Sendable, Identifiable {
     public var images: [CFLImageRef]? = nil
     /// A manually retried failed operation; operationId is the new attempt.
     public var retrySource: String? = nil
+    public var files: [CFLFileRef]? = nil
 
     public init(target: String, sessionId: String, operationId: String, text: String, createdAt: Date,
-                dispatched: Bool, status: CFLPendingStatus, images: [CFLImageRef]? = nil, retrySource: String? = nil) {
+                dispatched: Bool, status: CFLPendingStatus, images: [CFLImageRef]? = nil, retrySource: String? = nil, files: [CFLFileRef]? = nil) {
         self.target = target; self.sessionId = sessionId; self.operationId = operationId; self.text = text
         self.createdAt = createdAt; self.dispatched = dispatched; self.status = status
-        self.images = images; self.retrySource = retrySource
+        self.images = images; self.retrySource = retrySource; self.files = files
     }
 }
 public struct CFLLocalImageIdentity: Hashable, Sendable {
@@ -397,6 +459,9 @@ public struct CFLChatState: Sendable {
     public var replyCompletedTurnId: String?
     /// Nil means image upload is unavailable; saved media may still be readable.
     public var imageLimits: CFLImageLimits?
+    /// Nil means file intake is unavailable; existing files may still be downloaded.
+    public var fileLimits: CFLFileLimits?
+    public var recovery: [CFLInputRecovery] = []
     /// Pending records for this client's target, including other sessions.
     public var pending: [CFLPending] = []
     /// Records belonging to other targets; switch back to their origin to reconcile or dismiss.
@@ -433,5 +498,88 @@ public actor CFLFilePendingStore: CFLPendingStore {
         try data.write(to: file, options: .atomic)
         #endif
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+}
+
+/// Caller-owned temporary snapshots for an active composition or send. The
+/// caller removes them once no current in-memory operation needs their bytes.
+public enum CFLFileDraftStorage {
+    /// Call while the source's security scope and file coordination are active.
+    /// The destination directory must be app-private temporary storage.
+    public static func copy(source: URL, directory: URL, name: String, mediaType: String,
+                            maximumBytes: Int = 100_000_000) throws -> CFLPreparedFile {
+        try copy(source: source, directory: directory, name: name, mediaType: mediaType,
+                 maximumBytes: maximumBytes, didCopyChunk: nil)
+    }
+    // Internal observer permits deterministic cancellation tests of a partial copy.
+    static func copy(source: URL, directory: URL, name: String, mediaType: String,
+                     maximumBytes: Int, didCopyChunk: ((Int) -> Void)?) throws -> CFLPreparedFile {
+        try Task.checkCancellation()
+        guard source.isFileURL, directory.isFileURL, (0...100_000_000).contains(maximumBytes) else { throw CFLFailure.invalidInput }
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size >= 0, size <= maximumBytes else { throw CFLFailure.invalidInput }
+        let id = UUID().uuidString.lowercased()
+        guard (1...200).contains(name.unicodeScalars.count), mediaType.unicodeScalars.count <= 255 else { throw CFLFailure.invalidInput }
+        let destination = try createEmpty(in: directory)
+        do {
+            let input = try FileHandle(forReadingFrom: source), output = try FileHandle(forWritingTo: destination)
+            defer { try? input.close(); try? output.close() }
+            #if canImport(CryptoKit)
+            var hash = SHA256()
+            var total = 0
+            while true {
+                try Task.checkCancellation()
+                guard let chunk = try input.read(upToCount: 64 * 1024), !chunk.isEmpty else { break }
+                try Task.checkCancellation()
+                guard chunk.count <= maximumBytes - total else { throw CFLFailure.invalidInput }
+                total += chunk.count; hash.update(data: chunk); try output.write(contentsOf: chunk)
+                didCopyChunk?(total)
+            }
+            try Task.checkCancellation()
+            guard total == size else { throw CFLFailure.invalidInput }
+            try output.synchronize()
+            try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destination.path)
+            let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
+            try Task.checkCancellation()
+            return CFLPreparedFile(id: id, name: name, mediaType: mediaType, ownedFile: destination, size: total, sha256: digest)
+            #else
+            throw CFLFailure.requestFailed
+            #endif
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+    static func createEmpty(in directory: URL) throws -> URL {
+        guard directory.isFileURL else { throw CFLFailure.invalidInput }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        for _ in 0..<5 {
+            let url = directory.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: false)
+            let fd = url.path.withCString { open($0, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600)) }
+            if fd >= 0 { _ = close(fd); return url }
+            if errno != EEXIST { throw CFLFailure.storage }
+        }
+        throw CFLFailure.storage
+    }
+    /// Rechecks the app-owned snapshot in bounded chunks before and after upload.
+    static func verify(_ file: CFLPreparedFile) throws {
+        #if canImport(CryptoKit)
+        let handle = try FileHandle(forReadingFrom: file.ownedFileURL)
+        defer { try? handle.close() }
+        var hash = SHA256(), count = 0
+        while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            try Task.checkCancellation()
+            guard chunk.count <= file.size - count else { throw CFLFailure.invalidInput }
+            count += chunk.count; hash.update(data: chunk)
+        }
+        guard count == file.size, hash.finalize().map({ String(format: "%02x", $0) }).joined() == file.sha256 else { throw CFLFailure.invalidInput }
+        #else
+        throw CFLFailure.requestFailed
+        #endif
+    }
+    /// Deletes only the snapshot represented by this prepared file; do not call
+    /// while an operation or a draft still needs it.
+    public static func remove(_ file: CFLPreparedFile) throws {
+        try FileManager.default.removeItem(at: file.ownedFileURL)
     }
 }

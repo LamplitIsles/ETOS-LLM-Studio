@@ -344,6 +344,7 @@ public actor CFLChatClient {
         } catch { suppressPublications = false; throw error }
         suppressPublications = false
         queuedUpdates = []
+        guard active && generation == current else { throw CFLFailure.offline }
         state.connection = .online; publish()
         if state.error != .storage { clearError(since: previousError) }
         requestRetirement()
@@ -472,9 +473,25 @@ public actor CFLChatClient {
         }
         return true
     }
+    private func validFileWire(_ raw: ChordJSON) -> Bool {
+        guard let fields = raw.object, Set(fields.keys) == Set(["attachmentId", "name", "mediaType", "size", "availability"]),
+              let ref = try? decode(CFLFileRef.self, raw) else { return false }
+        return ref.valid
+    }
+    private func validRecoveryWire(_ raw: ChordJSON) -> Bool {
+        guard let fields = raw.object,
+              Set(fields.keys).subtracting(["files"]) == Set(["sourceId", "operationId", "text", "images", "replacementEligible"]),
+              let recovery = try? decode(CFLInputRecovery.self, raw),
+              !recovery.sourceId.isEmpty, recovery.sourceId.unicodeScalars.count <= 300,
+              UUID(uuidString: recovery.operationId) != nil, recovery.text.unicodeScalars.count <= 16000,
+              let images = fields["images"]?.array, images.count <= 6, images.allSatisfy(validImageWire),
+              fields["replacementEligible"] == .bool(true) || fields["replacementEligible"] == .bool(false) else { return false }
+        if let files = fields["files"] { guard let values = files.array, values.count <= 6, values.allSatisfy(validFileWire) else { return false } }
+        return true
+    }
     private func validMessageWire(_ raw: ChordJSON) -> Bool {
         guard let fields = raw.object,
-              Set(fields.keys).isSubset(of: Set(["id", "role", "text", "ends", "createdAt", "operationId", "turnId", "images", "imageState", "textState", "voice", "source", "thinking"])),
+              Set(fields.keys).isSubset(of: Set(["id", "role", "text", "ends", "createdAt", "operationId", "turnId", "images", "files", "imageState", "textState", "voice", "source", "thinking"])),
               let id = fields["id"]?.string, !id.isEmpty, id.utf16.count <= 300,
               let role = fields["role"]?.string, let text = fields["text"]?.string,
               fields["operationId"] == .null || fields["operationId"]?.string != nil,
@@ -482,6 +499,7 @@ public actor CFLChatClient {
         let isReply = role == "agent" && fields["source"] == nil && fields["imageState"] == nil && fields["voice"] == nil
         guard validReplyEnds(fields["ends"], text: text, required: isReply) else { return false }
         if let images = fields["images"] { guard let items = images.array, items.allSatisfy(validImageWire) else { return false } }
+        if let files = fields["files"] { guard let items = files.array, items.allSatisfy(validFileWire) else { return false } }
         if let imageState = fields["imageState"] { guard let value = imageState.string, CFLImageState(rawValue: value) != nil else { return false } }
         if let textState = fields["textState"] { guard let value = textState.string, CFLTextState(rawValue: value) != nil else { return false } }
         if let voice = fields["voice"] { guard let value = voice.object, Set(value.keys) == Set(["id"]), let id = value["id"]?.string, CFLVoiceRef(id: id).valid else { return false } }
@@ -538,7 +556,7 @@ public actor CFLChatClient {
               fields["activeTurnId"] != nil, fields["before"] != nil,
               let capabilities = fields["capabilities"]?.object,
               capabilities["text"] == .bool(true), capabilities["stop"] == .bool(true),
-              fields["contextUsage"] != nil, fields["compaction"] != nil, fields["recovery"]?.array != nil else { throw CFLFailure.protocolError }
+              fields["contextUsage"] != nil, fields["compaction"] != nil, let rawRecovery = fields["recovery"]?.array, rawRecovery.allSatisfy(validRecoveryWire) else { throw CFLFailure.protocolError }
         let view = try decode(CFLView.self, value)
         guard view.version == 2, !view.sessionId.isEmpty, view.messages.count <= 30,
               let rawMessages = fields["messages"]?.array, rawMessages.allSatisfy(validMessageWire),
@@ -552,6 +570,14 @@ public actor CFLChatClient {
             guard limits.valid else { throw CFLFailure.protocolError }
             imageLimits = limits
         }
+        var fileLimits: CFLFileLimits?
+        if let files = capabilities["files"], files != .bool(false) {
+            guard let object = files.object, Set(object.keys) == Set(["maxFilesPerMessage", "maxFileBytes", "maxMessageFileBytes"]) else { throw CFLFailure.protocolError }
+            let limits = try decode(CFLFileLimits.self, files)
+            guard limits.valid else { throw CFLFailure.protocolError }
+            fileLimits = limits
+        }
+        let recovery = try decode([CFLInputRecovery].self, .array(rawRecovery))
         let changedSession = state.sessionId != view.sessionId
         if changedSession {
             sessionRevision += 1; state.sessionRevision = sessionRevision
@@ -600,7 +626,7 @@ public actor CFLChatClient {
         if olderMessages.isEmpty && !historyLoaded && (!incoming.isEmpty || latestMessages.isEmpty) { state.before = view.before }
         state.messages = olderMessages + latestMessages
         state.sessionId = view.sessionId; state.name = view.name; state.activeTurnId = view.activeTurnId; state.streamingReply = view.streamingReply; state.replyCompletedTurnId = view.replyCompletedTurnId
-        state.imageLimits = imageLimits
+        state.imageLimits = imageLimits; state.fileLimits = fileLimits; state.recovery = recovery
         showPending(); publish(); requestRetirement()
     }
     /// Retry the top-of-history page after an explicit user action.
@@ -733,6 +759,19 @@ public actor CFLChatClient {
                   image.original.count <= limits.maxImageBytes,
                   !image.preview.isEmpty, image.preview.count <= 160_000, image.preview.starts(with: [255, 216, 255]),
                   !image.model.isEmpty, image.model.count <= 320_000, image.model.starts(with: [255, 216, 255]) else { throw CFLFailure.invalidInput }
+        }
+    }
+    public func validateFiles(_ files: [CFLPreparedFile]) throws {
+        guard let limits = state.fileLimits else { throw CFLFailure.invalidInput }
+        try validate(files, limits: limits)
+    }
+    private func validate(_ files: [CFLPreparedFile], limits: CFLFileLimits) throws {
+        guard files.count <= limits.maxFilesPerMessage, Set(files.map(\.id)).count == files.count,
+              files.allSatisfy({ $0.size <= limits.maxFileBytes }),
+              files.reduce(0, { $0 + $1.size }) <= limits.maxMessageFileBytes else { throw CFLFailure.invalidInput }
+        for file in files {
+            guard CFLFileRef(attachmentId: file.id, name: file.name, mediaType: file.mediaType,
+                             size: file.size, availability: "available").valid else { throw CFLFailure.invalidInput }
         }
     }
     private func request(path: String, method: String) throws -> URLRequest {
@@ -1358,6 +1397,132 @@ public actor CFLChatClient {
               }) else { throw CFLFailure.protocolError }
         return result.images.map(\.ref)
     }
+    private func fileUploadResult(_ data: Data, files: [CFLPreparedFile], session: String, operation: String) throws -> [CFLFileRef] {
+        struct Result: Decodable {
+            struct Item: Decodable { let id: String; let order: Int; let ref: CFLFileRef }
+            let sessionId: String, operationId: String
+            let files: [Item]
+        }
+        guard data.count <= 100_000, let wire = try? JSONDecoder().decode(ChordJSON.self, from: data),
+              let fields = wire.object, Set(fields.keys) == Set(["sessionId", "operationId", "files"]),
+              let raw = fields["files"]?.array, raw.allSatisfy({ item in
+                  guard let fields = item.object, Set(fields.keys) == Set(["id", "order", "ref"]), let ref = fields["ref"] else { return false }
+                  return validFileWire(ref)
+              }), let result = try? JSONDecoder().decode(Result.self, from: data),
+              result.sessionId == session, result.operationId == operation, result.files.count == files.count,
+              Set(result.files.map(\.id)).count == files.count, Set(result.files.map { $0.ref.attachmentId }).count == files.count,
+              result.files.enumerated().allSatisfy({ index, item in
+                  item.order == index && item.id == files[index].id && item.ref.availability == "available" &&
+                  item.ref.name.utf8.elementsEqual(files[index].name.utf8) && item.ref.mediaType.utf8.elementsEqual(files[index].mediaType.utf8) && item.ref.size == files[index].size
+              }) else { throw CFLFailure.protocolError }
+        return result.files.map(\.ref)
+    }
+    private func fileOperationStatus(_ data: Data, files: [CFLPreparedFile], session: String, operation: String) throws -> CFLFileStagingStatus {
+        guard data.count <= 100_000, let raw = try? JSONDecoder().decode(ChordJSON.self, from: data),
+              let fields = raw.object, Set(fields.keys).subtracting(["result"]) == Set(["manifest", "uploaded"]),
+              let manifest = fields["manifest"]?.object, Set(manifest.keys) == Set(["sessionId", "operationId", "files"]),
+              manifest["sessionId"]?.string == session, manifest["operationId"]?.string == operation,
+              let items = manifest["files"]?.array, items.count == files.count,
+              items.enumerated().allSatisfy({ index, item in
+                  guard let values = item.object, Set(values.keys) == Set(["id", "name", "mediaType", "size"]),
+                        let name = values["name"]?.string, let type = values["mediaType"]?.string else { return false }
+                  return values["id"]?.string == files[index].id && name.utf8.elementsEqual(files[index].name.utf8) &&
+                      type.utf8.elementsEqual(files[index].mediaType.utf8) && values["size"]?.integer == files[index].size
+              }), let rawUploaded = fields["uploaded"]?.array else { throw CFLFailure.protocolError }
+        let uploaded = rawUploaded.compactMap(\.string)
+        guard uploaded.count == rawUploaded.count, Set(uploaded).count == uploaded.count,
+              Set(uploaded).isSubset(of: Set(files.map(\.id))) else { throw CFLFailure.protocolError }
+        var result: [CFLFileRef]?
+        if let rawResult = fields["result"] {
+            guard uploaded.count == files.count else { throw CFLFailure.protocolError }
+            result = try fileUploadResult(JSONEncoder().encode(rawResult), files: files, session: session, operation: operation)
+        }
+        return CFLFileStagingStatus(uploaded: uploaded, files: result)
+    }
+    private func verifyFileSnapshot(_ file: CFLPreparedFile) async throws {
+        let task = Task.detached { try CFLFileDraftStorage.verify(file) }
+        try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+    }
+    private func uploadFileOperation(_ files: [CFLPreparedFile], session: String, operation: String, generation current: Int, revision: Int) async throws -> [CFLFileRef] {
+        let expectedLimits = state.fileLimits
+        func check() throws {
+            guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
+                  state.connection == .online, state.sessionId == session, state.fileLimits == expectedLimits else { throw CFLFailure.sessionChanged }
+        }
+        for file in files { try await verifyFileSnapshot(file); try check() }
+        let manifest: [String: Any] = ["sessionId": session, "operationId": operation, "files": files.map {
+            ["id": $0.id, "name": $0.name, "mediaType": $0.mediaType, "size": $0.size] as [String: Any]
+        }]
+        var reserved = false
+        do {
+            try check()
+            var req = try request(path: "/api/chat/file-operations", method: "POST")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: manifest)
+            guard (req.httpBody?.count ?? 0) <= 32_768 else { throw CFLFailure.invalidInput }
+            reserved = true
+            let (data, raw) = try await imageHTTP.boundedData(for: req, maximumBytes: 100_000)
+            try check()
+            if let response = raw as? HTTPURLResponse, response.url == req.url {
+                if response.statusCode == 410 { throw CFLFileOperationRetired() }
+                if response.statusCode == 401 || response.statusCode == 403 { throw CFLFailure.accessDenied }
+            }
+            guard let response = raw as? HTTPURLResponse, response.url == req.url, (200...299).contains(response.statusCode) else { throw CFLFailure.requestFailed }
+            let initial = try fileOperationStatus(data, files: files, session: session, operation: operation)
+            guard initial.uploaded.isEmpty, initial.files == nil else { throw CFLFailure.protocolError }
+            for file in files {
+                try check(); try await verifyFileSnapshot(file); try check()
+                var upload = try request(path: "/api/chat/file-operations/" + operation + "/files/" + file.id, method: "PUT")
+                upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                upload.setValue(String(file.size), forHTTPHeaderField: "Content-Length")
+                let (_, rawUpload) = try await imageHTTP.uploadFile(for: upload, from: file.ownedFileURL, maximumResponseBytes: 0)
+                try check(); try await verifyFileSnapshot(file); try check()
+                if let response = rawUpload as? HTTPURLResponse, response.url == upload.url {
+                    if response.statusCode == 410 { throw CFLFileOperationRetired() }
+                    if response.statusCode == 401 || response.statusCode == 403 { throw CFLFailure.accessDenied }
+                }
+                guard let response = rawUpload as? HTTPURLResponse, response.url == upload.url, response.statusCode == 204 else { throw CFLFailure.requestFailed }
+            }
+            try check()
+            let complete = try request(path: "/api/chat/file-operations/" + operation + "/complete", method: "POST")
+            let (result, rawComplete) = try await imageHTTP.boundedData(for: complete, maximumBytes: 100_000)
+            try check()
+            if let response = rawComplete as? HTTPURLResponse, response.url == complete.url {
+                if response.statusCode == 410 { throw CFLFileOperationRetired() }
+                if response.statusCode == 401 || response.statusCode == 403 { throw CFLFailure.accessDenied }
+            }
+            guard let response = rawComplete as? HTTPURLResponse, response.url == complete.url, (200...299).contains(response.statusCode) else { throw CFLFailure.requestFailed }
+            return try fileUploadResult(result, files: files, session: session, operation: operation)
+        } catch {
+            if Task.isCancelled || error is CancellationError { throw CancellationError() }
+            if (error as? CFLFailure) == .accessDenied { throw error }
+            if error is CFLFileOperationRetired { throw error }
+            guard reserved else { throw error }
+            throw CFLFileStagingUncertain(sessionId: session, operationId: operation)
+        }
+    }
+    /// Fetch to a newly created app-private file. The caller owns the returned
+    /// URL and must delete it when no longer needed; metadata is never a path.
+    public func downloadFile(_ ref: CFLFileRef, directory: URL, expectedSessionId: String, expectedSessionRevision: Int) async throws -> URL {
+        guard ref.valid, ref.availability == "available", directory.isFileURL else { throw CFLFailure.invalidInput }
+        let current = try stickerContext(expectedSessionId, expectedSessionRevision)
+        let destination = try CFLFileDraftStorage.createEmpty(in: directory)
+        do {
+            let req = try request(path: "/api/chat/files/" + ref.attachmentId, method: "GET")
+            let raw = try await imageHTTP.downloadFile(for: req, to: destination, maximumBytes: ref.size)
+            try checkStickerContext(expectedSessionId, expectedSessionRevision, current)
+            guard let response = raw as? HTTPURLResponse, response.url == req.url else { throw CFLFailure.protocolError }
+            guard (200...299).contains(response.statusCode) else {
+                throw response.statusCode == 401 || response.statusCode == 403 ? CFLFailure.accessDenied : CFLFailure.requestFailed
+            }
+            let values = try destination.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true, values.fileSize == ref.size else { throw CFLFailure.protocolError }
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
     /// Loads only an authenticated media ID from the currently connected origin.
     /// If a preview is absent, falls back to the bounded original; an absent
     /// original remains a failure. Discard results when the page disappears.
@@ -1411,26 +1576,26 @@ public actor CFLChatClient {
     /// After this returns, inspect pending state even if the connection was lost.
     /// CFLPendingStorageUncertain identifies an undispatched input whose first save
     /// could not be verified; preserve it until the store can be read again.
-    @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [],
+    @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [], files: [CFLPreparedFile] = [],
                                         expectedSessionId: String? = nil, expectedSessionRevision: Int? = nil) async throws -> String {
-        let result = try await sendCore(text, images: images, sticker: nil, operation: UUID().uuidString.lowercased(), expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
+        let result = try await sendCore(text, images: images, files: files, sticker: nil, operation: UUID().uuidString.lowercased(), expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
         return result.operationId
     }
     /// Supply a freshly generated UUID for one local operation and never reuse it.
     /// Throws before submit on validation/upload failure, or CFLPendingStorageUncertain
     /// when the first save cannot be read back. Retain the original input in either case.
-    @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [], operationId: String,
+    @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [], files: [CFLPreparedFile] = [], operationId: String,
                                         expectedSessionId: String, expectedSessionRevision: Int) async throws -> CFLSendOutcome {
-        let result = try await sendCore(text, images: images, sticker: nil, operation: operationId, expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
+        let result = try await sendCore(text, images: images, files: files, sticker: nil, operation: operationId, expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
         return result.outcome
     }
     /// Sends a sticker independently of the composer's text and image drafts.
     @discardableResult public func sendSticker(_ sticker: CFLSticker, expectedSessionId: String, expectedSessionRevision: Int) async throws -> String {
         guard sticker.valid, sticker.available else { throw CFLFailure.invalidInput }
-        let result = try await sendCore("", images: [], sticker: sticker, operation: UUID().uuidString.lowercased(), expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
+        let result = try await sendCore("", images: [], files: [], sticker: sticker, operation: UUID().uuidString.lowercased(), expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
         return result.operationId
     }
-    private func sendCore(_ text: String, images: [CFLPreparedImage], sticker: CFLSticker?,
+    private func sendCore(_ text: String, images: [CFLPreparedImage], files: [CFLPreparedFile], sticker: CFLSticker?,
                           operation: String, expectedSessionId: String?, expectedSessionRevision: Int?) async throws -> (operationId: String, outcome: CFLSendOutcome) {
         guard let operationUUID = UUID(uuidString: operation) else { throw CFLFailure.invalidInput }
         guard !usedSendOperations.contains(operationUUID) else { throw CFLSendFailure.duplicateOperationId }
@@ -1445,16 +1610,32 @@ public actor CFLChatClient {
               expectedSessionRevision.map({ $0 == revision }) ?? true else { throw CFLFailure.sessionChanged }
         try Task.checkCancellation()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!trimmed.isEmpty || !images.isEmpty || sticker != nil), trimmed != "/compact", text.utf16.count <= 16000 else { throw CFLFailure.invalidInput }
+        guard (!trimmed.isEmpty || !images.isEmpty || !files.isEmpty || sticker != nil), trimmed != "/compact", text.utf16.count <= 16000 else { throw CFLFailure.invalidInput }
         guard !entries.contains(where: { UUID(uuidString: $0.operationId) == operationUUID || $0.retrySource.flatMap { UUID(uuidString: $0) } == operationUUID }),
               !state.messages.contains(where: { $0.operationId.flatMap { UUID(uuidString: $0) } == operationUUID }) else {
             throw CFLSendFailure.duplicateOperationId
         }
         usedSendOperations.insert(operationUUID)
+        var beganPersistence = false
         defer {
+            if !beganPersistence {
+                let count = state.localPreviews.count
+                state.localPreviews.removeAll { $0.sessionId == session && $0.operationId == operation }
+                if count != state.localPreviews.count { publish() }
+            }
             if state.localDrafts.contains(where: { $0.operationId == operation && $0.sessionId == session }) {
                 state.localDrafts.removeAll { $0.operationId == operation && $0.sessionId == session }; publish()
             }
+        }
+        let fileLimits = state.fileLimits, imageLimits = state.imageLimits
+        if !files.isEmpty {
+            guard let fileLimits else { throw CFLFailure.invalidInput }
+            try validate(files, limits: fileLimits)
+        }
+        guard active, !disconnecting, generation == current, sessionRevision == revision, state.sessionId == session else { throw CFLFailure.sessionChanged }
+        if !images.isEmpty {
+            guard let limits = state.imageLimits else { throw CFLFailure.invalidInput }
+            try validate(images, limits: limits)
         }
         var refs: [CFLImageRef]?
         if !images.isEmpty {
@@ -1476,11 +1657,21 @@ public actor CFLChatClient {
             guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
                   state.connection == .online, state.sessionId == session else { throw CFLFailure.sessionChanged }
         }
-        var entry = CFLPending(target: target, sessionId: session, operationId: operation, text: text, createdAt: Date(), dispatched: false, status: .unknown, images: refs)
-        do { try await persist(entries + [entry]) }
+        var fileRefs: [CFLFileRef]?
+        if !files.isEmpty {
+            guard state.fileLimits == fileLimits, state.sessionId == session, sessionRevision == revision else { throw CFLFailure.sessionChanged }
+            fileRefs = try await uploadFileOperation(files, session: session, operation: operation, generation: current, revision: revision)
+            guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
+                  state.connection == .online, state.sessionId == session, state.fileLimits == fileLimits,
+                  (images.isEmpty || state.imageLimits == imageLimits) else { throw CFLFailure.sessionChanged }
+        }
+        guard active, !disconnecting, generation == current, sessionRevision == revision, state.connection == .online, state.sessionId == session else { throw CFLFailure.sessionChanged }
+        var entry = CFLPending(target: target, sessionId: session, operationId: operation, text: text, createdAt: Date(), dispatched: false, status: .unknown, images: refs, files: fileRefs)
+        do { try await persist(entries + [entry]); beganPersistence = true }
         catch {
-            guard loaded else { throw CFLPendingStorageUncertain(pending: entry) }
+            guard loaded else { beganPersistence = true; throw CFLPendingStorageUncertain(pending: entry) }
             if entries.contains(where: { $0.target == target && $0.sessionId == session && $0.operationId == entry.operationId }) {
+                beganPersistence = true
                 return (entry.operationId, .notDispatched)
             }
             throw error
@@ -1542,6 +1733,11 @@ public actor CFLChatClient {
                 return .object(value)
             })
         }
+        if let files = pending.files, !files.isEmpty {
+            fields["files"] = .array(files.map { file in .object([
+                "attachmentId": .string(file.attachmentId), "name": .string(file.name), "mediaType": .string(file.mediaType),
+                "size": .number(Double(file.size)), "availability": .string(file.availability)]) })
+        }
         return .object(fields)
     }
     /// Release previews after the caller no longer displays this operation.
@@ -1568,10 +1764,12 @@ public actor CFLChatClient {
         guard let sourceUUID = UUID(uuidString: operationId) else { throw CFLFailure.invalidInput }
         guard let index = entries.firstIndex(where: { $0.target == target && $0.sessionId == sessionId && $0.operationId == operationId && $0.status == .failed && $0.dispatched }) else { throw CFLFailure.invalidInput }
         let original = entries[index], attempt = UUID().uuidString.lowercased()
+        guard active, !disconnecting, generation == current, sessionRevision == revision, state.sessionId == sessionId,
+              let sourceIndex = entries.firstIndex(of: original) else { throw CFLFailure.sessionChanged }
         usedSendOperations.insert(sourceUUID)
         usedSendOperations.insert(UUID(uuidString: attempt)!)
-        var entry = CFLPending(target: target, sessionId: sessionId, operationId: attempt, text: original.text, createdAt: Date(), dispatched: false, status: .unknown, images: original.images, retrySource: operationId)
-        var next = entries; next[index] = entry
+        var entry = CFLPending(target: target, sessionId: sessionId, operationId: attempt, text: original.text, createdAt: Date(), dispatched: false, status: .unknown, images: original.images, retrySource: operationId, files: original.files)
+        var next = entries; next[sourceIndex] = entry
         do { try await persist(next) }
         catch {
             guard loaded else { throw CFLPendingStorageUncertain(pending: entry) }
@@ -1599,13 +1797,15 @@ public actor CFLChatClient {
     }
     private func accept(_ value: ChordJSON, entry: CFLPending) async throws {
         guard value != .null else { return }
-        guard let fields = value.object, Set(fields.keys).subtracting(["retryImages"]) == Set(["operationId", "state", "messageId", "turnId", "error"]) else { throw CFLFailure.protocolError }
+        guard let fields = value.object, Set(fields.keys).subtracting(["retryImages", "retryFiles"]) == Set(["operationId", "state", "messageId", "turnId", "error"]) else { throw CFLFailure.protocolError }
         let receipt: CFLReceipt = try decode(CFLReceipt.self, value)
         guard receipt.operationId == entry.operationId, let status = CFLPendingStatus(rawValue: receipt.state), status != .unknown else { throw CFLFailure.protocolError }
         guard let index = entries.firstIndex(where: { $0.target == entry.target && $0.sessionId == entry.sessionId && $0.operationId == entry.operationId }) else { return }
         if entries[index].status == .submitted { requestRetirement(); return }
         guard state.sessionId == entry.sessionId else { throw CFLFailure.sessionChanged }
         var next = entries
+        let acceptGeneration = generation, acceptRevision = sessionRevision
+        var previewMapping: (source: String, refs: [String: CFLImageRef])?
         if let source = entries[index].retrySource, let originals = entries[index].images, !originals.isEmpty {
             guard let raw = fields["retryImages"]?.object, Set(raw.keys) == Set(["sessionId", "sourceOperationId", "images"]),
                   let rawImages = raw["images"]?.array, rawImages.allSatisfy({ item in
@@ -1621,14 +1821,40 @@ public actor CFLChatClient {
             guard originals.allSatisfy({ original in refs[original.attachmentId].map { $0.name == original.name && $0.mediaType == original.mediaType && $0.sticker == original.sticker } ?? false }) else { throw CFLFailure.protocolError }
             let previews = state.localPreviews.filter { $0.sessionId == entry.sessionId && $0.operationId == source }
             guard previews.isEmpty || (previews.count == originals.count && Set(previews.compactMap(\.attachmentId)) == Set(originals.map(\.attachmentId))) else { throw CFLFailure.protocolError }
-            state.localPreviews = state.localPreviews.map { preview in
-                guard preview.sessionId == entry.sessionId, preview.operationId == source, let old = preview.attachmentId, let ref = refs[old] else { return preview }
-                return CFLLocalImagePreview(sessionId: preview.sessionId, operationId: entry.operationId, originOperationId: preview.originOperationId, draftId: preview.draftId, order: preview.order, attachmentId: ref.attachmentId, data: preview.data)
-            }
+            previewMapping = (source: source, refs: refs)
             next[index].images = originals.map { refs[$0.attachmentId]! }
         } else if fields["retryImages"] != nil { throw CFLFailure.protocolError }
+        if let source = entries[index].retrySource, let originals = entries[index].files, !originals.isEmpty {
+            guard let raw = fields["retryFiles"]?.object, Set(raw.keys) == Set(["sessionId", "sourceOperationId", "files"]),
+                  let rawFiles = raw["files"]?.array, rawFiles.allSatisfy({ item in
+                      guard let fields = item.object, Set(fields.keys) == Set(["sourceAttachmentId", "ref"]), let ref = fields["ref"] else { return false }
+                      return validFileWire(ref)
+                  }), let mapping = receipt.retryFiles, mapping.sessionId == entry.sessionId, mapping.sourceOperationId == source,
+                  mapping.files.count == originals.count, Set(originals.map(\.attachmentId)).count == originals.count,
+                  Set(mapping.files.map(\.sourceAttachmentId)) == Set(originals.map(\.attachmentId)),
+                  Set(mapping.files.map { $0.ref.attachmentId }).count == originals.count,
+                  mapping.files.allSatisfy({ $0.ref.valid && $0.ref.availability == "available" }) else { throw CFLFailure.protocolError }
+            let refs = Dictionary(uniqueKeysWithValues: mapping.files.map { ($0.sourceAttachmentId, $0.ref) })
+            guard originals.allSatisfy({ original in refs[original.attachmentId].map {
+                $0.name.utf8.elementsEqual(original.name.utf8) && $0.mediaType.utf8.elementsEqual(original.mediaType.utf8) && $0.size == original.size
+            } ?? false }) else { throw CFLFailure.protocolError }
+            next[index].files = originals.map { refs[$0.attachmentId]! }
+        } else if fields["retryFiles"] != nil { throw CFLFailure.protocolError }
         next[index].retrySource = nil; next[index].status = status
         try await persist(next)
+        // Persistence yields the actor; a session change or newer preview update may
+        // have happened. Apply only this mapping to the current previews afterward.
+        if let mapping = previewMapping, active, !disconnecting, generation == acceptGeneration,
+           sessionRevision == acceptRevision, state.sessionId == entry.sessionId {
+            state.localPreviews = state.localPreviews.map { preview in
+                guard preview.sessionId == entry.sessionId, preview.operationId == mapping.source,
+                      let old = preview.attachmentId, let ref = mapping.refs[old] else { return preview }
+                return CFLLocalImagePreview(sessionId: preview.sessionId, operationId: entry.operationId,
+                    originOperationId: preview.originOperationId, draftId: preview.draftId, order: preview.order,
+                    attachmentId: ref.attachmentId, data: preview.data)
+            }
+            publish()
+        }
         if status == .submitted { requestRetirement() }
     }
     public func reconcile() async throws {
@@ -1657,6 +1883,7 @@ public actor CFLChatClient {
             if expired { finalized.insert(key) }
             scheduleDeadline()
             do {
+                guard generation == current, sessionRevision == revision, state.sessionId == session else { throw CFLFailure.sessionChanged }
                 let finalization: ChordJSON
                 if let source = entry.retrySource {
                     finalization = .object(["sessionId": .string(session), "retry": .object(["sessionId": .string(session), "operationId": .string(source), "attemptId": .string(entry.operationId)])])
@@ -1721,7 +1948,8 @@ public actor CFLChatClient {
         let current = generation
         try await load()
         guard active, !disconnecting, generation == current else { throw CFLFailure.offline }
-        guard let item = entries.first(where: { $0.target == target && $0.sessionId == sessionId && $0.operationId == operationId }), item.status != .unknown || !item.dispatched else { return }
+        guard let item = entries.first(where: { $0.target == target && $0.sessionId == sessionId && $0.operationId == operationId }),
+              item.status != .unknown || !item.dispatched else { return }
         try await persist(entries.filter { !($0.target == target && $0.sessionId == sessionId && $0.operationId == operationId) })
     }
 }

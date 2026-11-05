@@ -15,6 +15,11 @@ struct CFLSelectedImage: Identifiable, Sendable {
     let prepared: CFLPreparedImage
 }
 
+struct CFLSelectedFile: Identifiable, Sendable {
+    var id: String { prepared.id }
+    let prepared: CFLPreparedFile
+}
+
 struct CFLImageContext: Equatable {
     let clientID: UUID
     let target: String
@@ -71,6 +76,7 @@ final class CFLConversationModel: ObservableObject {
         var operation: String
         let text: String
         let images: [CFLSelectedImage]
+        let files: [CFLSelectedFile]
         let createdAt: Date
         let anchor: PendingAnchor
         var phase: LocalSendPhase
@@ -150,6 +156,7 @@ final class CFLConversationModel: ObservableObject {
     private func scheduleProjection() {
             // Once the server row and its local previews are available, the
             // original upload bytes no longer need to remain in the UI queue.
+            let priorLocalSends = localSends
             localSends.removeAll { item in
                 guard item.phase == .awaiting,
                       let message = state.messages.first(where: { $0.operationId == item.operation }),
@@ -160,11 +167,13 @@ final class CFLConversationModel: ObservableObject {
                     state.localPreviews.contains { $0.operationId == item.operation && $0.attachmentId == ref.attachmentId }
                 }
             }
+            let kept = Set(localSends.map(\.operation))
+            releaseFilesIfUnused(priorLocalSends.filter { !kept.contains($0.operation) }.flatMap(\.files))
             let locals = localSends.filter { $0.context.target == connectedOrigin && $0.context.session == state.sessionId }.map { item in
                 let pending = state.pending.first { $0.operationId == item.operation && $0.sessionId == item.context.session }
                     ?? (item.phase == .failed ? CFLPending(target: item.context.target, sessionId: item.context.session,
                         operationId: item.operation, text: item.text, createdAt: item.createdAt, dispatched: false, status: .failed) : nil)
-                return LocalProjection(origin: item.origin, draft: item.draft, pending: pending,
+                return LocalProjection(origin: item.origin, draft: item.draft, files: item.files.map { CFLDisplayFile(name: $0.prepared.name, size: $0.prepared.size) }, pending: pending,
                                        sending: item.phase == .queued || item.phase == .sending || item.phase == .uncertain)
             }
             let input = ProjectionInput(target: connectedOrigin, session: state.sessionId, revision: state.sessionRevision, clientID: clientID, messages: state.messages,
@@ -259,7 +268,9 @@ final class CFLConversationModel: ObservableObject {
     @Published private(set) var needsSignIn = false
     @Published var uncertain: CFLPending?
     @Published private(set) var selectedImages: [CFLSelectedImage] = []
-    @Published private(set) var isPreparingImages = false
+    @Published private(set) var isPreparingAttachments = false
+    @Published private(set) var selectedFiles: [CFLSelectedFile] = []
+    private var fileDraftOwner: (target: String, session: String)?
     @Published private(set) var imagePageRevision = 0
     @Published private(set) var imagePageActive = true
     @Published private(set) var stickerFavoritesRevision = 0
@@ -286,13 +297,16 @@ final class CFLConversationModel: ObservableObject {
 
     /// Inject an already-connected client for isolated conversation tests.
     convenience init(client: CFLChatClient, target: String, initialState: CFLChatState,
-                     initialImages: [CFLSelectedImage] = [], draftChanges: AnyPublisher<String, Never>? = nil) {
+                     initialImages: [CFLSelectedImage] = [], initialFiles: [CFLSelectedFile] = [],
+                     draftChanges: AnyPublisher<String, Never>? = nil) {
         self.init(draftChanges: draftChanges)
         self.client = client
         self.connectedOrigin = target
         self.state = initialState
         self.selectedImages = initialImages
+        self.selectedFiles = initialFiles
         if !initialImages.isEmpty, let session = initialState.sessionId { self.imageDraftOwner = (target, session) }
+        if !initialFiles.isEmpty, let session = initialState.sessionId { self.fileDraftOwner = (target, session) }
         observation = Task { [weak self] in
             for await state in await client.states() {
                 guard !Task.isCancelled else { break }
@@ -345,7 +359,7 @@ final class CFLConversationModel: ObservableObject {
     }
 
     func sendSticker(_ sticker: CFLSticker, context: CFLImageContext) async -> Bool {
-        guard let client = stickerClient(for: context), !busy, sendQueueTask == nil, uncertain == nil, !isPreparingImages else {
+        guard let client = stickerClient(for: context), !busy, sendQueueTask == nil, uncertain == nil, !isPreparingAttachments else {
             notice = NSLocalizedString("暂时无法发送表情，请稍后再试。", comment: "Sticker send unavailable")
             return false
         }
@@ -376,9 +390,119 @@ final class CFLConversationModel: ObservableObject {
         return owner.target == current.target && owner.session == current.session
     }
 
+    var filesBelongToCurrentSession: Bool {
+        guard !selectedFiles.isEmpty else { return true }
+        guard let owner = fileDraftOwner, let current = imageContext else { return false }
+        return owner.target == current.target && owner.session == current.session
+    }
+
+    var canAttachFiles: Bool {
+        state.connection == .online && state.fileLimits != nil && imageContext != nil
+            && selectedFiles.count < (state.fileLimits?.maxFilesPerMessage ?? 0)
+            && filesBelongToCurrentSession && !busy && uncertain == nil && !isPreparingAttachments
+    }
+
+    func beginFileSelection() -> Bool {
+        guard canAttachFiles, let context = imageContext else { return false }
+        selectionID = UUID()
+        selectionContext = context
+        imagePickerWillPresent()
+        return true
+    }
+
+    nonisolated static func fileDraftDirectory() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("etos-chat-file-drafts", isDirectory: true)
+    }
+
+    private func releaseFilesIfUnused(_ files: [CFLSelectedFile]) {
+        let retained = Set(selectedFiles.map(\.id) + localSends.flatMap { $0.files.map(\.id) })
+        for file in files where !retained.contains(file.id) { try? CFLFileDraftStorage.remove(file.prepared) }
+    }
+
+    func removeFile(_ id: String) {
+        let removed = selectedFiles.filter { $0.id == id }
+        selectedFiles.removeAll { $0.id == id }
+        releaseFilesIfUnused(removed)
+        if selectedFiles.isEmpty { fileDraftOwner = nil }
+    }
+
+    func addFiles(_ urls: [URL]) {
+        guard let context = selectionContext, context == imageContext, !urls.isEmpty, let limits = state.fileLimits else { return }
+        let token = selectionID, previous = selectedFiles.map(\.id)
+        let existing = selectedFiles.map(\.prepared)
+        isPreparingAttachments = true
+        selectionTask = Task { [weak self] in
+            do {
+                guard urls.count + existing.count <= limits.maxFilesPerMessage else { throw CFLFailure.invalidInput }
+                let copyTask = Task.detached(priority: .userInitiated) {
+                    var copied: [CFLSelectedFile] = []
+                    var remaining = limits.maxMessageFileBytes - existing.reduce(0) { $0 + $1.size }
+                    guard remaining >= 0 else { throw CFLFailure.invalidInput }
+                    do { for url in urls {
+                        try Task.checkCancellation()
+                        let access = url.startAccessingSecurityScopedResource()
+                        defer { if access { url.stopAccessingSecurityScopedResource() } }
+                        var result: Result<CFLSelectedFile, Error>?
+                        var coordinatorError: NSError?
+                        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { coordinatedURL in
+                            result = Result {
+                                let values = try coordinatedURL.resourceValues(forKeys: [.contentTypeKey])
+                                let prepared = try CFLFileDraftStorage.copy(source: coordinatedURL, directory: Self.fileDraftDirectory(),
+                                    name: url.lastPathComponent, mediaType: values.contentType?.preferredMIMEType ?? "", maximumBytes: min(limits.maxFileBytes, remaining))
+                                return CFLSelectedFile(prepared: prepared)
+                            }
+                        }
+                        if let coordinatorError {
+                            if case .some(.success(let file)) = result { try? CFLFileDraftStorage.remove(file.prepared) }
+                            throw coordinatorError
+                        }
+                        guard let result else { throw CFLFailure.requestFailed }
+                        let file = try result.get()
+                        copied.append(file)
+                        remaining -= file.prepared.size
+                    }
+                    return copied
+                    } catch {
+                        for file in copied { try? CFLFileDraftStorage.remove(file.prepared) }
+                        throw error
+                    }
+                }
+                let files = try await withTaskCancellationHandler(operation: { try await copyTask.value }, onCancel: { copyTask.cancel() })
+                do {
+                    guard let self, token == self.selectionID, context == self.imageContext, previous == self.selectedFiles.map(\.id), let client = self.client else { throw CFLFailure.sessionChanged }
+                    try await client.validateFiles(existing + files.map(\.prepared))
+                    guard !Task.isCancelled, token == self.selectionID, context == self.imageContext, previous == self.selectedFiles.map(\.id) else { throw CFLFailure.sessionChanged }
+                    self.selectedFiles.append(contentsOf: files)
+                    self.fileDraftOwner = (context.target, context.session)
+                    self.notice = nil
+                } catch {
+                    for file in files { try? CFLFileDraftStorage.remove(file.prepared) }
+                    throw error
+                }
+            } catch {
+                if let self, token == self.selectionID, context == self.imageContext, !(error is CancellationError) {
+                    self.notice = NSLocalizedString("无法添加文件，请检查文件大小和连接。", comment: "File selection failed")
+                }
+            }
+            self?.finishImageSelection(token: token)
+        }
+    }
+
+    func chatFileDownload(_ ref: CFLFileRef, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> URL {
+        guard imagePageActive, let context = imageContext,
+              isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID), let client else { throw CFLFailure.sessionChanged }
+        let pageRevision = imagePageRevision
+        let url = try await client.downloadFile(ref, directory: Self.fileDraftDirectory(), expectedSessionId: context.session, expectedSessionRevision: context.revision)
+        guard !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context else {
+            try? FileManager.default.removeItem(at: url)
+            throw CFLFailure.sessionChanged
+        }
+        return url
+    }
+
     var canAttachImages: Bool {
         state.connection == .online && state.imageLimits != nil && imageContext != nil
-            && remainingImageSlots > 0 && imagesBelongToCurrentSession && !busy && uncertain == nil && !isPreparingImages
+            && remainingImageSlots > 0 && imagesBelongToCurrentSession && !busy && uncertain == nil && !isPreparingAttachments
     }
 
     var remainingImageSlots: Int {
@@ -402,7 +526,7 @@ final class CFLConversationModel: ObservableObject {
         awaitingImagePicker = false
         selectionTask?.cancel()
         selectionTask = nil
-        isPreparingImages = false
+        isPreparingAttachments = false
     }
 
     func pageDidDisappear() {
@@ -433,7 +557,7 @@ final class CFLConversationModel: ObservableObject {
         guard let context = selectionContext, context == imageContext, !photos.isEmpty else { return }
         let token = selectionID
         let previous = selectedImages.map(\.id)
-        isPreparingImages = true
+        isPreparingAttachments = true
         selectionTask = Task { [weak self] in
             do {
                 var images: [CFLSelectedImage] = []
@@ -454,7 +578,7 @@ final class CFLConversationModel: ObservableObject {
         guard let context = selectionContext, context == imageContext else { return }
         let token = selectionID
         let previous = selectedImages.map(\.id)
-        isPreparingImages = true
+        isPreparingAttachments = true
         selectionTask = Task { [weak self] in
             do {
                 guard let attachment = await Task.detached(priority: .userInitiated, operation: { ImageAttachment.from(image: image) }).value else { throw CFLFailure.invalidInput }
@@ -500,7 +624,7 @@ final class CFLConversationModel: ObservableObject {
 
     private func finishImageSelection(token: UUID) {
         guard token == selectionID else { return }
-        isPreparingImages = false
+        isPreparingAttachments = false
         selectionContext = nil
         selectionTask = nil
     }
@@ -563,44 +687,14 @@ final class CFLConversationModel: ObservableObject {
         return context.clientID == clientID && context.target == target && context.session == session && context.revision == revision
     }
 
-    func restoreImages(from pending: CFLPending) async -> Bool {
-        guard imagePageActive, let client, let context = imageContext, pending.target == context.target,
-              pending.sessionId == context.session, !busy, !isPreparingImages,
-              selectedImages.isEmpty, (pending.status == .failed || (pending.status == .unknown && !pending.dispatched)),
-              let refs = pending.images, !refs.isEmpty else { return false }
-        let originalDraft = AppConfigStore.shared.chatComposerDraft
-        let originalRevision = draftRevision
-        let pageRevision = imagePageRevision
-        guard originalDraft.isEmpty else { return false }
-        busy = true
-        defer { busy = false }
-        do {
-            var restored: [CFLSelectedImage] = []
-            for ref in refs {
-                guard imagePageActive, imagePageRevision == pageRevision else { return false }
-                let data = try await client.media(ref, original: true, expectedSessionId: context.session, expectedSessionRevision: context.revision)
-                let image = try await Task.detached(priority: .userInitiated) {
-                    try Self.prepareImage(data, mediaType: ref.mediaType)
-                }.value
-                restored.append(image)
-            }
-            try await client.validateImages(restored.map(\.prepared))
-            guard imagePageActive, imagePageRevision == pageRevision, imageContext == context,
-                  selectedImages.isEmpty, draftRevision == originalRevision,
-                  AppConfigStore.shared.chatComposerDraft == originalDraft else { return false }
-            selectedImages = restored
-            imageDraftOwner = (context.target, context.session)
-            AppConfigStore.shared.chatComposerDraft = pending.text
-            notice = nil
-            return true
-        } catch {
-            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context {
-                if !recordAuthorizationFailure(error) {
-                    notice = NSLocalizedString("无法恢复图片，请检查连接或重新选择。", comment: "Image recovery failed")
-                }
-            }
-            return false
-        }
+    func restoreText(from pending: CFLPending) {
+        guard imagePageActive, let context = imageContext, pending.target == context.target,
+              pending.sessionId == context.session, !busy, !isPreparingAttachments,
+              selectedImages.isEmpty, selectedFiles.isEmpty, AppConfigStore.shared.chatComposerDraft.isEmpty,
+              pending.status == .failed || (pending.status == .unknown && !pending.dispatched) else { return }
+        AppConfigStore.shared.chatComposerDraft = pending.text
+        notice = !(pending.images ?? []).isEmpty || !(pending.files ?? []).isEmpty
+            ? NSLocalizedString("附件未恢复，请重新选择。", comment: "Attachments must be selected again") : nil
     }
 
     func connect(origin: String) async {
@@ -689,26 +783,28 @@ final class CFLConversationModel: ObservableObject {
     /// Accept and display one operation synchronously; persistence happens later.
     func sendImmediately(_ text: String, clearDraft: () -> Void) -> Bool {
         CFLTimelineDiagnostics.event("send-request")
-        guard client != nil, !busy, !needsSignIn, uncertain == nil, !isPreparingImages,
-              state.connection == .online, imagesBelongToCurrentSession, let context = imageContext else { return false }
+        guard client != nil, !busy, !needsSignIn, uncertain == nil, !isPreparingAttachments,
+              state.connection == .online, imagesBelongToCurrentSession, filesBelongToCurrentSession, let context = imageContext else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!trimmed.isEmpty || !selectedImages.isEmpty), trimmed != "/compact", text.utf16.count <= 16000 else { return false }
+        guard (!trimmed.isEmpty || !selectedImages.isEmpty || !selectedFiles.isEmpty), trimmed != "/compact", text.utf16.count <= 16000 else { return false }
         let operation = UUID().uuidString.lowercased()
         let predecessor = localSends.last(where: { $0.context.target == context.target && $0.context.session == context.session })?.operation
             ?? state.pending.last(where: { $0.sessionId == context.session })?.operationId
         let anchor = PendingAnchor(session: context.session, after: state.messages.last?.id, predecessor: predecessor)
         pendingAnchors[operation] = anchor
         let item = LocalSend(context: context, origin: operation, operation: operation, text: text,
-                             images: selectedImages, createdAt: Date(), anchor: anchor, phase: .queued)
+                             images: selectedImages, files: selectedFiles, createdAt: Date(), anchor: anchor, phase: .queued)
         localSends.append(item)
         displayOrigins[operation] = operation
         selectedImages = []
+        selectedFiles = []
         imageDraftOwner = nil
+        fileDraftOwner = nil
         clearDraft()
         notice = nil
         let row = CFLDisplayMessage(id: .init(target: context.target, session: context.session, message: "local:\(operation)", offset: 0),
             text: text, outgoing: true, markdown: false, images: [], sessionRevision: context.revision,
-            clientID: context.clientID, previews: item.draft.images, sendingLocally: true)
+            clientID: context.clientID, files: item.files.map { CFLDisplayFile(name: $0.prepared.name, size: $0.prepared.size) }, previews: item.draft.images, sendingLocally: true)
         _ = bubbleState(for: row)
         visibleMessages.append(row)
         let replyIDs = Set(visibleReply.map(\.id))
@@ -740,10 +836,10 @@ final class CFLConversationModel: ObservableObject {
     func restoreLocalSend(_ operation: String) {
         guard let item = localSends.first(where: { $0.operation == operation && $0.phase == .failed }),
               let context = imageContext, context.target == item.context.target, context.session == item.context.session,
-              AppConfigStore.shared.chatComposerDraft.isEmpty, selectedImages.isEmpty else { return }
+              AppConfigStore.shared.chatComposerDraft.isEmpty, selectedImages.isEmpty, selectedFiles.isEmpty else { return }
         AppConfigStore.shared.chatComposerDraft = item.text
-        selectedImages = item.images
-        if !item.images.isEmpty { imageDraftOwner = (context.target, context.session) }
+        notice = !item.images.isEmpty || !item.files.isEmpty
+            ? NSLocalizedString("附件未恢复，请重新选择。", comment: "Attachments must be selected again") : nil
     }
 
     private func startSendQueue() {
@@ -757,7 +853,7 @@ final class CFLConversationModel: ObservableObject {
 
     private func drainSendQueue() async {
         defer { sendQueueTask = nil; sendQueueActive = false }
-        while let index = localSends.firstIndex(where: { $0.phase == .queued }) {
+        while uncertain == nil, let index = localSends.firstIndex(where: { $0.phase == .queued }) {
             let item = localSends[index]
             guard let client, imageContext == item.context, state.connection == .online, !needsSignIn else {
                 localSends[index].phase = .failed
@@ -767,7 +863,7 @@ final class CFLConversationModel: ObservableObject {
             localSends[index].phase = .sending
             scheduleProjection()
             do {
-                let outcome = try await client.send(item.text, images: item.images.map(\.prepared), operationId: item.operation,
+                let outcome = try await client.send(item.text, images: item.images.map(\.prepared), files: item.files.map(\.prepared), operationId: item.operation,
                     expectedSessionId: item.context.session, expectedSessionRevision: item.context.revision)
                 guard let current = localSends.firstIndex(where: { $0.operation == item.operation }) else { continue }
                 if outcome == .notDispatched {
@@ -809,12 +905,15 @@ final class CFLConversationModel: ObservableObject {
 
     func refresh() async {
         guard let client, !retryIsBusy else { return }
+        let inspected = uncertain, inspectedClientID = clientID
         busy = true
         defer { busy = false }
         do {
             try await client.reconcile()
-            if let uncertain {
+            guard clientID == inspectedClientID, uncertain == inspected else { return }
+            if let uncertain = inspected {
                 let current = await client.currentState()
+                guard clientID == inspectedClientID, self.uncertain == uncertain else { return }
                 if let index = localSends.firstIndex(where: { $0.operation == uncertain.operationId }) {
                     let pending = current.pending.first { $0.operationId == uncertain.operationId && $0.sessionId == uncertain.sessionId }
                     localSends[index].phase = pending?.dispatched == true ? .awaiting : .failed
@@ -834,6 +933,7 @@ final class CFLConversationModel: ObservableObject {
                 uncertainImageIDs = []
                 uncertainDraftRevision = nil
                 scheduleProjection()
+                if localSends.contains(where: { $0.phase == .queued }) { startSendQueue() }
             } else {
                 notice = nil
             }
@@ -879,7 +979,7 @@ final class CFLConversationModel: ObservableObject {
                 guard imageContext == context, let current = localSends.firstIndex(where: { $0.operation == item.operation }) else { return }
                 let attempt = UUID().uuidString.lowercased()
                 localSends[current] = LocalSend(context: context, origin: item.origin, operation: attempt,
-                    text: item.text, images: item.images, createdAt: item.createdAt, anchor: item.anchor, phase: .queued)
+                    text: item.text, images: item.images, files: item.files, createdAt: item.createdAt, anchor: item.anchor, phase: .queued)
                 pendingAnchors[attempt] = pendingAnchors.removeValue(forKey: item.operation)
                 displayOrigins[attempt] = item.origin
                 scheduleProjection()
@@ -889,7 +989,9 @@ final class CFLConversationModel: ObservableObject {
                 let attempt = try await client.retryFailed(sessionId: pending.sessionId, operationId: pending.operationId,
                                                             expectedSessionRevision: state.sessionRevision)
                 displayOrigins[attempt] = origin
+                let removed = localSends.filter { $0.operation == pending.operationId }.flatMap(\.files)
                 localSends.removeAll { $0.operation == pending.operationId }
+                releaseFilesIfUnused(removed)
                 scheduleProjection()
             }
         } catch let error as CFLPendingStorageUncertain {
@@ -924,7 +1026,9 @@ final class CFLConversationModel: ObservableObject {
             } else {
                 guard localSends.contains(where: { $0.operation == pending.operationId && $0.phase == .failed }) else { return }
             }
+            let removed = localSends.filter { $0.operation == pending.operationId }.flatMap(\.files)
             localSends.removeAll { $0.operation == pending.operationId }
+            releaseFilesIfUnused(removed)
             scheduleProjection()
         }
         catch { notice = message(for: error) }

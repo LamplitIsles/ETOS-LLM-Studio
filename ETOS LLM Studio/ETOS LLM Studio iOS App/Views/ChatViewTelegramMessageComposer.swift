@@ -10,6 +10,7 @@ import SwiftUI
 import Foundation
 import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
 import ETOSCore
 
 struct CFLComposerState {
@@ -38,9 +39,15 @@ struct TelegramMessageComposer: View {
     var availableHeight: CGFloat = .infinity
     var cflState: CFLComposerState
     var images: [CFLSelectedImage] = []
+    var files: [CFLSelectedFile] = []
+    var canAttachFiles = false
+    var beginFileSelection: () -> Bool = { false }
+    var addFiles: ([URL]) -> Void = { _ in }
+    var fileSelectionFailed: () -> Void = {}
+    var removeFile: (String) -> Void = { _ in }
     var canAttachImages = false
     var remainingImageSlots = 0
-    var isPreparingImages = false
+    var isPreparingAttachments = false
     var beginImageSelection: () -> Bool = { false }
     var imagePickerDidDismiss: () -> Void = {}
     var addPhotos: ([PhotosPickerItem]) -> Void = { _ in }
@@ -57,13 +64,14 @@ struct TelegramMessageComposer: View {
     @State private var inlineSpeechErrorMessage: String?
     @State private var showImagePicker = false
     @State private var showCamera = false
+    @State private var showFilePicker = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
 
     var compactTextEdgeInset: CGFloat { 6 }
     var body: some View {
         ChatComposerHeightLimit(maximumHeight: availableHeight) {
             VStack(spacing: 8) {
-                if !images.isEmpty {
+                if !images.isEmpty || !files.isEmpty {
                     imagePreviews.padding(.horizontal, 16)
                      .fixedSize(horizontal: false, vertical: true)
                      .layoutPriority(1)
@@ -72,6 +80,16 @@ struct TelegramMessageComposer: View {
                     .zIndex(1)
             }
             .padding(.bottom, 6)
+        }
+        .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): addFiles(urls)
+            case .failure: fileSelectionFailed()
+            }
+            imagePickerDidDismiss()
+        }
+        .onChange(of: showFilePicker) { _, presented in
+            if !presented { imagePickerDidDismiss() }
         }
         .photosPicker(isPresented: $showImagePicker, selection: $selectedPhotos,
                       maxSelectionCount: max(1, remainingImageSlots), selectionBehavior: .ordered, matching: .images)
@@ -121,6 +139,18 @@ struct TelegramMessageComposer: View {
     private var imagePreviews: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 8) {
+                ForEach(files) { file in
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(file.prepared.name).lineLimit(1).truncationMode(.middle)
+                            Text(ByteCountFormatter.string(fromByteCount: Int64(file.prepared.size), countStyle: .file)).font(.caption2).foregroundStyle(.secondary)
+                        }.frame(maxWidth: 150, alignment: .leading)
+                        Button { removeFile(file.id) } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(String(format: NSLocalizedString("移除附件 %@", comment: ""), file.prepared.name))
+                    }.padding(10).background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                }
                 ForEach(images) { image in
                     ZStack(alignment: .topTrailing) {
                         ChatPendingImagePreview(attachment: image.attachment)
@@ -174,6 +204,11 @@ struct TelegramMessageComposer: View {
                 } label: {
                     Label(NSLocalizedString("拍照", comment: "Take photo"), systemImage: "camera")
                 }.disabled(!canAttachImages || !UIImagePickerController.isSourceTypeAvailable(.camera))
+                Button {
+                    if beginFileSelection() { showFilePicker = true }
+                } label: {
+                    Label(NSLocalizedString("上传文件", comment: "Upload file"), systemImage: "doc")
+                }.disabled(!canAttachFiles)
                 if cflState.hasImages {
                     Button {
                         guard composerCanSend else { return }
@@ -186,7 +221,7 @@ struct TelegramMessageComposer: View {
                 ChatCircleActionLabel(systemName: "plus", circleSize: size)
             }
             .buttonStyle(ComposerPressButtonStyle())
-            .disabled((!canAttachImages && !cflState.hasImages) || isPreparingImages || inlineSpeechRecorder.phase.isActive)
+            .disabled((!canAttachImages && !canAttachFiles && !cflState.hasImages) || isPreparingAttachments || inlineSpeechRecorder.phase.isActive)
             .accessibilityLabel(NSLocalizedString("添加附件", comment: ""))
         }
     }

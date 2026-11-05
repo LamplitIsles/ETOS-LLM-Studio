@@ -34,6 +34,44 @@ struct CFLTimelineRowsTests {
                           sessionRevision: 1, clientID: UUID())
     }
 
+    @Test("File rows retain their identity and show attachment metadata")
+    func fileRowPresentation() {
+        let client = UUID()
+        let id = CFLDisplayMessage.ID(target: "fixture", session: "session", message: "local:op", offset: 0)
+        let local = CFLDisplayMessage(id: id, text: "", outgoing: true, markdown: false, images: [],
+                                      sessionRevision: 1, clientID: client,
+                                      files: [CFLDisplayFile(name: "notes.txt", size: 3)])
+        let ref = CFLFileRef(attachmentId: "file1", name: "notes.txt", mediaType: "text/plain", size: 3, availability: "available")
+        let confirmed = CFLDisplayMessage(id: id, text: "", outgoing: true, markdown: false, images: [],
+                                          sessionRevision: 1, clientID: client, files: [CFLDisplayFile(ref)])
+        #expect(CFLTimelineRow.message(local).message.id == CFLTimelineRow.message(confirmed).message.id)
+        let bubble = CFLBubbleState(local)
+        var changes = 0
+        let observer = bubble.objectWillChange.sink { _ in changes += 1 }
+        bubble.update(confirmed)
+        #expect(changes == 1 && bubble.item.files.first?.ref == ref)
+        withExtendedLifetime(observer) {}
+    }
+
+    @Test("File-only history and unverified retry keep the original visible file")
+    func fileHistoryAndRetry() throws {
+        let wire = #"{"id":"message","role":"user","text":"","createdAt":1,"operationId":"attempt","turnId":null,"files":[{"attachmentId":"new","name":"new.txt","mediaType":"text/plain","size":3,"availability":"available"}]}"#
+        let message = try JSONDecoder().decode(CFLMessage.self, from: Data(wire.utf8))
+        let original = CFLFileRef(attachmentId: "old", name: "old.txt", mediaType: "text/plain", size: 3, availability: "available")
+        let pending = CFLPending(target: "fixture", sessionId: "session", operationId: "attempt", text: "", createdAt: Date(),
+                                 dispatched: true, status: .unknown, retrySource: "source", files: [original])
+        var input = CFLTimelineProjection.ProjectionInput(target: "fixture", session: "session", revision: 1, clientID: UUID(),
+            messages: [message], reply: nil, historyGaps: [], drafts: [], previews: [], pending: [pending],
+            otherTargetPending: [], anchors: [:], locals: [], origins: [:])
+        let uncertain = CFLTimelineProjection.project(input, cache: [:]).messages
+        #expect(uncertain.count == 1 && uncertain[0].files.first?.name == "old.txt")
+        input = CFLTimelineProjection.ProjectionInput(target: input.target, session: input.session, revision: input.revision,
+            clientID: input.clientID, messages: [message], reply: nil, historyGaps: [], drafts: [], previews: [], pending: [],
+            otherTargetPending: [], anchors: [:], locals: [], origins: [:])
+        let confirmed = CFLTimelineProjection.project(input, cache: [:]).messages
+        #expect(confirmed.count == 1 && confirmed[0].files.first?.name == "new.txt")
+    }
+
     @Test("The adapter publishes only changed rows and coalesces stale updates")
     func adapterUpdates() async {
         let adapter = CFLTimelineAdapter()

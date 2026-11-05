@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -30,6 +31,7 @@ actor MemoryStore: CFLPendingStore {
     func injectSaveFailure(_ number: Int, afterCommit: Bool, unreadable: Bool = false) {
         failSaveNumber = number; commitBeforeFailure = afterCommit; failLoad = unreadable
     }
+    func failNextSave(afterCommit: Bool) { failSaveNumber = saveCount + 1; commitBeforeFailure = afterCommit }
     func restoreReads() { failLoad = false }
     func setEntries(_ value: [CFLPending]) { entries = value }
     func pauseNextSave() { pauseSave = true }
@@ -1002,6 +1004,43 @@ func checkRetryImages() async throws {
     precondition(nextState.pending.first?.operationId == nextAttempt && nextState.pending.first?.status == .submitted && nextState.localPreviews.map(\.attachmentId) == ["again_0", "again_1"] && nextState.localPreviews.map(\.id) == originalPreviewIDs)
     let explicitCalls = await definiteSocket.methods(); precondition(explicitCalls.filter { $0 == "retryFailed" }.count == 2)
     await definite.disconnect()
+
+    for committed in [false, true] {
+        let failureStore = MemoryStore(), failureSocket = FakeSocket(snapshot: imageSnapshot())
+        await failureSocket.setFailedSubmit()
+        let failureClient = CFLChatClient(target: "https://example.com", store: failureStore, imageHTTP: FakeImageHTTP(), transport: { failureSocket })
+        await failureClient.connect(); let failureSource = try await failureClient.send("failed", images: images)
+        let failureRevision = await failureClient.currentState().sessionRevision
+        await failureSocket.setRetry(hold: true, receipt: retryReceipt(attempt: "unused", source: failureSource))
+        let task = Task { try await failureClient.retryFailed(sessionId: "A", operationId: failureSource, expectedSessionRevision: failureRevision) }
+        for _ in 0..<200 { if await failureSocket.retryIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        let retryHeld = await failureSocket.retryIsHeld(); precondition(retryHeld)
+        await failureStore.failNextSave(afterCommit: committed)
+        try await failureSocket.releaseRetry(); _ = try await task.value
+        let afterFailure = await failureClient.currentState()
+        precondition(afterFailure.localPreviews.map(\.operationId) == [failureSource, failureSource])
+        precondition(afterFailure.localPreviews.map(\.attachmentId) == ["stored_0", "stored_1"])
+        await failureClient.disconnect()
+    }
+
+    let persistRaceStore = MemoryStore(), persistRaceSocket = FakeSocket(snapshot: imageSnapshot())
+    await persistRaceSocket.setFailedSubmit()
+    let persistRace = CFLChatClient(target: "https://example.com", store: persistRaceStore, imageHTTP: FakeImageHTTP(), transport: { persistRaceSocket })
+    await persistRace.connect(); let persistRaceSource = try await persistRace.send("failed", images: images)
+    let persistRaceRevision = await persistRace.currentState().sessionRevision
+    await persistRaceSocket.setRetry(hold: true, receipt: retryReceipt(attempt: "unused", source: persistRaceSource))
+    let persistRaceTask = Task { try await persistRace.retryFailed(sessionId: "A", operationId: persistRaceSource, expectedSessionRevision: persistRaceRevision) }
+    for _ in 0..<200 { if await persistRaceSocket.retryIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let retryHeld = await persistRaceSocket.retryIsHeld(); precondition(retryHeld)
+    await persistRaceStore.pauseNextSave(); try await persistRaceSocket.releaseRetry()
+    for _ in 0..<200 { if await persistRaceStore.saveIsPaused() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let saveHeld = await persistRaceStore.saveIsPaused(); precondition(saveHeld)
+    try await persistRaceSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    for _ in 0..<200 { if await persistRace.currentState().sessionId == "B" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await persistRaceStore.resumeSave(); _ = try await persistRaceTask.value
+    let switchedDuringPersist = await persistRace.currentState()
+    precondition(switchedDuringPersist.sessionId == "B" && switchedDuringPersist.localPreviews.isEmpty)
+    await persistRace.disconnect()
 
     let switchingSocket = FakeSocket(snapshot: imageSnapshot()), switchingStore = MemoryStore()
     await switchingSocket.setFailedSubmit()
@@ -2022,11 +2061,861 @@ func checkStickers() async throws {
     print("CFL sticker checks passed")
 }
 
+func fileWire(_ id: String, name: String = "note.txt", size: Int = 3, availability: String = "available") -> ChordJSON {
+    .object(["attachmentId": .string(id), "name": .string(name), "mediaType": .string(""),
+             "size": .number(Double(size)), "availability": .string(availability)])
+}
+func fileSnapshot(before: String? = nil) -> ChordJSON {
+    let recovery: ChordJSON = .object(["sourceId": .string("source"), "operationId": .string("12345678-1234-4234-8234-123456789abc"),
+        "text": .string("draft"), "images": .array([]), "files": .array([fileWire("missing", availability: "missing")]), "replacementEligible": .bool(true)])
+    let msg: ChordJSON = .object(["id": .string("file-history"), "role": .string("user"), "text": .string(""), "createdAt": .number(1),
+        "operationId": .null, "turnId": .null, "files": .array([fileWire("history")])])
+    let view: ChordJSON = .object(["version": .number(2), "sessionId": .string("A"), "name": .string("test"), "activeTurnId": .null,
+        "contextUsage": .null, "compaction": .null, "recovery": .array([recovery]),
+        "capabilities": .object(["text": .bool(true), "stop": .bool(true),
+            "images": .object(["mediaTypes": .array([.string("image/png")]), "maxImagesPerMessage": .number(2), "maxImageBytes": .number(100), "maxMessageImageBytes": .number(150)]),
+            "files": .object(["maxFilesPerMessage": .number(2), "maxFileBytes": .number(5), "maxMessageFileBytes": .number(6)])]),
+        "messages": .array([msg]), "before": before.map(ChordJSON.string) ?? .null])
+    return .object(["serviceId": .string("lamplit.chat.v2"), "mode": .string("singleton"), "instances": .array([.object(["members": .array([.object(["name": .string("view"), "kind": .string("state"), "sequence": .number(0), "ops": .array([.array([.string("r"), view])])])])])])])
+}
+final class BoundedAuthRequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+    func append(_ request: URLRequest) { lock.lock(); requests.append(request); lock.unlock() }
+    func take() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; let result = requests; requests = []; return result }
+}
+
+/// Isolated URLSession fake exercises the real bounded delegate, without a server.
+final class BoundedFileURLProtocol: URLProtocol, @unchecked Sendable {
+    static let authRequests = BoundedAuthRequestLog()
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let path = request.url!.path
+        let status = path == "/auth401" || path == "/denied" ? 401 : (path == "/auth403" ? 403 : (path == "/redirect" ? 302 : 200))
+        let hasErrorBody = path == "/auth401" || path == "/auth403"
+        if hasErrorBody { Self.authRequests.append(request) }
+        let headers = hasErrorBody ? ["Content-Length": "257"] : (path == "/contentlong" ? ["Content-Length": "100"] : nil)
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if hasErrorBody {
+            client?.urlProtocol(self, didLoad: Data(repeating: 42, count: 257))
+        } else if status == 200 && path != "/empty" && path != "/contentlong" {
+            client?.urlProtocol(self, didLoad: Data([1, 2]))
+            client?.urlProtocol(self, didLoad: Data(path == "/oversized" ? [3, 4] : [3]))
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() { }
+}
+actor BoundedAuthStatusHTTP: CFLImageHTTP {
+    let state: String
+    private var requests: [URLRequest] = []
+    init(state: String) { self.state = state }
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        let body = try JSONSerialization.data(withJSONObject: ["state": state])
+        return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+    func allRequests() -> [URLRequest] { requests }
+}
+
+/// Exercises URLSession's bounded upload/download delegate and the real auth wrapper.
+func checkBoundedAuthErrorBodies() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("etos-bounded-auth-test-" + UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("upload")
+    try Data([1, 2, 3]).write(to: source)
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [BoundedFileURLProtocol.self]
+    let raw = CFLImageURLSession(boundedConfiguration: config)
+    for status in [401, 403] {
+        let url = URL(string: "https://example.com/auth\(status)")!
+        var upload = URLRequest(url: url); upload.httpMethod = "PUT"
+        let download = URLRequest(url: url)
+        let directDestination = root.appendingPathComponent("direct-\(status)")
+        guard FileManager.default.createFile(atPath: directDestination.path, contents: nil) else { throw CFLFailure.storage }
+        _ = BoundedFileURLProtocol.authRequests.take()
+        let (body, uploadResponse) = try await raw.uploadFile(for: upload, from: source, maximumResponseBytes: 0)
+        precondition(body.isEmpty && (uploadResponse as? HTTPURLResponse)?.statusCode == status && uploadResponse.expectedContentLength == 257)
+        let downloadResponse = try await raw.downloadFile(for: download, to: directDestination, maximumBytes: 1)
+        let directBytes = try Data(contentsOf: directDestination)
+        precondition((downloadResponse as? HTTPURLResponse)?.statusCode == status && downloadResponse.expectedContentLength == 257 && directBytes.isEmpty)
+        let directRequests = BoundedFileURLProtocol.authRequests.take()
+        precondition(directRequests.count == 2)
+        for authState in ["signed_in", "setup"] {
+            let authHTTP = BoundedAuthStatusHTTP(state: authState)
+            let auth = CFLAuthorization(store: ImageTestCredentials(), http: authHTTP)
+            try await auth.select(origin: "https://example.com")
+            let authorized = CFLAuthorizedHTTP(authorization: auth, http: raw)
+            let destination = root.appendingPathComponent("\(status)-\(authState)")
+            guard FileManager.default.createFile(atPath: destination.path, contents: nil) else { throw CFLFailure.storage }
+            do {
+                _ = try await authorized.uploadFile(for: upload, from: source, maximumResponseBytes: 0)
+                preconditionFailure("unauthorized upload accepted")
+            } catch CFLFailure.offline { precondition(authState == "signed_in") }
+              catch CFLFailure.accessDenied { precondition(authState == "setup") }
+            do {
+                _ = try await authorized.downloadFile(for: download, to: destination, maximumBytes: 1)
+                preconditionFailure("unauthorized download accepted")
+            } catch CFLFailure.offline { precondition(authState == "signed_in") }
+              catch CFLFailure.accessDenied { precondition(authState == "setup") }
+            let requests = BoundedFileURLProtocol.authRequests.take(), checks = await authHTTP.allRequests()
+            let saved = try Data(contentsOf: destination)
+            precondition(saved.isEmpty && requests.count == 2 && checks.count == 2)
+            precondition(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token" && $0.value(forHTTPHeaderField: "Origin") == "https://example.com" })
+            precondition(checks.allSatisfy { $0.url?.path == "/api/auth/status" })
+        }
+    }
+}
+
+actor FakeFileHTTP: CFLImageHTTP {
+    var requests: [URLRequest] = []
+    var malformed = ""
+    var hold = false
+    var downloadStatus = 200
+    var downloadBytes = Data([1, 2, 3])
+    var limits: [Int] = []
+    var manifest: [String: Any]?
+    var received: [String: Data] = [:]
+    var continuation: CheckedContinuation<Void, Never>?
+    let images = FakeImageHTTP()
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        if request.url!.path == "/api/chat/images" { return try await images.data(for: request) }
+        if request.url!.path == "/api/auth/status" {
+            return (Data("{\"state\":\"signed_in\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        if hold { await withCheckedContinuation { continuation = $0 }; hold = false }
+        let path = request.url!.path
+        let status = path.hasPrefix("/api/chat/files/") ? downloadStatus : 200
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        if path.hasPrefix("/api/chat/files/") { return (downloadBytes, response) }
+        if path == "/api/chat/file-operations", request.httpMethod == "POST" {
+            manifest = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+        }
+        guard let manifest, let items = manifest["files"] as? [[String: Any]] else { throw CFLFailure.protocolError }
+        if path.hasSuffix("/complete") {
+            var refs = items.enumerated().map { index, item in
+                ["id": item["id"]!, "order": index, "ref": ["attachmentId": "file_\(index)", "name": item["name"]!,
+                    "mediaType": item["mediaType"]!, "size": item["size"]!, "availability": "available"]] as [String: Any]
+            }
+            if malformed == "order" { refs.reverse() }
+            if malformed == "duplicate" && refs.count > 1 { refs[1]["ref"] = refs[0]["ref"] }
+            if malformed == "size" { var ref = refs[0]["ref"] as! [String: Any]; ref["size"] = 4; refs[0]["ref"] = ref }
+            if malformed == "extra" { refs[0]["extra"] = true }
+            let result: [String: Any] = ["sessionId": malformed == "session" ? "B" : manifest["sessionId"]!,
+                "operationId": malformed == "operation" ? UUID().uuidString : manifest["operationId"]!, "files": refs]
+            return (try JSONSerialization.data(withJSONObject: result), response)
+        }
+        let uploaded = items.compactMap { item -> String? in
+            guard let id = item["id"] as? String, received[id] != nil else { return nil }; return id
+        }
+        return (try JSONSerialization.data(withJSONObject: ["manifest": manifest, "uploaded": uploaded]), response)
+    }
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await data(for: request)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return (Data(), response) }
+        var buffer = CFLBoundedDataBuffer(maximumBytes: maximumBytes)
+        for byte in bytes { try buffer.append(Data([byte])) }
+        return (buffer.data, response)
+    }
+    func uploadFile(for request: URLRequest, from file: URL, maximumResponseBytes: Int) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        guard let items = manifest?["files"] as? [[String: Any]],
+              let item = items.first(where: { $0["id"] as? String == request.url!.lastPathComponent }) else { throw CFLFailure.protocolError }
+        let bytes = try Data(contentsOf: file)
+        guard bytes.count == item["size"] as? Int else { throw CFLFailure.protocolError }
+        received[request.url!.lastPathComponent] = bytes
+        return (Data(), HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!)
+    }
+    func downloadFile(for request: URLRequest, to destination: URL, maximumBytes: Int) async throws -> URLResponse {
+        limits.append(maximumBytes)
+        let (bytes, response) = try await data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw CFLFailure.protocolError }
+        if (200...299).contains(http.statusCode) {
+            guard bytes.count <= maximumBytes else { throw CFLFailure.protocolError }
+            try bytes.write(to: destination)
+        }
+        return response
+    }
+    func setDownload(status: Int = 200, bytes: Data = Data([1, 2, 3])) { downloadStatus = status; downloadBytes = bytes }
+    func allLimits() -> [Int] { limits }
+    func setMalformed(_ value: String) { malformed = value }
+    func setHold() { hold = true }
+    func isHeld() -> Bool { continuation != nil }
+    func release() { continuation?.resume(); continuation = nil }
+    func allRequests() -> [URLRequest] { requests }
+    func uploadedData() -> [String: Data] { received }
+}
+func fileRetryReceipt(attempt: String, source: String, session: String = "A", old: [String] = ["a", "b"], new: [String] = ["new_a", "new_b"], size: Int = 3) -> ChordJSON {
+    .object(["operationId": .string(attempt), "state": .string("submitted"), "messageId": .null, "turnId": .null, "error": .null,
+        "retryFiles": .object(["sessionId": .string(session), "sourceOperationId": .string(source), "files": .array(zip(old, new).map { oldID, newID in
+            .object(["sourceAttachmentId": .string(oldID), "ref": fileWire(newID, size: size)])
+        })])])
+}
+#if canImport(CryptoKit)
+func checkFiles() async throws {
+    let testRoot = FileManager.default.temporaryDirectory.appendingPathComponent("etos-single-file-test-" + UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: testRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: testRoot) }
+    let fixtureDirectory = testRoot.appendingPathComponent("snapshots", isDirectory: true)
+    func fixture(_ bytes: Data, name: String, mediaType: String = "") throws -> CFLPreparedFile {
+        let source = testRoot.appendingPathComponent(UUID().uuidString)
+        try bytes.write(to: source)
+        return try CFLFileDraftStorage.copy(source: source, directory: fixtureDirectory, name: name, mediaType: mediaType)
+    }
+    let files = [try fixture(Data([1, 2, 3]), name: "note.txt"),
+                 try fixture(Data(), name: "empty", mediaType: "application/example")]
+    let socket = FakeSocket(snapshot: fileSnapshot(before: "older")), store = MemoryStore(), http = FakeFileHTTP()
+    let historical: ChordJSON = .object(["id": .string("older-file"), "role": .string("user"), "text": .string(""), "createdAt": .number(1), "operationId": .null, "turnId": .null, "files": .array([fileWire("old", availability: "missing")])])
+    await socket.setHistory(["older": .object(["messages": .array([historical]), "before": .null])])
+    let client = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+    await client.connect(); let initial = await client.currentState()
+    precondition(initial.fileLimits?.maxFilesPerMessage == 2 && initial.messages.first?.files?.first?.attachmentId == "history")
+    precondition(initial.recovery.first?.files?.first?.availability == "missing")
+    try await client.validateFiles(files)
+    do { try await client.validateFiles(files + [files[0]]); preconditionFailure("file count") } catch CFLFailure.invalidInput { }
+    let invalidID = CFLPreparedFile(id: "bad/path", name: files[0].name, mediaType: files[0].mediaType,
+                                    ownedFile: files[0].ownedFileURL, size: files[0].size, sha256: files[0].sha256)
+    let sixBytes = try fixture(Data(repeating: 1, count: 6), name: "six")
+    let fourBytes = [try fixture(Data(repeating: 1, count: 4), name: "four-a"),
+                     try fixture(Data(repeating: 1, count: 4), name: "four-b")]
+    do { try await client.validateFiles([invalidID]); preconditionFailure("file id") } catch CFLFailure.invalidInput { }
+    do { try await client.validateFiles([sixBytes]); preconditionFailure("file size") } catch CFLFailure.invalidInput { }
+    do { try await client.validateFiles(fourBytes); preconditionFailure("aggregate") } catch CFLFailure.invalidInput { }
+    let operation = try await client.send("", files: files, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision)
+    let calls = await socket.arguments(for: "submit"), records = await store.entries, requests = await http.allRequests()
+    precondition(calls.first?.first?.object?["files"]?.array?.count == 2 && records.first?.files?.map(\.attachmentId) == ["file_0", "file_1"])
+    let manifest = try JSONSerialization.jsonObject(with: requests[0].httpBody!) as! [String: Any]
+    let declared = manifest["files"] as! [[String: Any]], uploaded = await http.uploadedData()
+    precondition(requests.count == 4 && requests[0].url?.path == "/api/chat/file-operations" && requests[1].httpMethod == "PUT" && requests[2].httpMethod == "PUT" && requests[3].url!.path.hasSuffix("/complete"))
+    precondition(manifest["operationId"] as? String == operation && declared.map { $0["id"] as! String } == files.map(\.id) && requests[0].value(forHTTPHeaderField: "Origin") == "https://example.com")
+    precondition(declared.map { $0["name"] as! String } == files.map(\.name) && declared.map { $0["mediaType"] as! String } == files.map(\.mediaType) && declared.map { $0["size"] as! Int } == [3, 0])
+    precondition(uploaded[files[0].id] == Data([1, 2, 3]) && uploaded[files[1].id] == Data())
+    let local = try await client.downloadFile(initial.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision)
+    let bytes = try Data(contentsOf: local); precondition(bytes == Data([1, 2, 3]))
+    try FileManager.default.removeItem(at: local)
+    do { _ = try await client.downloadFile(initial.recovery[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision); preconditionFailure("missing file") } catch CFLFailure.invalidInput { }
+    let limits = await http.allLimits(); precondition(limits == [3])
+    var bounded = CFLBoundedDataBuffer(maximumBytes: 3)
+    try bounded.append(Data([1, 2])); try bounded.append(Data([3]))
+    do { try bounded.append(Data([4])); preconditionFailure("oversized chunk retained") } catch CFLFailure.protocolError { }
+    precondition(bounded.data == Data([1, 2, 3]))
+    var zero = CFLBoundedDataBuffer(maximumBytes: 0)
+    try zero.append(Data())
+    do { try zero.append(Data([1])); preconditionFailure("empty file accepted bytes") } catch CFLFailure.protocolError { }
+    await http.setDownload(bytes: Data([1, 2, 3, 4]))
+    do { _ = try await client.downloadFile(initial.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision); preconditionFailure("oversized download") } catch CFLFailure.protocolError { }
+    await http.setDownload(bytes: Data([1, 2]))
+    do { _ = try await client.downloadFile(initial.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision); preconditionFailure("truncated download") } catch CFLFailure.protocolError { }
+    await http.setDownload(status: 302)
+    do { _ = try await client.downloadFile(initial.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: initial.sessionRevision); preconditionFailure("redirect accepted") } catch CFLFailure.requestFailed { }
+    try await client.loadEarlier()
+    let loaded = await client.currentState(); precondition(loaded.messages.contains { $0.files?.first?.availability == "missing" })
+    await client.disconnect()
+
+    let boundedConfig = URLSessionConfiguration.ephemeral
+    boundedConfig.protocolClasses = [BoundedFileURLProtocol.self]
+    let boundedHTTP = CFLImageURLSession(boundedConfiguration: boundedConfig)
+    func boundedRequest(_ path: String) -> URLRequest { URLRequest(url: URL(string: "https://example.com/" + path)!) }
+    let (boundedBytes, _) = try await boundedHTTP.boundedData(for: boundedRequest("valid"), maximumBytes: 3)
+    precondition(boundedBytes == Data([1, 2, 3]))
+    let downloadDestination = FileManager.default.temporaryDirectory.appendingPathComponent("etos-test-download-" + UUID().uuidString)
+    precondition(FileManager.default.createFile(atPath: downloadDestination.path, contents: nil))
+    defer { try? FileManager.default.removeItem(at: downloadDestination) }
+    _ = try await boundedHTTP.downloadFile(for: boundedRequest("valid"), to: downloadDestination, maximumBytes: 3)
+    let streamed = try Data(contentsOf: downloadDestination); precondition(streamed == Data([1, 2, 3]))
+    let oversizedDestination = FileManager.default.temporaryDirectory.appendingPathComponent("etos-test-download-" + UUID().uuidString)
+    precondition(FileManager.default.createFile(atPath: oversizedDestination.path, contents: nil))
+    defer { try? FileManager.default.removeItem(at: oversizedDestination) }
+    do { _ = try await boundedHTTP.downloadFile(for: boundedRequest("oversized"), to: oversizedDestination, maximumBytes: 3); preconditionFailure("oversized stream to disk") } catch CFLFailure.protocolError { }
+    let partial = try Data(contentsOf: oversizedDestination); precondition(partial.count <= 3)
+    let (emptyBytes, _) = try await boundedHTTP.boundedData(for: boundedRequest("empty"), maximumBytes: 0)
+    precondition(emptyBytes.isEmpty)
+    do { _ = try await boundedHTTP.boundedData(for: boundedRequest("oversized"), maximumBytes: 3); preconditionFailure("stream exceeded limit") } catch CFLFailure.protocolError { }
+    do { _ = try await boundedHTTP.boundedData(for: boundedRequest("contentlong"), maximumBytes: 3); preconditionFailure("oversized content length") } catch CFLFailure.protocolError { }
+    let delegate = CFLBoundedTransfer(maximumBytes: 3, configuration: nil)
+    let redirectSession = URLSession(configuration: .ephemeral)
+    let redirectTask = redirectSession.dataTask(with: boundedRequest("redirect"))
+    let redirect = HTTPURLResponse(url: redirectTask.originalRequest!.url!, statusCode: 302, httpVersion: nil, headerFields: ["Location": "https://other.example/"])!
+    var redirected: URLRequest? = boundedRequest("valid")
+    delegate.urlSession(redirectSession, task: redirectTask, willPerformHTTPRedirection: redirect,
+                        newRequest: URLRequest(url: URL(string: "https://other.example/")!)) { redirected = $0 }
+    precondition(redirected == nil); redirectSession.invalidateAndCancel()
+    do { _ = try await FakeImageHTTP().boundedData(for: boundedRequest("valid"), maximumBytes: 3); preconditionFailure("unbounded transport used") } catch CFLFailure.requestFailed { }
+    let (deniedBody, deniedResponse) = try await boundedHTTP.boundedData(for: boundedRequest("denied"), maximumBytes: 0)
+    precondition(deniedBody.isEmpty && (deniedResponse as? HTTPURLResponse)?.statusCode == 401)
+    let (_, redirectResponse) = try await boundedHTTP.boundedData(for: boundedRequest("redirect"), maximumBytes: 0)
+    precondition((redirectResponse as? HTTPURLResponse)?.statusCode == 302)
+
+    let authHTTP = FakeFileHTTP(), authSocket = FakeSocket(snapshot: fileSnapshot())
+    let auth = CFLAuthorization(store: ImageTestCredentials(), http: authHTTP)
+    try await auth.select(origin: "https://example.com")
+    let authorized = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: CFLAuthorizedHTTP(authorization: auth, http: authHTTP), transport: { authSocket })
+    await authorized.connect(); let authorizedState = await authorized.currentState()
+    _ = try await authorized.downloadFile(authorizedState.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: authorizedState.sessionRevision)
+    let authRequests = await authHTTP.allRequests(), authLimits = await authHTTP.allLimits()
+    precondition(authLimits == [3] && authRequests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token" && authRequests.last?.value(forHTTPHeaderField: "Origin") == "https://example.com")
+    for status in [401, 403] {
+        await authHTTP.setDownload(status: status)
+        do { _ = try await authorized.downloadFile(authorizedState.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: authorizedState.sessionRevision); preconditionFailure("authorization failure accepted") } catch CFLFailure.offline { }
+        let afterFailure = await authHTTP.allRequests()
+        precondition(afterFailure.last?.url?.path == "/api/auth/status")
+    }
+    await authorized.disconnect()
+
+    let png = Data([137,80,78,71,13,10,26,10,1]), jpeg = Data([255,216,255,1])
+    let image = CFLPreparedImage(id: "image", name: "x.png", mediaType: "image/png", original: png, preview: jpeg, model: jpeg)
+    let mixedSocket = FakeSocket(snapshot: fileSnapshot()), mixedHTTP = FakeFileHTTP(), mixedStore = MemoryStore()
+    let mixed = CFLChatClient(target: "https://example.com", store: mixedStore, imageHTTP: mixedHTTP, transport: { mixedSocket })
+    await mixed.connect(); _ = try await mixed.send("mixed", images: [image], files: files)
+    let mixedCalls = await mixedSocket.arguments(for: "submit"), mixedEntries = await mixedStore.entries
+    precondition(mixedCalls[0][0].object?["images"]?.array?.count == 1 && mixedCalls[0][0].object?["files"]?.array?.count == 2 && mixedEntries[0].files?.count == 2)
+    await mixed.disconnect()
+
+    // A known failed first save removes staged previews; a committed save
+    // retains them and the complete file references for explicit recovery.
+    for committed in [false, true] {
+        let socket = FakeSocket(snapshot: fileSnapshot()), http = FakeFileHTTP(), store = MemoryStore()
+        let client = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+        await client.connect(); await store.failNextSave(afterCommit: committed)
+        do { _ = try await client.send("mixed", images: [image], files: files); precondition(committed) }
+        catch CFLFailure.storage { precondition(!committed) }
+        let state = await client.currentState(), saved = await store.entries, methods = await socket.methods()
+        precondition((state.localPreviews.count == 1) == committed && (saved.first?.files?.count == 2) == committed && !methods.contains("submit"))
+        await client.disconnect()
+    }
+
+    let capSocket = FakeSocket(snapshot: fileSnapshot()), capHTTP = FakeFileHTTP(), capStore = MemoryStore()
+    let capClient = CFLChatClient(target: "https://example.com", store: capStore, imageHTTP: capHTTP, transport: { capSocket })
+    await capClient.connect(); await capHTTP.setHold()
+    let mixedPending = Task { try await capClient.send("mixed", images: [image], files: files) }
+    for _ in 0..<200 { if await capHTTP.isHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let capHeld = await capHTTP.isHeld(), beforeChange = await capClient.currentState()
+    precondition(capHeld && beforeChange.localPreviews.count == 1)
+    let changedCapabilities: ChordJSON = .object(["text": .bool(true), "stop": .bool(true),
+        "images": .object(["mediaTypes": .array([.string("image/png")]), "maxImagesPerMessage": .number(2), "maxImageBytes": .number(100), "maxMessageImageBytes": .number(150)]),
+        "files": .object(["maxFilesPerMessage": .number(1), "maxFileBytes": .number(5), "maxMessageFileBytes": .number(6)])])
+    try await capSocket.emit(update(sequence: 1, field: "capabilities", value: changedCapabilities))
+    for _ in 0..<200 { if await capClient.currentState().fileLimits?.maxFilesPerMessage == 1 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await capHTTP.release()
+    do { _ = try await mixedPending.value; preconditionFailure("changed capability accepted") } catch is CFLFileStagingUncertain { }
+    let capState = await capClient.currentState(), capEntries = await capStore.entries, capMethods = await capSocket.methods()
+    precondition(capState.localPreviews.isEmpty && capEntries.isEmpty && !capMethods.contains("submit"))
+    await capClient.disconnect()
+
+    let mixedRaceSocket = FakeSocket(snapshot: fileSnapshot()), mixedRaceHTTP = FakeFileHTTP(), mixedRaceStore = MemoryStore()
+    let mixedRace = CFLChatClient(target: "https://example.com", store: mixedRaceStore, imageHTTP: mixedRaceHTTP, transport: { mixedRaceSocket })
+    await mixedRace.connect(); await mixedRaceHTTP.setHold()
+    let mixedRaceTask = Task { try await mixedRace.send("mixed", images: [image], files: files) }
+    for _ in 0..<200 { if await mixedRaceHTTP.isHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let mixedHeld = await mixedRaceHTTP.isHeld(); precondition(mixedHeld)
+    try await mixedRaceSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    for _ in 0..<200 { if await mixedRace.currentState().sessionId == "B" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    try await mixedRaceSocket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+    for _ in 0..<200 { if await mixedRace.currentState().sessionId == "A" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await mixedRaceHTTP.release()
+    do { _ = try await mixedRaceTask.value; preconditionFailure("mixed session changed") } catch is CFLFileStagingUncertain { }
+    let mixedRaceState = await mixedRace.currentState(), mixedRaceEntries = await mixedRaceStore.entries, mixedRaceMethods = await mixedRaceSocket.methods()
+    precondition(mixedRaceState.localPreviews.isEmpty && mixedRaceEntries.isEmpty && !mixedRaceMethods.contains("submit"))
+    await mixedRace.disconnect()
+
+    for fault in ["order", "duplicate", "size", "extra", "session", "operation"] {
+        let badSocket = FakeSocket(snapshot: fileSnapshot()), badHTTP = FakeFileHTTP(), badStore = MemoryStore()
+        await badHTTP.setMalformed(fault)
+        let bad = CFLChatClient(target: "https://example.com", store: badStore, imageHTTP: badHTTP, transport: { badSocket })
+        await bad.connect()
+        do { _ = try await bad.send("", files: files); preconditionFailure("malformed upload accepted") } catch is CFLFileStagingUncertain { }
+        let methods = await badSocket.methods(), entries = await badStore.entries
+        precondition(!methods.contains("submit") && entries.isEmpty)
+        await bad.disconnect()
+    }
+    let source = UUID().uuidString, attempt = UUID().uuidString
+    let originals = ["a", "b"].map { CFLFileRef(attachmentId: $0, name: "note.txt", mediaType: "", size: 3, availability: "available") }
+    // Extra fields from the abandoned snapshot design do not discard the
+    // ordinary pending identity, admission marker, text or durable file refs.
+    let persisted = CFLPending(target: "https://example.com", sessionId: "A", operationId: attempt, text: "kept", createdAt: Date(), dispatched: true, status: .unknown, retrySource: source, files: originals)
+    let encoded = try JSONEncoder().encode(persisted)
+    var oldFields = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+    oldFields["fileSnapshotRecords"] = [["id": "local-only", "filename": "unused"]]
+    oldFields["fileStagingOperationId"] = source
+    let decoded = try JSONDecoder().decode(CFLPending.self, from: JSONSerialization.data(withJSONObject: oldFields))
+    let savedAgain = try JSONDecoder().decode(CFLPending.self, from: JSONEncoder().encode(decoded))
+    precondition(savedAgain.operationId == attempt && savedAgain.text == "kept" && savedAgain.dispatched && savedAgain.status == .unknown && savedAgain.retrySource == source && savedAgain.files == originals)
+    let good = fileRetryReceipt(attempt: attempt, source: source)
+    let badReceipts: [ChordJSON] = [fileRetryReceipt(attempt: attempt, source: source, session: "B"),
+        fileRetryReceipt(attempt: attempt, source: source, old: ["a", "a"]), fileRetryReceipt(attempt: attempt, source: source, new: ["x", "x"]),
+        fileRetryReceipt(attempt: attempt, source: source, size: 4),
+        .object(["operationId": .string(attempt), "state": .string("submitted"), "messageId": .null, "turnId": .null, "error": .null])]
+    for receipt in [good] + badReceipts {
+        let retryStore = MemoryStore(), retrySocket = FakeSocket(snapshot: fileSnapshot(), lookupReceipt: receipt)
+        await retryStore.setEntries([CFLPending(target: "https://example.com", sessionId: "A", operationId: attempt, text: "x", createdAt: Date(), dispatched: true, status: .unknown, retrySource: source, files: originals)])
+        let retry = CFLChatClient(target: "https://example.com", store: retryStore, imageHTTP: FakeFileHTTP(), transport: { retrySocket })
+        await retry.connect(); try? await retry.reconcile()
+        let result = await retry.currentState(), methods = await retrySocket.methods()
+        if receipt == good { precondition(result.pending.first?.files?.map(\.attachmentId) == ["new_a", "new_b"] && result.pending.first?.status == .submitted) }
+        else { precondition(result.pending.first?.status == .unknown && result.pending.first?.files == originals) }
+        precondition(!methods.contains("submit") && !methods.contains("retryFailed"))
+        await retry.disconnect()
+    }
+    let identitySocket = FakeSocket(snapshot: fileSnapshot()), identityHTTP = FakeFileHTTP(), identityStore = MemoryStore()
+    let identity = CFLChatClient(target: "https://example.com", store: identityStore, imageHTTP: identityHTTP, transport: { identitySocket })
+    await identity.connect(); let identityRevision = await identity.currentState().sessionRevision
+    let identityID = UUID().uuidString.lowercased()
+    _ = try await identity.send("", files: [files[0]], operationId: identityID, expectedSessionId: "A", expectedSessionRevision: identityRevision)
+    do { _ = try await identity.send("changed", files: [files[1]], operationId: identityID, expectedSessionId: "A", expectedSessionRevision: identityRevision); preconditionFailure("operation reused") } catch CFLSendFailure.duplicateOperationId { }
+    let identityMethods = await identitySocket.methods(); precondition(identityMethods.filter { $0 == "submit" }.count == 1)
+    await identity.disconnect()
+
+    let explicitSocket = FakeSocket(snapshot: fileSnapshot()), explicitStore = MemoryStore()
+    await explicitSocket.setFailedSubmit()
+    let explicit = CFLChatClient(target: "https://example.com", store: explicitStore, imageHTTP: FakeFileHTTP(), transport: { explicitSocket })
+    await explicit.connect(); let explicitRevision = await explicit.currentState().sessionRevision
+    let failedID = try await explicit.send("", files: [files[0]])
+    let mapped: ChordJSON = .object(["operationId": .string("placeholder"), "state": .string("submitted"), "messageId": .null, "turnId": .null, "error": .null,
+        "retryFiles": .object(["sessionId": .string("A"), "sourceOperationId": .string(failedID), "files": .array([
+            .object(["sourceAttachmentId": .string("file_0"), "ref": fileWire("replacement")])])])])
+    await explicitSocket.setRetry(receipt: mapped)
+    let retryID = try await explicit.retryFailed(sessionId: "A", operationId: failedID, expectedSessionRevision: explicitRevision)
+    let explicitState = await explicit.currentState(), explicitCalls = await explicitSocket.arguments(for: "retryFailed")
+    precondition(retryID != failedID && explicitState.pending.first?.files?.first?.attachmentId == "replacement" && explicitState.pending.first?.status == .submitted)
+    precondition(explicitCalls.count == 1 && explicitCalls[0][0].object?["attemptId"] == .string(retryID))
+    await explicit.disconnect()
+
+    let unknownStore = MemoryStore(), unknownSocket = FakeSocket(snapshot: fileSnapshot(), dropSubmit: true), sockets = SocketSequence([unknownSocket]), unknownHTTP = FakeFileHTTP()
+    let unknown = CFLChatClient(target: "https://example.com", store: unknownStore, imageHTTP: unknownHTTP, transport: { try await sockets.next() })
+    await unknown.connect(); let unknownID = try await unknown.send("uncertain", files: [files[0]])
+    let saved = await unknownStore.entries
+    precondition(saved.first?.operationId == unknownID && saved.first?.dispatched == true && saved.first?.files?.first?.attachmentId == "file_0")
+    let restoredSocket = FakeSocket(snapshot: fileSnapshot())
+    await sockets.append(restoredSocket)
+    for _ in 0..<400 { if await restoredSocket.methods().contains("lookup") { break }; try await Task.sleep(nanoseconds: 10_000_000) }
+    let restoredMethods = await restoredSocket.methods(), stagingRequests = await unknownHTTP.allRequests()
+    precondition(restoredMethods.contains("lookup") && !restoredMethods.contains("submit") && !restoredMethods.contains("retryFailed"))
+    precondition(stagingRequests.count == 3 && stagingRequests[0].url?.path == "/api/chat/file-operations" && stagingRequests[1].httpMethod == "PUT" && stagingRequests[2].url!.path.hasSuffix("/complete"))
+    await unknown.disconnect()
+
+    let raceSocket = FakeSocket(snapshot: fileSnapshot()), raceHTTP = FakeFileHTTP(), raceStore = MemoryStore()
+    let race = CFLChatClient(target: "https://example.com", store: raceStore, imageHTTP: raceHTTP, transport: { raceSocket })
+    await race.connect(); let revision = await race.currentState().sessionRevision; await raceHTTP.setHold()
+    let pending = Task { try await race.send("", files: files, expectedSessionId: "A", expectedSessionRevision: revision) }
+    for _ in 0..<200 { if await raceHTTP.isHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let uploadHeld = await raceHTTP.isHeld(); precondition(uploadHeld)
+    try await raceSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    for _ in 0..<200 { if await race.currentState().sessionId == "B" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await raceHTTP.release()
+    do { _ = try await pending.value; preconditionFailure("stale upload") } catch is CFLFileStagingUncertain { }
+    let raceMethods = await raceSocket.methods(), raceEntries = await raceStore.entries
+    precondition(!raceMethods.contains("submit") && raceEntries.isEmpty)
+    await race.disconnect()
+    let downloadSocket = FakeSocket(snapshot: fileSnapshot()), downloadHTTP = FakeFileHTTP()
+    let download = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: downloadHTTP, transport: { downloadSocket })
+    await download.connect(); let downloadState = await download.currentState(); await downloadHTTP.setHold()
+    let reading = Task { try await download.downloadFile(downloadState.messages[0].files![0], directory: testRoot, expectedSessionId: "A", expectedSessionRevision: downloadState.sessionRevision) }
+    for _ in 0..<200 { if await downloadHTTP.isHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let downloadHeld = await downloadHTTP.isHeld(); precondition(downloadHeld)
+    try await downloadSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    for _ in 0..<200 { if await download.currentState().sessionId == "B" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await downloadHTTP.release()
+    do { _ = try await reading.value; preconditionFailure("stale download") } catch CFLFailure.sessionChanged { }
+    await download.disconnect()
+    print("CFL file checks passed")
+}
+
+#endif
+
+#if canImport(CryptoKit)
+actor FakeStreamingFileHTTP: CFLImageHTTP {
+    var manifest: [String: Any] = [:]
+    var received: [String] = []
+    var requests: [String] = []
+    var authorizationHeaders: [String] = []
+    var loseUpload = false
+    var loseReserve = false
+    var cancelUpload = false
+    var loseComplete = false
+    var badManifest = false
+    var holdUpload = false
+    var uploadContinuation: CheckedContinuation<Void, Never>?
+    var maxChunk = 0
+    var totalUploaded = 0
+    var retiredPhase: String?
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) { throw CFLFailure.requestFailed }
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        let path = request.url!.path; requests.append("\(request.httpMethod ?? "GET") \(path)")
+        if let authorization = request.value(forHTTPHeaderField: "Authorization") { authorizationHeaders.append(authorization) }
+        if (retiredPhase == "reserve" && path == "/api/chat/file-operations") || (retiredPhase == "complete" && path.hasSuffix("/complete")) {
+            return (Data(), HTTPURLResponse(url: request.url!, statusCode: 410, httpVersion: nil, headerFields: nil)!)
+        }
+        if path == "/api/chat/file-operations" {
+            manifest = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            if loseReserve { throw CFLFailure.offline }
+        }
+        let items = manifest["files"] as! [[String: Any]]
+        var returnedManifest = manifest
+        if badManifest { returnedManifest["sessionId"] = "wrong-session" }
+        var status: [String: Any] = ["manifest": returnedManifest, "uploaded": received]
+        let result: [String: Any] = ["sessionId": manifest["sessionId"]!, "operationId": manifest["operationId"]!, "files": items.enumerated().map { index, item in
+            ["id": item["id"]!, "order": index, "ref": ["attachmentId": "stream_\(index)", "name": item["name"]!, "mediaType": item["mediaType"]!, "size": item["size"]!, "availability": "available"]] as [String: Any]
+        }]
+        if path.hasSuffix("/complete") {
+            if loseComplete { throw CFLFailure.offline }
+            status = result
+        }
+        let data = try JSONSerialization.data(withJSONObject: status)
+        guard data.count <= maximumBytes else { throw CFLFailure.protocolError }
+        return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+    func uploadFile(for request: URLRequest, from file: URL, maximumResponseBytes: Int) async throws -> (Data, URLResponse) {
+        requests.append("PUT \(request.url!.path)")
+        if let authorization = request.value(forHTTPHeaderField: "Authorization") { authorizationHeaders.append(authorization) }
+        if retiredPhase == "upload" { return (Data(), HTTPURLResponse(url: request.url!, statusCode: 410, httpVersion: nil, headerFields: nil)!) }
+        let id = request.url!.lastPathComponent
+        let handle = try FileHandle(forReadingFrom: file); defer { try? handle.close() }
+        var count = 0
+        while let chunk = try handle.read(upToCount: 65536), !chunk.isEmpty {
+            count += chunk.count; maxChunk = max(maxChunk, chunk.count)
+            await Task.yield()
+        }
+        totalUploaded += count
+        let items = manifest["files"] as! [[String: Any]]
+        guard let item = items.first(where: { $0["id"] as? String == id }), item["size"] as? Int == count else { throw CFLFailure.protocolError }
+        received.append(id)
+        if holdUpload { await withCheckedContinuation { uploadContinuation = $0 }; holdUpload = false }
+        if loseUpload { throw CFLFailure.offline }
+        if cancelUpload { throw CancellationError() }
+        return (Data(), HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!)
+    }
+    func downloadFile(for request: URLRequest, to destination: URL, maximumBytes: Int) async throws -> URLResponse {
+        guard maximumBytes >= 3 else { throw CFLFailure.protocolError }
+        try Data([1, 2, 3]).write(to: destination)
+        return HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+    }
+    func setLost() { loseUpload = true }
+    func setLostReserve() { loseReserve = true }
+    func setRetired(_ phase: String) { retiredPhase = phase }
+    func setCancelled() { cancelUpload = true }
+    func setLostComplete() { loseComplete = true }
+    func setBadManifest() { badManifest = true }
+    func setHoldUpload() { holdUpload = true }
+    func isUploadHeld() -> Bool { uploadContinuation != nil }
+    func releaseUpload() { uploadContinuation?.resume(); uploadContinuation = nil }
+    func transferCounts() -> (Int, Int) { (maxChunk, totalUploaded) }
+    func allRequests() -> [String] { requests }
+    func allAuthorizationHeaders() -> [String] { authorizationHeaders }
+}
+
+final class FileRefreshCredentials: CFLCredentialStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = CFLCredentials(accessToken: "initial", refreshToken: "initial-refresh", expiresAt: .distantFuture)
+    func load(origin: String) throws -> CFLCredentials? {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+    func save(_ credentials: CFLCredentials, origin: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        value = credentials
+    }
+}
+
+actor FileRefreshHTTP: CFLImageHTTP {
+    private var count = 0
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        count += 1
+        let body = try JSONSerialization.data(withJSONObject: ["access_token": "refreshed-\(count)",
+            "refresh_token": "refresh-\(count)", "expires_in": 3600, "token_type": "Bearer"])
+        return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+}
+func checkFileCopyCancellation() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("etos-copy-cancel-test-" + UUID().uuidString, isDirectory: true)
+    let directory = root.appendingPathComponent("snapshots", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sentinel = directory.appendingPathComponent("keep")
+    try Data([9]).write(to: sentinel)
+    let empty = root.appendingPathComponent("empty")
+    try Data().write(to: empty)
+    let start = DispatchSemaphore(value: 0)
+    let alreadyCancelled = Task.detached {
+        start.wait()
+        return try CFLFileDraftStorage.copy(source: empty, directory: directory, name: "empty", mediaType: "", maximumBytes: 0)
+    }
+    alreadyCancelled.cancel(); start.signal()
+    do { _ = try await alreadyCancelled.value; preconditionFailure("cancelled empty copy returned") } catch is CancellationError { }
+    let afterEmpty = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    precondition(afterEmpty == ["keep"])
+
+    // Pause after a real write, then cancel before the next read or EOF check.
+    // Exercise both a partial multi-chunk copy and cancellation at the last chunk.
+    for count in [3, 131_073] {
+        let source = root.appendingPathComponent("source-\(count)")
+        try Data(repeating: 7, count: count).write(to: source)
+        let wrote = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
+        defer { resume.signal() }
+        let copying = Task.detached {
+            try CFLFileDraftStorage.copy(source: source, directory: directory, name: "fixture", mediaType: "",
+                                         maximumBytes: count, didCopyChunk: { _ in wrote.signal(); resume.wait() })
+        }
+        var observedWrite = false
+        for _ in 0..<400 {
+            if wrote.wait(timeout: .now()) == .success { observedWrite = true; break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        guard observedWrite else { copying.cancel(); resume.signal(); _ = try? await copying.value; throw CFLFailure.requestFailed }
+        let entries = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        precondition(entries.count == 2 && entries.contains("keep"))
+        let partial = directory.appendingPathComponent(entries.first { $0 != "keep" }!)
+        let partialSize = try partial.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        precondition(partialSize == min(count, 64 * 1024))
+        copying.cancel(); resume.signal()
+        do { _ = try await copying.value; preconditionFailure("cancelled copy returned") } catch is CancellationError { }
+        let afterCancellation = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        precondition(afterCancellation == ["keep"])
+    }
+    let source = root.appendingPathComponent("budget")
+    try Data([1, 2, 3]).write(to: source)
+    do { _ = try CFLFileDraftStorage.copy(source: source, directory: directory, name: "budget", mediaType: "", maximumBytes: 2); preconditionFailure("copy exceeded remaining budget") } catch CFLFailure.invalidInput { }
+    let allowed = try CFLFileDraftStorage.copy(source: source, directory: directory, name: "budget", mediaType: "", maximumBytes: 3)
+    precondition(allowed.size == 3)
+    try CFLFileDraftStorage.remove(allowed)
+    let afterBudget = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    precondition(afterBudget == ["keep"])
+}
+
+func checkStreamingFiles() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("etos-file-test-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    precondition(CFLFileRef(attachmentId: "max", name: "n", mediaType: "", size: 100_000_000, availability: "missing").valid)
+    precondition(!CFLFileRef(attachmentId: "max", name: "n", mediaType: "", size: 100_000_001, availability: "available").valid)
+    let source = root.appendingPathComponent("fixture")
+    try Data([1, 2, 3]).write(to: source)
+    let draft = try CFLFileDraftStorage.copy(source: source, directory: root.appendingPathComponent("snapshots"), name: "a", mediaType: "")
+    let emptySource = root.appendingPathComponent("empty"); try Data().write(to: emptySource)
+    let empty = try CFLFileDraftStorage.copy(source: emptySource, directory: root.appendingPathComponent("snapshots"), name: "empty", mediaType: "")
+    precondition(draft.size == 3 && empty.size == 0)
+    try Data([9, 9, 9]).write(to: source)
+    let originalSnapshot = try Data(contentsOf: draft.ownedFileURL)
+    precondition(originalSnapshot == Data([1, 2, 3]))
+    // Even a small advertised capability uses the same file-backed streaming protocol.
+    let smallSocket = FakeSocket(snapshot: fileSnapshot()), smallHTTP = FakeFileHTTP(), smallStore = MemoryStore()
+    let small = CFLChatClient(target: "https://example.com", store: smallStore, imageHTTP: smallHTTP, transport: { smallSocket })
+    await small.connect(); _ = try await small.send("", files: [draft, empty])
+    let smallRequests = await smallHTTP.allRequests(), smallBytes = await smallHTTP.uploadedData(), smallPending = await smallStore.entries
+    precondition(smallRequests.count == 4 && smallRequests[0].url?.path == "/api/chat/file-operations" && smallRequests[1].httpMethod == "PUT" && smallRequests[2].httpMethod == "PUT" && smallRequests[3].url!.path.hasSuffix("/complete"))
+    precondition(smallBytes[draft.id] == Data([1, 2, 3]) && smallBytes[empty.id] == Data() && smallPending.first?.files?.map(\.size) == [3, 0])
+    await small.disconnect()
+    let socket = FakeSocket(snapshot: fileSnapshot()), http = FakeStreamingFileHTTP(), store = MemoryStore()
+    let client = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+    await client.connect()
+    let capabilities: ChordJSON = .object(["text": .bool(true), "stop": .bool(true), "files": .object([
+        "maxFilesPerMessage": .number(6), "maxFileBytes": .number(100_000_000), "maxMessageFileBytes": .number(200_000_000)])])
+    try await socket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+    for _ in 0..<200 { if await client.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let bound = await client.currentState(); precondition(bound.fileLimits?.maxFileBytes == 100_000_000)
+    let hundred = CFLPreparedFile(id: "hundred", name: "n", mediaType: "", ownedFile: source, size: 100_000_000, sha256: "fake")
+    let hundred2 = CFLPreparedFile(id: "hundred2", name: "n", mediaType: "", ownedFile: source, size: 100_000_000, sha256: "fake")
+    let extra = CFLPreparedFile(id: "extra", name: "n", mediaType: "", ownedFile: source, size: 1, sha256: "fake")
+    try await client.validateFiles([hundred, hundred2])
+    let six = (0..<6).map { CFLPreparedFile(id: "zero-\($0)", name: "n", mediaType: "", ownedFile: source, size: 0, sha256: "fake") }
+    try await client.validateFiles(six)
+    do { try await client.validateFiles(six + [extra]); preconditionFailure("file count exceeded") } catch CFLFailure.invalidInput { }
+    do { try await client.validateFiles([hundred, hundred2, extra]); preconditionFailure("aggregate exceeded") } catch CFLFailure.invalidInput { }
+    let tooBig = CFLPreparedFile(id: "big", name: "n", mediaType: "", ownedFile: source, size: 100_000_001, sha256: "fake")
+    do { try await client.validateFiles([tooBig]); preconditionFailure("single file exceeded") } catch CFLFailure.invalidInput { }
+    _ = try await client.send("", files: [draft, empty])
+    let calls = await socket.arguments(for: "submit"), requests = await http.allRequests(), entries = await store.entries
+    precondition(calls.count == 1 && entries.first?.files?.map(\.size) == [3, 0])
+    precondition(requests.count == 4 && requests[0] == "POST /api/chat/file-operations" && requests[3].hasSuffix("/complete"))
+    let local = try await client.downloadFile(bound.messages[0].files![0], directory: root, expectedSessionId: "A", expectedSessionRevision: bound.sessionRevision)
+    let localBytes = try Data(contentsOf: local); precondition(localBytes == Data([1, 2, 3]))
+    try FileManager.default.removeItem(at: local)
+    await client.disconnect()
+    let tampered = try CFLFileDraftStorage.copy(source: source, directory: root.appendingPathComponent("snapshots"), name: "tampered", mediaType: "")
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tampered.ownedFileURL.path)
+    try Data([5, 5, 5]).write(to: tampered.ownedFileURL)
+    let tamperSocket = FakeSocket(snapshot: fileSnapshot()), tamperHTTP = FakeStreamingFileHTTP(), tamperStore = MemoryStore()
+    let tamperClient = CFLChatClient(target: "https://example.com", store: tamperStore, imageHTTP: tamperHTTP, transport: { tamperSocket })
+    await tamperClient.connect(); try await tamperSocket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+    for _ in 0..<200 { if await tamperClient.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    do { _ = try await tamperClient.send("", files: [tampered]); preconditionFailure("tampered snapshot") } catch CFLFailure.invalidInput { }
+    let truncated = try CFLFileDraftStorage.copy(source: source, directory: root.appendingPathComponent("snapshots"), name: "short", mediaType: "")
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: truncated.ownedFileURL.path)
+    try Data([5, 5]).write(to: truncated.ownedFileURL)
+    do { _ = try await tamperClient.send("", files: [truncated]); preconditionFailure("truncated snapshot") } catch CFLFailure.invalidInput { }
+    let tamperRequests = await tamperHTTP.allRequests(), tamperMethods = await tamperSocket.methods()
+    precondition(tamperRequests.isEmpty && !tamperMethods.contains("submit"))
+    await tamperClient.disconnect(); try CFLFileDraftStorage.remove(tampered); try CFLFileDraftStorage.remove(truncated)
+    let lostSocket = FakeSocket(snapshot: fileSnapshot()), lostHTTP = FakeStreamingFileHTTP(), lostStore = MemoryStore()
+    let lost = CFLChatClient(target: "https://example.com", store: lostStore, imageHTTP: lostHTTP, transport: { lostSocket })
+    await lost.connect(); try await lostSocket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+    for _ in 0..<200 { if await lost.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await lostHTTP.setLost()
+    do { _ = try await lost.send("", files: [draft]); preconditionFailure("unknown upload") }
+    catch is CFLFileStagingUncertain { }
+    let lostRequests = await lostHTTP.allRequests(), lostCalls = await lostSocket.methods(), remaining = await lostStore.entries
+    precondition(!lostRequests.contains(where: { $0.hasPrefix("GET ") }) && !lostCalls.contains("submit") && remaining.isEmpty)
+    precondition(FileManager.default.fileExists(atPath: draft.ownedFileURL.path))
+    await lost.disconnect()
+    let reserveSocket = FakeSocket(snapshot: fileSnapshot()), reserveHTTP = FakeStreamingFileHTTP(), reserveStore = MemoryStore()
+    await reserveHTTP.setLostReserve()
+    let reserve = CFLChatClient(target: "https://example.com", store: reserveStore, imageHTTP: reserveHTTP, transport: { reserveSocket })
+    await reserve.connect()
+    do { _ = try await reserve.send("", files: [draft]); preconditionFailure("lost reservation response accepted") } catch is CFLFileStagingUncertain { }
+    let reserveRequests = await reserveHTTP.allRequests(), reserveMethods = await reserveSocket.methods(), reserveEntries = await reserveStore.entries
+    precondition(reserveRequests == ["POST /api/chat/file-operations"] && !reserveMethods.contains("submit") && reserveEntries.isEmpty)
+    await reserve.disconnect()
+    for completeLost in [false, true] {
+        let failureSocket = FakeSocket(snapshot: fileSnapshot()), failureHTTP = FakeStreamingFileHTTP(), failureStore = MemoryStore()
+        let failure = CFLChatClient(target: "https://example.com", store: failureStore, imageHTTP: failureHTTP, transport: { failureSocket })
+        await failure.connect(); try await failureSocket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+        for _ in 0..<200 { if await failure.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+        if completeLost { await failureHTTP.setLostComplete() } else { await failureHTTP.setCancelled() }
+        do { _ = try await failure.send("", files: [draft]); preconditionFailure("unknown staging") }
+        catch is CFLFileStagingUncertain { }
+        catch is CancellationError { precondition(!completeLost) }
+        let methods = await failureSocket.methods(), retained = await failureStore.entries
+        precondition(!methods.contains("submit") && retained.isEmpty && FileManager.default.fileExists(atPath: draft.ownedFileURL.path))
+        await failure.disconnect()
+    }
+    let malformedSocket = FakeSocket(snapshot: fileSnapshot()), malformedHTTP = FakeStreamingFileHTTP(), malformedStore = MemoryStore()
+    let malformed = CFLChatClient(target: "https://example.com", store: malformedStore, imageHTTP: malformedHTTP, transport: { malformedSocket })
+    await malformed.connect(); try await malformedSocket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+    for _ in 0..<200 { if await malformed.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await malformedHTTP.setBadManifest()
+    do { _ = try await malformed.send("", files: [draft]); preconditionFailure("bad manifest") } catch is CFLFileStagingUncertain { }
+    let malformedRequests = await malformedHTTP.allRequests(), malformedMethods = await malformedSocket.methods()
+    precondition(!malformedRequests.contains(where: { $0.hasPrefix("PUT ") }) && !malformedMethods.contains("submit"))
+    await malformed.disconnect()
+    for phase in ["reserve", "upload", "complete"] {
+        let socket = FakeSocket(snapshot: fileSnapshot()), http = FakeStreamingFileHTTP(), store = MemoryStore()
+        await http.setRetired(phase)
+        let retired = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+        await retired.connect()
+        do { _ = try await retired.send("", files: [draft]); preconditionFailure("retired staging accepted") } catch is CFLFileOperationRetired { }
+        let methods = await socket.methods(), saved = await store.entries, requests = await http.allRequests()
+        precondition(!methods.contains("submit") && saved.isEmpty && !requests.contains(where: { $0.hasPrefix("GET ") }))
+        await retired.disconnect()
+    }
+    let raceSocket = FakeSocket(snapshot: fileSnapshot()), raceHTTP = FakeStreamingFileHTTP(), raceStore = MemoryStore()
+    let race = CFLChatClient(target: "https://example.com", store: raceStore, imageHTTP: raceHTTP, transport: { raceSocket })
+    await race.connect(); try await raceSocket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+    for _ in 0..<200 { if await race.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await raceHTTP.setHoldUpload()
+    let sending = Task { try await race.send("", files: [draft]) }
+    for _ in 0..<200 { if await raceHTTP.isUploadHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let held = await raceHTTP.isUploadHeld(); precondition(held)
+    try await raceSocket.emit(update(sequence: 2, field: "sessionId", value: .string("B")))
+    for _ in 0..<200 { if await race.currentState().sessionId == "B" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await raceHTTP.releaseUpload()
+    do { _ = try await sending.value; preconditionFailure("session changed") } catch is CFLFileStagingUncertain { }
+    let raceMethods = await raceSocket.methods(), raceEntries = await raceStore.entries
+    precondition(!raceMethods.contains("submit") && raceEntries.isEmpty && FileManager.default.fileExists(atPath: draft.ownedFileURL.path))
+    await race.disconnect()
+
+    // A slow file upload must not delay switching clients. Once disconnected,
+    // the old upload cannot persist or submit after the replacement writes.
+    let switchStore = MemoryStore()
+    let retained = CFLPending(target: "https://example.com", sessionId: "A",
+        operationId: "11111111-1111-4111-8111-111111111111", text: "keep",
+        createdAt: Date(), dispatched: true, status: .failed)
+    try await switchStore.save([retained])
+    let oldSocket = FakeSocket(snapshot: fileSnapshot()), oldHTTP = FakeStreamingFileHTTP()
+    let oldClient = CFLChatClient(target: "https://example.com", store: switchStore, imageHTTP: oldHTTP, transport: { oldSocket })
+    await oldClient.connect(); await oldHTTP.setHoldUpload()
+    let oldSend = Task { try await oldClient.send("old", files: [draft]) }
+    for _ in 0..<200 { if await oldHTTP.isUploadHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let oldHeld = await oldHTTP.isUploadHeld(); precondition(oldHeld)
+    let switchCompleted = CompletionFlag()
+    let oldDisconnect = Task { await oldClient.disconnect(); await switchCompleted.complete() }
+    for _ in 0..<200 { if await switchCompleted.isComplete() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let disconnectedBeforeUpload = await switchCompleted.isComplete()
+    if !disconnectedBeforeUpload { await oldHTTP.releaseUpload() }
+    precondition(disconnectedBeforeUpload)
+    await oldDisconnect.value
+    let newSocket = FakeSocket(snapshot: fileSnapshot())
+    let newClient = CFLChatClient(target: "https://other.example", store: switchStore, transport: { newSocket })
+    await newClient.connect()
+    let newID = try await newClient.send("new")
+    await oldHTTP.releaseUpload()
+    do { _ = try await oldSend.value; preconditionFailure("disconnected upload dispatched") } catch is CFLFileStagingUncertain { }
+    let switchedEntries = try await switchStore.load(), oldMethods = await oldSocket.methods()
+    precondition(switchedEntries.contains(retained))
+    precondition(switchedEntries.contains(where: { $0.target == "https://other.example" && $0.operationId == newID && $0.text == "new" }))
+    precondition(!oldMethods.contains("submit"))
+    await newClient.disconnect()
+
+    // Token rotation after connection and during upload must not invalidate the
+    // same authenticated session or duplicate its submit.
+    let refreshSocket = FakeSocket(snapshot: fileSnapshot()), refreshHTTP = FakeStreamingFileHTTP(), refreshStore = MemoryStore()
+    let authorization = CFLAuthorization(store: FileRefreshCredentials(), http: FileRefreshHTTP())
+    try await authorization.select(origin: "https://example.com")
+    let refreshClient = CFLChatClient(target: "https://example.com", store: refreshStore,
+        imageHTTP: CFLAuthorizedHTTP(authorization: authorization, http: refreshHTTP), transport: { refreshSocket })
+    await refreshClient.connect()
+    _ = try await authorization.accessToken(forceRefresh: true)
+    await refreshHTTP.setHoldUpload()
+    let refreshedSend = Task { try await refreshClient.send("", files: [draft]) }
+    for _ in 0..<200 { if await refreshHTTP.isUploadHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let refreshHeld = await refreshHTTP.isUploadHeld(); precondition(refreshHeld)
+    _ = try await authorization.accessToken(forceRefresh: true)
+    await refreshHTTP.releaseUpload()
+    _ = try await refreshedSend.value
+    let headers = await refreshHTTP.allAuthorizationHeaders(), refreshMethods = await refreshSocket.methods()
+    precondition(headers == ["Bearer refreshed-1", "Bearer refreshed-1", "Bearer refreshed-2"])
+    precondition(refreshMethods.filter { $0 == "submit" }.count == 1)
+    await refreshClient.disconnect()
+
+    try CFLFileDraftStorage.remove(draft); try CFLFileDraftStorage.remove(empty)
+}
+func checkLargeStreamingFiles() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("etos-large-test-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("source")
+    guard FileManager.default.createFile(atPath: source.path, contents: nil) else { throw CFLFailure.storage }
+    let handle = try FileHandle(forWritingTo: source); try handle.truncate(atOffset: 100_000_000); try handle.close()
+    let oversizedSource = root.appendingPathComponent("oversized")
+    guard FileManager.default.createFile(atPath: oversizedSource.path, contents: nil) else { throw CFLFailure.storage }
+    let oversizedHandle = try FileHandle(forWritingTo: oversizedSource); try oversizedHandle.truncate(atOffset: 100_000_001); try oversizedHandle.close()
+    do { _ = try CFLFileDraftStorage.copy(source: oversizedSource, directory: root.appendingPathComponent("snapshots"), name: "oversized", mediaType: ""); preconditionFailure("oversized snapshot") } catch CFLFailure.invalidInput { }
+    let a = try CFLFileDraftStorage.copy(source: source, directory: root.appendingPathComponent("snapshots"), name: "a", mediaType: "")
+    let b = try CFLFileDraftStorage.copy(source: source, directory: root.appendingPathComponent("snapshots"), name: "b", mediaType: "")
+    let socket = FakeSocket(snapshot: fileSnapshot()), http = FakeStreamingFileHTTP(), store = MemoryStore()
+    let client = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+    await client.connect()
+    let capabilities: ChordJSON = .object(["text": .bool(true), "stop": .bool(true), "files": .object([
+        "maxFilesPerMessage": .number(6), "maxFileBytes": .number(100_000_000), "maxMessageFileBytes": .number(200_000_000)])])
+    try await socket.emit(update(sequence: 1, field: "capabilities", value: capabilities))
+    for _ in 0..<200 { if await client.currentState().fileLimits?.maxFileBytes == 100_000_000 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    _ = try await client.send("", files: [a, b])
+    let counts = await http.transferCounts(), entries = await store.entries
+    precondition(counts.0 <= 65536 && counts.1 == 200_000_000 && entries.first?.files?.map(\.size) == [100_000_000, 100_000_000])
+    await client.disconnect()
+}
+#endif
+
 #if !CFL_SOURCE_CHECKS
 @main
 #endif
 struct CFLChatChecks {
     static func main() async throws {
+        #if canImport(CryptoKit)
+        if CommandLine.arguments.dropFirst().elementsEqual(["--large-files-only"]) { try await checkLargeStreamingFiles(); return }
+        #endif
+        if CommandLine.arguments.dropFirst().elementsEqual(["--bounded-auth-only"]) { try await checkBoundedAuthErrorBodies(); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--files-only"]) {
+            try await checkBoundedAuthErrorBodies()
+            #if canImport(CryptoKit)
+            try await checkFileCopyCancellation()
+            try await checkFiles()
+            try await checkStreamingFiles()
+            #endif
+            return
+        }
         if CommandLine.arguments.dropFirst().elementsEqual(["--stickers-only"]) { try await checkStickers(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--timeout-only"]) { try await checkHistoryTimeout(); print("CFL history timeout checks passed"); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--ordered-only"]) { try await checkOrderedTimeline(); print("CFL ordered timeline checks passed"); return }
@@ -2038,6 +2927,11 @@ struct CFLChatChecks {
         if CommandLine.arguments.dropFirst().elementsEqual(["--reminders-only"]) { try await checkReminderSources(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--images-only"]) { try await checkImages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--send-identity-only"]) { try await checkCallerSendIdentity(); return }
+        try await checkBoundedAuthErrorBodies()
+        #if canImport(CryptoKit)
+        try await checkFileCopyCancellation()
+        try await checkFiles()
+        #endif
         try await checkReplySourceContract()
         try await checkCallerSendIdentity()
         try await checkStickers()
@@ -2130,11 +3024,11 @@ struct CFLChatChecks {
         let restored = CFLChatClient(target: "test-target", store: CFLFilePendingStore(file: directory.appendingPathComponent("pending.json")), transport: { second })
         await restored.connect(); try await restored.reconcile()
         for _ in 0..<100 {
-            let current = try await store.load()
+            let current = await restored.currentState().pending
             if current.first?.status == .submitted { break }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        let recovered = try await store.load(); precondition(recovered[0].status == .submitted && recovered[0].operationId == saved[0].operationId)
+        let recovered = await restored.currentState().pending; precondition(recovered[0].status == .submitted && recovered[0].operationId == saved[0].operationId)
         let methods = await second.methods(); precondition(methods.contains("lookup") && !methods.contains("submit"))
         await restored.disconnect()
         let expiredFile = directory.appendingPathComponent("expired.json")

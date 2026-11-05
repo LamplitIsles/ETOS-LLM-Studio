@@ -8703,3 +8703,11 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 "加载中间的消息" = "Cargar mensajes intermedios";
 "中间的消息加载失败。" = "No se pudieron cargar los mensajes intermedios.";
 "无法继续加载这段消息。" = "No se pueden cargar más mensajes en este intervalo.";
+
+"包含 %d 个文件" = "Contiene %d archivos";
+"文件不可用" = "Archivo no disponible";
+"文件属于之前的会话，请切回或移除文件。" = "El archivo pertenece a una conversación anterior. Vuelve a ella o elimina el archivo.";
+"无法下载文件，请检查连接。" = "No se pudo descargar el archivo. Comprueba la conexión.";
+"无法添加文件，请检查文件大小和连接。" = "No se pudo añadir el archivo. Comprueba su tamaño y la conexión.";
+"无法选择文件，请重试。" = "No se pudo seleccionar el archivo. Inténtalo de nuevo.";
+"附件未恢复，请重新选择。" = "Los archivos adjuntos no se restauraron. Selecciónalos de nuevo.";

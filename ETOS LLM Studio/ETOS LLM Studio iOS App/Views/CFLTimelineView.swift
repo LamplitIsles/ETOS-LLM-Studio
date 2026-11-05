@@ -56,7 +56,7 @@ enum CFLTimelineRow: Sendable {
                          String(item.markdownSourcesRevision), String(item.isReminder), item.voice?.id ?? "",
                          item.imageState?.rawValue ?? "", item.historyGap?.status.rawValue ?? "", item.pending.flatMap {
                              CFLPendingPresentation.needsAction($0, busy: item.sendingLocally) ? Self.encoded($0) : nil
-                         } ?? ""] + imageInfo + previews
+                         } ?? ""] + imageInfo + previews + item.files.map { "file:" + Self.key([$0.name, String($0.size), $0.ref.map(Self.encoded) ?? ""]) }
         case .pending(let item), .otherTarget(let item):
             let kind: String
             if case .pending = self { kind = "pending" } else { kind = "other-target" }
@@ -99,7 +99,7 @@ final class CFLBubbleState: ObservableObject {
 
     func update(_ next: CFLDisplayMessage) {
         let changed = CFLTimelineRow.message(item).message != CFLTimelineRow.message(next).message
-            || item.images != next.images || item.previews != next.previews
+            || item.images != next.images || item.previews != next.previews || item.files != next.files
             || (!next.images.isEmpty && (item.pending == nil) != (next.pending == nil))
         if changed {
             CFLTimelineDiagnostics.event("bubble-update", "row=\(CFLTimelineDiagnostics.token(.message(next)))")

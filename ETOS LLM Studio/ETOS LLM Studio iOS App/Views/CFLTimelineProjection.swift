@@ -2,6 +2,17 @@
 import Foundation
 import ETOSCore
 
+struct CFLDisplayFile: Equatable, Sendable {
+    let name: String
+    let size: Int
+    var ref: CFLFileRef? = nil
+
+    init(name: String, size: Int, ref: CFLFileRef? = nil) {
+        self.name = name; self.size = size; self.ref = ref
+    }
+    init(_ ref: CFLFileRef) { self.init(name: ref.name, size: ref.size, ref: ref) }
+}
+
 struct CFLDisplayMessage: Identifiable, Sendable {
     struct ID: Hashable, Sendable {
         let target: String?
@@ -16,6 +27,7 @@ struct CFLDisplayMessage: Identifiable, Sendable {
     let images: [CFLImageRef]
     let sessionRevision: Int
     let clientID: UUID
+    var files: [CFLDisplayFile] = []
     var markdownSources: CFLMarkdownImageSources? = nil
     var markdownSourcesRevision = 0
     var isReminder = false
@@ -32,6 +44,7 @@ nonisolated enum CFLTimelineProjection {
     struct LocalProjection: Equatable, Sendable {
         let origin: String
         let draft: CFLLocalDraft
+        var files: [CFLDisplayFile] = []
         let pending: CFLPending?
         let sending: Bool
     }
@@ -114,8 +127,9 @@ nonisolated enum CFLTimelineProjection {
         func messageRows(_ message: CFLMessage) -> [CFLDisplayMessage] {
             let operation = message.operationId
             if let operation, let source = input.pending.first(where: { $0.sessionId == input.session && $0.operationId == operation })?.retrySource,
-               input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }),
-               !input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == operation }) {
+               (input.pending.first(where: { $0.operationId == operation && $0.sessionId == input.session })?.files?.isEmpty == false ||
+                (input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }) &&
+                 !input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == operation }))) {
                 return []
             }
             if let voice = message.voice {
@@ -153,7 +167,7 @@ nonisolated enum CFLTimelineProjection {
                 ?? message.id
             return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: rowID, offset: 0), text: message.text,
                                       outgoing: message.role == "user", markdown: false, images: message.images ?? [], sessionRevision: input.revision, clientID: input.clientID,
-                                      previews: previews.isEmpty ? localPreviews : previews)]
+                                      files: (message.files ?? []).map(CFLDisplayFile.init), previews: previews.isEmpty ? localPreviews : previews)]
         }
         var groups = input.messages.map { message in
             (source: Optional(message.id), rows: messageRows(message).map { row in
@@ -163,8 +177,9 @@ nonisolated enum CFLTimelineProjection {
         let messageOperations = Set(input.messages.compactMap { message -> String? in
             guard let operation = message.operationId else { return nil }
             if let source = input.pending.first(where: { $0.sessionId == input.session && $0.operationId == operation })?.retrySource,
-               input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }),
-               !input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == operation }) { return nil }
+               (input.pending.first(where: { $0.operationId == operation && $0.sessionId == input.session })?.files?.isEmpty == false ||
+                (input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }) &&
+                 !input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == operation }))) { return nil }
             return operation
         })
         var tails: [String: String] = [:]
@@ -201,7 +216,7 @@ nonisolated enum CFLTimelineProjection {
             let row = CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: "local:\(local.origin)", offset: 0),
                 text: draft.text, outgoing: true, markdown: false, images: local.pending?.images ?? [],
                 sessionRevision: input.revision, clientID: input.clientID,
-                previews: realPreviews.isEmpty ? draft.images : realPreviews, pending: local.pending, sendingLocally: local.sending)
+                files: local.pending?.files.map { $0.map(CFLDisplayFile.init) } ?? local.files, previews: realPreviews.isEmpty ? draft.images : realPreviews, pending: local.pending, sendingLocally: local.sending)
             insert(row, operation: draft.operationId, source: nil)
         }
         for draft in input.drafts where draft.sessionId == input.session && !messageOperations.contains(draft.operationId) && !localOperations.contains(draft.operationId) {
@@ -215,7 +230,7 @@ nonisolated enum CFLTimelineProjection {
         for pending in pendingRows {
             let previews = input.previews.filter { $0.sessionId == input.session && $0.operationId == (pending.retrySource ?? pending.operationId) }.sorted { $0.order < $1.order }
             let identity = input.origins[pending.operationId] ?? previews.first?.originOperationId ?? pending.retrySource ?? pending.operationId
-            let row = CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: "local:\(identity)", offset: 0), text: pending.text, outgoing: true, markdown: false, images: pending.images ?? [], sessionRevision: input.revision, clientID: input.clientID, previews: previews, pending: pending)
+            let row = CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: "local:\(identity)", offset: 0), text: pending.text, outgoing: true, markdown: false, images: pending.images ?? [], sessionRevision: input.revision, clientID: input.clientID, files: (pending.files ?? []).map(CFLDisplayFile.init), previews: previews, pending: pending)
             insert(row, operation: pending.operationId, source: input.messages.first(where: { $0.operationId == pending.operationId })?.id)
         }
         let reply: [CFLDisplayMessage]

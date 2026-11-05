@@ -10,6 +10,24 @@ import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 
+private struct CFLFileExportPicker: UIViewControllerRepresentable {
+    let url: URL
+    let finish: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(finish: finish) }
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let finish: () -> Void
+        init(finish: @escaping () -> Void) { self.finish = finish }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish() }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish() }
+    }
+}
+
 /// A reminder is one server message, independently of its transport role.
 struct CFLReminderBubble: View {
     let text: String
@@ -83,13 +101,12 @@ struct CFLFailedSendActions: View {
         if !pending.dispatched {
             Button(NSLocalizedString("恢复到输入框", comment: "Recover unsent input")) {
                 let config = AppConfigStore.shared
-                guard config.chatComposerDraft.isEmpty && model.selectedImages.isEmpty else {
+                guard config.chatComposerDraft.isEmpty && model.selectedImages.isEmpty && model.selectedFiles.isEmpty else {
                     model.notice = NSLocalizedString("输入框已有文字，请先处理。", comment: "CFL draft occupied")
                     return
                 }
                 if model.hasLocalSend(pending.operationId) { model.restoreLocalSend(pending.operationId) }
-                else if pending.images?.isEmpty == false { Task { _ = await model.restoreImages(from: pending) } }
-                else { config.chatComposerDraft = pending.text }
+                else { model.restoreText(from: pending) }
             }.disabled(model.busy)
         }
         Button(NSLocalizedString("移除", comment: "Remove"), role: .destructive) {
@@ -109,6 +126,10 @@ private struct CFLNativeMessageBubble: View {
     @StateObject private var renderState: ChatMessageRenderState
     @StateObject private var markdownImageStatus = CFLMarkdownImageStatus()
     @State private var showActions = false
+    @State private var exportURL: URL?
+    @State private var exportDirectory: URL?
+    @State private var showFileExporter = false
+    @State private var loadingFile = false
 
     private var item: CFLDisplayMessage { rowState.item }
 
@@ -190,6 +211,60 @@ private struct CFLNativeMessageBubble: View {
                     .buttonStyle(.plain)
                 }
             }
+            if !item.files.isEmpty {
+                ForEach(Array(item.files.enumerated()), id: \.offset) { index, file in
+                    HStack {
+                        if item.outgoing { Spacer(minLength: 40) }
+                        if index == 0, item.text.isEmpty, item.images.isEmpty, item.previews.isEmpty, let failedPending {
+                            CFLFailedSendIndicator(pending: failedPending, model: model)
+                        }
+                        Button {
+                            guard let ref = file.ref, ref.availability == "available", !loadingFile else { return }
+                            loadingFile = true
+                            Task {
+                                defer { loadingFile = false }
+                                do {
+                                    let downloaded = try await model.chatFileDownload(ref, target: item.id.target, session: item.id.session, revision: item.sessionRevision, clientID: item.clientID)
+                                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                                    do {
+                                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                                        var safe = ""
+                                        for scalar in file.name.unicodeScalars {
+                                            let part = CharacterSet.controlCharacters.contains(scalar) || scalar == "/" || scalar == "\\" ? "_" : String(scalar)
+                                            if safe.utf8.count + part.utf8.count > 180 { break }
+                                            safe += part
+                                        }
+                                        if safe.isEmpty || safe == "." || safe == ".." { safe = "download" }
+                                        let destination = directory.appendingPathComponent(safe, isDirectory: false)
+                                        try FileManager.default.moveItem(at: downloaded, to: destination)
+                                        exportDirectory = directory
+                                        exportURL = destination
+                                        showFileExporter = true
+                                    } catch {
+                                        try? FileManager.default.removeItem(at: downloaded)
+                                        try? FileManager.default.removeItem(at: directory)
+                                        throw error
+                                    }
+                                } catch { model.notice = NSLocalizedString("无法下载文件，请检查连接。", comment: "File download failed") }
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "doc.fill").font(.title3)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(file.name).lineLimit(2).truncationMode(.middle)
+                                    Text(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    if file.ref?.availability == "missing" { Text(NSLocalizedString("文件不可用", comment: "Missing file")).font(.caption).foregroundStyle(.secondary) }
+                                }
+                            }.padding(12).background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled((file.ref?.availability != "available" && failedPending == nil) || loadingFile)
+                        .contextMenu { if let failedPending { CFLFailedSendActions(pending: failedPending, model: model) } }
+                        if !item.outgoing { Spacer(minLength: 40) }
+                    }.padding(.horizontal, 8)
+                }
+            }
             if !item.images.isEmpty || !item.previews.isEmpty {
                 CFLMessageImages(images: item.images, previews: item.previews, outgoing: item.outgoing, model: model,
                                  target: item.id.target, session: item.id.session, revision: item.sessionRevision, clientID: item.clientID,
@@ -213,6 +288,13 @@ private struct CFLNativeMessageBubble: View {
                 }
                 .padding(.horizontal, 8)
             }
+        }
+        .sheet(isPresented: $showFileExporter, onDismiss: {
+            if let exportDirectory { try? FileManager.default.removeItem(at: exportDirectory) }
+            exportDirectory = nil
+            exportURL = nil
+        }) {
+            if let exportURL { CFLFileExportPicker(url: exportURL) { showFileExporter = false } }
         }
         .onChange(of: model.imagePageActive) { _, active in
             if !active { markdownImageStatus.invalidate() }
@@ -259,7 +341,7 @@ struct CFLConversationView: View {
                 if requiresSignIn {
                     signInView
                 } else {
-                    if config.cflHTTPSOrigin.isEmpty || !model.imagesBelongToCurrentSession
+                    if config.cflHTTPSOrigin.isEmpty || !model.imagesBelongToCurrentSession || !model.filesBelongToCurrentSession
                         || model.uncertain != nil || model.notice != nil || model.stateError != nil {
                         connectionStatus
                             .padding(.top, navigationOverlayHeight)
@@ -389,6 +471,10 @@ struct CFLConversationView: View {
                 }
             }
             if let notice = model.notice ?? model.stateError { Text(notice).font(.caption).foregroundStyle(.secondary) }
+            if !model.filesBelongToCurrentSession {
+                Text(NSLocalizedString("文件属于之前的会话，请切回或移除文件。", comment: "File draft session"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !model.imagesBelongToCurrentSession {
                 Text(NSLocalizedString("图片属于之前的会话，请切回或移除图片。", comment: "Image draft session"))
                     .font(.caption).foregroundStyle(.secondary)
@@ -421,17 +507,23 @@ struct CFLConversationView: View {
             },
             focus: $composerFocused,
             cflState: CFLComposerState(
-                canSend: !model.busy && !model.needsSignIn && !model.isPreparingImages && model.uncertain == nil
-                    && (draft.hasSendableText || !model.selectedImages.isEmpty)
-                    && (model.state.connection != .online || model.imagesBelongToCurrentSession),
-                isSubmitting: model.busy || model.isPreparingImages,
+                canSend: !model.busy && !model.needsSignIn && !model.isPreparingAttachments && model.uncertain == nil
+                    && (draft.hasSendableText || !model.selectedImages.isEmpty || !model.selectedFiles.isEmpty)
+                    && (model.state.connection != .online || (model.imagesBelongToCurrentSession && model.filesBelongToCurrentSession)),
+                isSubmitting: model.busy || model.isPreparingAttachments,
                 isResponding: model.state.activeTurnId != nil,
-                hasImages: !model.selectedImages.isEmpty
+                hasImages: !model.selectedImages.isEmpty || !model.selectedFiles.isEmpty
             ),
             images: model.selectedImages,
+            files: model.selectedFiles,
+            canAttachFiles: model.canAttachFiles,
+            beginFileSelection: { model.beginFileSelection() },
+            addFiles: { model.addFiles($0) },
+            fileSelectionFailed: { model.notice = NSLocalizedString("无法选择文件，请重试。", comment: "File picker failed") },
+            removeFile: { model.removeFile($0) },
             canAttachImages: model.canAttachImages,
             remainingImageSlots: model.remainingImageSlots,
-            isPreparingImages: model.isPreparingImages,
+            isPreparingAttachments: model.isPreparingAttachments,
             beginImageSelection: { model.beginImageSelection() },
             imagePickerDidDismiss: { model.imagePickerDidDismiss() },
             addPhotos: { model.addPhotos($0) },
@@ -461,6 +553,9 @@ struct CFLConversationView: View {
                 Text(String(format: NSLocalizedString("包含 %d 张图片", comment: "Pending images"), images.count))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if showsContent, let files = item.files, !files.isEmpty {
+                Text(String(format: NSLocalizedString("包含 %d 个文件", comment: "Pending files"), files.count)).font(.caption).foregroundStyle(.secondary)
+            }
             if item.sessionId != model.state.sessionId {
                 Text(NSLocalizedString("属于其他会话", comment: "CFL other session")).font(.caption).foregroundStyle(.secondary)
             }
@@ -469,15 +564,15 @@ struct CFLConversationView: View {
                     Button(NSLocalizedString("重试", comment: "Retry")) { Task { await model.retry(item) } }
                         .font(.caption).disabled(model.busy || model.uncertain != nil || model.state.connection != .online)
                 }
-                if item.images?.isEmpty == false {
+                if item.images?.isEmpty == false || item.files?.isEmpty == false {
                     Button(NSLocalizedString("恢复到输入框", comment: "Recover image draft")) {
-                        if draft.text.isEmpty && model.selectedImages.isEmpty {
-                            Task { _ = await model.restoreImages(from: item) }
+                        if draft.text.isEmpty && model.selectedImages.isEmpty && model.selectedFiles.isEmpty {
+                            model.restoreText(from: item)
                         } else { noticeDraftOccupied() }
                     }.font(.caption).disabled(model.busy || item.sessionId != model.state.sessionId)
                 } else {
                     Button(NSLocalizedString("复制到输入框", comment: "CFL recover input")) {
-                        if draft.text.isEmpty && model.selectedImages.isEmpty { config.chatComposerDraft = item.text }
+                        if draft.text.isEmpty && model.selectedImages.isEmpty && model.selectedFiles.isEmpty { config.chatComposerDraft = item.text }
                         else { noticeDraftOccupied() }
                     }.font(.caption)
                 }
@@ -499,6 +594,9 @@ struct CFLConversationView: View {
             if let images = item.images, !images.isEmpty {
                 Text(String(format: NSLocalizedString("包含 %d 张图片", comment: "Pending images"), images.count))
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if let files = item.files, !files.isEmpty {
+                Text(String(format: NSLocalizedString("包含 %d 个文件", comment: "Pending files"), files.count)).font(.caption).foregroundStyle(.secondary)
             }
             Text(item.target).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Text(String(format: NSLocalizedString("会话：%@", comment: "CFL pending session"), item.sessionId))
