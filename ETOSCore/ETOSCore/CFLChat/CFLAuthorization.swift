@@ -80,12 +80,45 @@ public actor CFLAuthorization {
     private var attempts: Set<UUID> = []
     private var latestAttempt: UUID?
     private var refresh: (id: UUID, generation: Int, task: Task<String, Error>)?
+    // Opaque process-local cache identity. Never use credentials as a cache key.
+    private var thumbnailScope = UUID()
+    private var thumbnailCredential: String?
+    private var thumbnailRefreshCredential: String?
+    private var thumbnailRevoked = false
+    private func invalidateThumbnailScope() {
+        thumbnailScope = UUID(); thumbnailCredential = nil; thumbnailRefreshCredential = nil; thumbnailRevoked = false
+    }
+    func stickerThumbnailScope() throws -> UUID {
+        guard let origin else { throw CFLAuthorizationError.authorizationRequired }
+        let credentials: CFLCredentials
+        do {
+            guard let stored = try store.load(origin: origin) else {
+                invalidateThumbnailScope(); throw CFLAuthorizationError.authorizationRequired
+            }
+            credentials = stored
+        } catch let error as CFLAuthorizationError { throw error }
+        catch { throw CFLAuthorizationError.storage }
+        if thumbnailCredential != credentials.accessToken || thumbnailRefreshCredential != credentials.refreshToken {
+            thumbnailScope = UUID(); thumbnailCredential = credentials.accessToken
+            thumbnailRefreshCredential = credentials.refreshToken; thumbnailRevoked = false
+        }
+        if thumbnailRevoked { throw CFLAuthorizationError.authorizationRequired }
+        // An uncertain refresh leaves this process-local identity unchanged;
+        // stale cache can remain visible while authorization is investigated.
+        return thumbnailScope
+    }
+    func stickerThumbnailAuthorizationUncertain() -> Bool {
+        guard !thumbnailRevoked, let origin, let credentials = try? store.load(origin: origin) else { return false }
+        return credentials.refreshPending
+    }
+
 
     public init(store: any CFLCredentialStore, http: any CFLImageHTTP = CFLImageURLSession.shared) {
         self.store = store; self.http = http
     }
     public func select(origin value: String) throws {
         guard let normalized = CFLHTTPSOrigin.normalized(value), !normalized.isEmpty else { throw CFLAuthorizationError.invalidOrigin }
+        invalidateThumbnailScope()
         origin = normalized; generation += 1; attempts.removeAll(); latestAttempt = nil; refresh = nil
     }
     public func begin() throws -> CFLAuthorizationAttempt {
@@ -132,6 +165,7 @@ public actor CFLAuthorization {
         } catch { throw CFLAuthorizationError.storage }
         // A valid code is now being dispatched: prevent a previous refresh from
         // overwriting this grant, while letting cancelled browser attempts leave it alone.
+        invalidateThumbnailScope()
         generation += 1; refresh = nil
         let exchangeGeneration = generation
         let result = try await exchange(origin: attempt.origin, fields: ["grant_type": "authorization_code", "client_id": "etos", "redirect_uri": Self.callback, "code": code, "code_verifier": attempt.verifier, "resource": attempt.origin])
@@ -145,12 +179,15 @@ public actor CFLAuthorization {
         var form = URLComponents(); form.queryItems = fields.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         request.httpBody = form.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B").data(using: .utf8)
         let data: Data; let response: URLResponse
-        do { (data, response) = try await http.data(for: request) } catch { throw CFLAuthorizationError.authorizationRequired }
-        guard let result = response as? HTTPURLResponse, result.url == request.url else { throw CFLAuthorizationError.authorizationRequired }
-        guard result.statusCode == 200 else { throw CFLAuthorizationError.authorizationRequired }
+        do { (data, response) = try await http.data(for: request) } catch { throw CFLAuthorizationError.unavailable }
+        guard let result = response as? HTTPURLResponse, result.url == request.url else { throw CFLAuthorizationError.unavailable }
+        guard result.statusCode == 200 else {
+            if [400, 401, 403].contains(result.statusCode) { throw CFLAuthorizationError.authorizationRequired }
+            throw CFLAuthorizationError.unavailable
+        }
         struct Tokens: Decodable { let access_token: String; let refresh_token: String; let expires_in: Double; let token_type: String }
         guard let tokens = try? JSONDecoder().decode(Tokens.self, from: data), !tokens.access_token.isEmpty,
-              !tokens.refresh_token.isEmpty, tokens.expires_in > 0, tokens.token_type.lowercased() == "bearer" else { throw CFLAuthorizationError.authorizationRequired }
+              !tokens.refresh_token.isEmpty, tokens.expires_in > 0, tokens.token_type.lowercased() == "bearer" else { throw CFLAuthorizationError.unavailable }
         return CFLCredentials(accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date().addingTimeInterval(tokens.expires_in))
     }
     /// Returns a current token; a refresh is persisted as pending before dispatch and shared by concurrent callers.
@@ -186,7 +223,13 @@ public actor CFLAuthorization {
         }
     }
     private func finishRefresh(origin: String, generation current: Int, token: String) async throws -> String {
-        let result = try await exchange(origin: origin, fields: ["grant_type": "refresh_token", "client_id": "etos", "refresh_token": token, "resource": origin])
+        let result: CFLCredentials
+        do { result = try await exchange(origin: origin, fields: ["grant_type": "refresh_token", "client_id": "etos", "refresh_token": token, "resource": origin]) }
+        catch CFLAuthorizationError.authorizationRequired {
+            guard self.origin == origin, generation == current else { throw CFLAuthorizationError.superseded }
+            thumbnailRevoked = true
+            throw CFLAuthorizationError.authorizationRequired
+        }
         guard self.origin == origin, generation == current else { throw CFLAuthorizationError.superseded }
         do { try store.save(result, origin: origin) } catch { throw CFLAuthorizationError.storage }
         return result.accessToken
@@ -220,7 +263,7 @@ public actor CFLAuthorization {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let state = object["state"] as? String else { throw CFLAuthorizationError.unavailable }
         if state == "signed_in" { return }
-        if state == "setup" { throw CFLAuthorizationError.authorizationRequired }
+        if state == "setup" { thumbnailRevoked = true; throw CFLAuthorizationError.authorizationRequired }
         guard state == "signed_out" else { throw CFLAuthorizationError.unavailable }
         let latest = try await accessToken()
         if latest != token { return }

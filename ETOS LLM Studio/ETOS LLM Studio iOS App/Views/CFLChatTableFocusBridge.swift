@@ -6,6 +6,7 @@ import UIKit
 /// cancelling touches on message links, menus, or media controls.
 struct CFLChatTableFocusBridge: UIViewRepresentable {
     let focus: Binding<Bool>
+    var onDismiss: () -> Void = {}
 
     func makeUIView(context: Context) -> Observer {
         let view = Observer()
@@ -14,7 +15,7 @@ struct CFLChatTableFocusBridge: UIViewRepresentable {
     }
 
     func updateUIView(_ view: Observer, context: Context) {
-        view.dismiss = { focus.wrappedValue = false }
+        view.dismiss = { focus.wrappedValue = false; onDismiss() }
         view.attachIfNeeded()
     }
 

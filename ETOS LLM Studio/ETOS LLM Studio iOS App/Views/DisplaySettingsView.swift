@@ -122,6 +122,16 @@ struct DisplaySettingsView: View {
 
             // MARK: - Tab 2：对话框视觉
             Form {
+                Section(NSLocalizedString("聊天样例", value: "Chat preview", comment: "Chat appearance preview")) {
+                    ChatAppearancePreview(
+                        enableMarkdown: enableMarkdown,
+                        enableBackground: enableBackground,
+                        enableLiquidGlass: enableLiquidGlass,
+                        enableNoBubbleUI: enableNoBubbleUI,
+                        enableAdvancedRenderer: enableAdvancedRenderer
+                    )
+                    .listRowInsets(EdgeInsets())
+                }
                 Section(NSLocalizedString("气泡与排版", comment: "")) {
                     Toggle(NSLocalizedString("渲染 Markdown", comment: ""), isOn: $enableMarkdown)
                     if enableMarkdown {
@@ -129,6 +139,22 @@ struct DisplaySettingsView: View {
                     }
                     Toggle(NSLocalizedString("关闭助手气泡", comment: ""), isOn: $enableNoBubbleUI)
                     Toggle(NSLocalizedString("顶部毛玻璃渐隐", comment: ""), isOn: $enableChatTopBlurFade)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(NSLocalizedString("气泡圆角", value: "Bubble corners", comment: "Chat bubble corner radius"))
+                            Spacer()
+                            Text(String(format: "%.0f", appConfig.chatBubbleCornerRadius))
+                                .foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        Slider(value: $appConfig.chatBubbleCornerRadius,
+                               in: ChatBubbleCornerRadiusSetting.minimum...ChatBubbleCornerRadiusSetting.maximum,
+                               step: ChatBubbleCornerRadiusSetting.step)
+                        .accessibilityLabel(NSLocalizedString("气泡圆角", value: "Bubble corners", comment: "Chat bubble corner radius"))
+                    }
+                    Button(NSLocalizedString("恢复默认圆角", value: "Reset bubble corners", comment: "Reset bubble corner radius")) {
+                        appConfig.chatBubbleCornerRadius = ChatBubbleCornerRadiusSetting.defaultValue
+                    }
+                    .disabled(appConfig.chatBubbleCornerRadius == ChatBubbleCornerRadiusSetting.defaultValue)
                 }
 
                 Section {
@@ -139,19 +165,6 @@ struct DisplaySettingsView: View {
                         format: .number.grouping(.never)
                     )
                     .keyboardType(.numberPad)
-                }
-
-                Section {
-                    Toggle(
-                        NSLocalizedString("四键消息导航", comment: "Chat timeline navigation toggle"),
-                        isOn: $appConfig.chatTimelineNavigationEnabled
-                    )
-                } header: {
-                    Text(NSLocalizedString("聊天导航", comment: "Chat navigation settings section"))
-                } footer: {
-                    Text(NSLocalizedString("开启后，从聊天区右侧向左轻扫可展开四个导航按钮，停止操作后会自动收起；关闭后仍保留原有的回到底部按钮。", comment: "Chat timeline navigation description"))
-                        .etFont(.footnote)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -259,6 +272,19 @@ struct DisplaySettingsView: View {
 
                 Section {
                     Toggle(
+                        NSLocalizedString("屏幕键盘按发送键发送消息", comment: "Software keyboard send key setting"),
+                        isOn: $appConfig.iOSSoftwareKeyboardReturnSendsMessage
+                    )
+                } header: {
+                    Text(NSLocalizedString("屏幕键盘", comment: "Software keyboard settings"))
+                } footer: {
+                    Text(NSLocalizedString("关闭后，键盘右下角用于换行；输入文字后，点击右侧箭头发送。", comment: "Software keyboard send key explanation"))
+                        .etFont(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Toggle(
                         NSLocalizedString("按 Return 发送消息", comment: "实体键盘 Return 发送设置"),
                         isOn: $appConfig.iOSHardwareKeyboardReturnSendsMessage
                     )
@@ -307,7 +333,6 @@ struct DisplaySettingsView: View {
                 .bool("advanced_renderer", label: NSLocalizedString("使用高级渲染器", comment: "向导设置字段"), get: { enableAdvancedRenderer }, set: { enableAdvancedRenderer = $0 }),
                 .bool("hide_assistant_bubble", label: NSLocalizedString("关闭助手气泡", comment: "向导设置字段"), get: { enableNoBubbleUI }, set: { enableNoBubbleUI = $0 }),
                 .bool("chat_top_blur_fade", label: NSLocalizedString("顶部毛玻璃渐隐", comment: "向导设置字段"), get: { enableChatTopBlurFade }, set: { enableChatTopBlurFade = $0 }),
-                .bool("timeline_navigation", label: NSLocalizedString("四键消息导航", comment: "向导设置字段"), get: { appConfig.chatTimelineNavigationEnabled }, set: { appConfig.chatTimelineNavigationEnabled = $0 }),
                 .bool("auto_reasoning_preview", label: NSLocalizedString("自动预览思考过程", comment: "向导设置字段"), get: { enableAutoReasoningPreview }, set: { enableAutoReasoningPreview = $0 }),
                 .bool("responsive_reasoning_preview_height", label: NSLocalizedString("响应式思考预览高度", comment: "向导设置字段"), get: { appConfig.enableResponsiveReasoningPreviewHeight }, set: { appConfig.enableResponsiveReasoningPreviewHeight = $0 }),
                 .double("reasoning_preview_height_percent", label: NSLocalizedString("思考预览高度百分比", comment: "向导设置字段"), range: 1...100, get: { appConfig.reasoningPreviewHeightPercent }, set: { appConfig.reasoningPreviewHeightPercent = $0 })

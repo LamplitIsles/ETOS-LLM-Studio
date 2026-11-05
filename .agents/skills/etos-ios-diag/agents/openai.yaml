@@ -1,0 +1,4 @@
+interface:
+  display_name: "ETOS iOS Diagnostics"
+  short_description: "Trace iOS symptoms with logs and causal experiments"
+  default_prompt: "Use $etos-ios-diag to design focused logs, reconstruct the event timeline, and locate the first causal divergence behind this ETOS iOS issue before repair."

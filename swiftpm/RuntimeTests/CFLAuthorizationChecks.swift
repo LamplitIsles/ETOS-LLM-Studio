@@ -8,6 +8,7 @@ final class MemoryCredentials: CFLCredentialStore, @unchecked Sendable {
     private var values: [String: CFLCredentials] = [:]
     func load(origin: String) throws -> CFLCredentials? { lock.lock(); defer { lock.unlock() }; return values[origin] }
     func save(_ credentials: CFLCredentials, origin: String) throws { lock.lock(); defer { lock.unlock() }; values[origin] = credentials }
+    func remove(origin: String) { lock.lock(); defer { lock.unlock() }; values.removeValue(forKey: origin) }
 }
 actor AuthHTTP: CFLImageHTTP {
     enum Mode { case tokens, network, signedOut, signedIn, hold, revoked, codeTokens, denied401, denied403, deniedOffline, redirect, setup, setupMedia }
@@ -75,6 +76,15 @@ actor SetupSocket: CFLChatTransport {
         try store.save(CFLCredentials(accessToken: "old", refreshToken: "rotate", expiresAt: .distantPast), origin: origin)
         let auth = CFLAuthorization(store: store, http: http)
         try await auth.select(origin: "https://EXAMPLE.test:443/")
+        let firstScope = try await auth.stickerThumbnailScope()
+        try store.save(CFLCredentials(accessToken: "new-owner", refreshToken: "other", expiresAt: .distantFuture), origin: origin)
+        let otherScope = try await auth.stickerThumbnailScope()
+        precondition(firstScope != otherScope)
+        store.remove(origin: origin)
+        do { _ = try await auth.stickerThumbnailScope(); preconditionFailure("logged out cache") } catch CFLAuthorizationError.authorizationRequired { }
+        try store.save(CFLCredentials(accessToken: "old", refreshToken: "rotate", expiresAt: .distantPast), origin: origin)
+        let restoredScope = try await auth.stickerThumbnailScope()
+        precondition(restoredScope != firstScope && restoredScope != otherScope)
         await http.set(.hold)
         let first = Task { try await auth.accessToken() }
         while await http.count() == 0 { await Task.yield() }
@@ -96,11 +106,15 @@ actor SetupSocket: CFLChatTransport {
         precondition(signed.value(forHTTPHeaderField: "Origin") == origin)
         do { _ = try await auth.authenticatedRequest(URLRequest(url: URL(string: "https://evil.test/api")!)); preconditionFailure() }
         catch CFLAuthorizationError.invalidOrigin { }
+        let refreshedScope = try await auth.stickerThumbnailScope()
         await http.set(.network)
         do { try await auth.checkAfterTransportFailure(); preconditionFailure() } catch CFLAuthorizationError.unavailable { }
         let intact = try store.load(origin: origin)?.refreshPending; precondition(intact == false)
-        do { _ = try await auth.accessToken(forceRefresh: true); preconditionFailure() } catch CFLAuthorizationError.authorizationRequired { }
+        do { _ = try await auth.accessToken(forceRefresh: true); preconditionFailure() } catch CFLAuthorizationError.unavailable { }
         let uncertain = try store.load(origin: origin)?.refreshPending; precondition(uncertain == true)
+        let uncertainScope = try await auth.stickerThumbnailScope()
+        let isUncertain = await auth.stickerThumbnailAuthorizationUncertain()
+        precondition(uncertainScope == refreshedScope && isUncertain)
         let prior = await http.count()
         do { _ = try await auth.accessToken(); preconditionFailure() } catch CFLAuthorizationError.authorizationRequired { }
         let afterRetry = await http.count(); precondition(afterRetry == prior)
@@ -176,7 +190,7 @@ actor SetupSocket: CFLChatTransport {
         let unknownAttempt = await auth.makeAttempt(origin: origin, state: "expected", verifier: "synthetic-verifier", challenge: "synthetic-challenge")
         await http.set(.network)
         let callback = URL(string: "etosllmstudio://auth/callback?state=expected&iss=https%3A%2F%2Fexample.test%2Fapi%2Fauth&code=one")!
-        do { try await auth.complete(unknownAttempt, callback: callback); preconditionFailure() } catch CFLAuthorizationError.authorizationRequired { }
+        do { try await auth.complete(unknownAttempt, callback: callback); preconditionFailure() } catch CFLAuthorizationError.unavailable { }
         let consumedCount = await http.count()
         do { try await auth.complete(unknownAttempt, callback: callback); preconditionFailure() } catch CFLAuthorizationError.superseded { }
         let afterConsumed = await http.count(); precondition(consumedCount == afterConsumed)
@@ -254,7 +268,7 @@ actor SetupSocket: CFLChatTransport {
         try store.save(CFLCredentials(accessToken: "old", refreshToken: "redirect-refresh", expiresAt: .distantPast), origin: origin)
         await http.set(.redirect)
         let beforeRedirect = await http.count()
-        do { _ = try await auth.accessToken(); preconditionFailure() } catch CFLAuthorizationError.authorizationRequired { }
+        do { _ = try await auth.accessToken(); preconditionFailure() } catch CFLAuthorizationError.unavailable { }
         do { _ = try await auth.accessToken(); preconditionFailure() } catch CFLAuthorizationError.authorizationRequired { }
         let afterRedirect = await http.count(); precondition(afterRedirect == beforeRedirect + 1)
         print("CFL authorization refresh, callback, transport and origin checks passed")

@@ -2,6 +2,19 @@ import ETOSCore
 import SwiftUI
 import UIKit
 
+enum ChatAssistantBubbleAppearance {
+    static func fill(profile: ChatAppearanceProfile, enableBackground: Bool) -> Color {
+        let slot = profile.assistantBubble
+        if slot.isEnabled {
+            return ChatAppearanceColorCodec.color(from: slot.hex, fallback: Color(uiColor: .secondarySystemBackground))
+                .opacity(enableBackground ? 0.75 : 1)
+        }
+        return enableBackground
+            ? Color(uiColor: .secondarySystemBackground).opacity(0.75)
+            : Color(uiColor: .systemBackground)
+    }
+}
+
 /// 气泡与发送层共用实际材质；这里只绘制背景，不订阅配置或参与文字排版。
 struct ChatBubbleBackground<S: Shape>: View {
     let shape: S

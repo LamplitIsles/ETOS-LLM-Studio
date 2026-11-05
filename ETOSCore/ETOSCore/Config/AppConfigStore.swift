@@ -268,6 +268,13 @@ public final class AppConfigStore: ObservableObject {
         didSet { write(.chatTimelineNavigationEnabled, chatTimelineNavigationEnabled) }
     }
     @Published public var enableNoBubbleUI: Bool { didSet { write(.enableNoBubbleUI, enableNoBubbleUI) } }
+    @Published public var chatBubbleCornerRadius: Double {
+        didSet {
+            let normalized = ChatBubbleCornerRadiusSetting.normalized(chatBubbleCornerRadius)
+            if chatBubbleCornerRadius != normalized { chatBubbleCornerRadius = normalized }
+            write(.chatBubbleCornerRadius, normalized)
+        }
+    }
     @Published public var chatScrollAnimationEnabled: Bool { didSet { write(.chatScrollAnimationEnabled, chatScrollAnimationEnabled) } }
     @Published public var chatScrollAnimationSpringResponse: Double { didSet { write(.chatScrollAnimationSpringResponse, chatScrollAnimationSpringResponse) } }
     @Published public var chatScrollAnimationSpringDamping: Double { didSet { write(.chatScrollAnimationSpringDamping, chatScrollAnimationSpringDamping) } }
@@ -440,6 +447,9 @@ public final class AppConfigStore: ObservableObject {
     @Published public var enableSlashCommands: Bool { didSet { write(.enableSlashCommands, enableSlashCommands) } }
     @Published public var iOSHardwareKeyboardReturnSendsMessage: Bool {
         didSet { write(.iOSHardwareKeyboardReturnSendsMessage, iOSHardwareKeyboardReturnSendsMessage) }
+    }
+    @Published public var iOSSoftwareKeyboardReturnSendsMessage: Bool {
+        didSet { write(.iOSSoftwareKeyboardReturnSendsMessage, iOSSoftwareKeyboardReturnSendsMessage) }
     }
     public let composerDraftState: ChatComposerDraftState
     public var chatComposerDraft: String {
@@ -619,6 +629,7 @@ public final class AppConfigStore: ObservableObject {
         enableChatTopBlurFade = Self.boolValue(.enableChatTopBlurFade, userDefaults: userDefaults)
         chatTimelineNavigationEnabled = Self.boolValue(.chatTimelineNavigationEnabled, userDefaults: userDefaults)
         enableNoBubbleUI = Self.boolValue(.enableNoBubbleUI, userDefaults: userDefaults)
+        chatBubbleCornerRadius = Self.realValue(.chatBubbleCornerRadius, userDefaults: userDefaults)
         chatScrollAnimationEnabled = Self.boolValue(.chatScrollAnimationEnabled, userDefaults: userDefaults)
         chatScrollAnimationSpringResponse = Self.realValue(.chatScrollAnimationSpringResponse, userDefaults: userDefaults)
         chatScrollAnimationSpringDamping = Self.realValue(.chatScrollAnimationSpringDamping, userDefaults: userDefaults)
@@ -665,6 +676,10 @@ public final class AppConfigStore: ObservableObject {
         enableSlashCommands = Self.boolValue(.enableSlashCommands, userDefaults: userDefaults)
         iOSHardwareKeyboardReturnSendsMessage = Self.boolValue(
             .iOSHardwareKeyboardReturnSendsMessage,
+            userDefaults: userDefaults
+        )
+        iOSSoftwareKeyboardReturnSendsMessage = Self.boolValue(
+            .iOSSoftwareKeyboardReturnSendsMessage,
             userDefaults: userDefaults
         )
         let initialChatComposerDraft = Self.textValue(.chatComposerDraft, userDefaults: userDefaults)

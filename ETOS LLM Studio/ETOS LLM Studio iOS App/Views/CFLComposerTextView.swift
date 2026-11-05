@@ -2,13 +2,14 @@
 import SwiftUI
 import UIKit
 
-/// A multiline composer whose return key submits instead of inserting a newline.
+/// A multiline composer with independently configurable software and hardware Return keys.
 struct CFLComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let focus: Binding<Bool>
     let font: UIFont
     let maximumHeight: CGFloat
     let hardwareReturnSends: Bool
+    let softwareReturnSends: Bool
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -19,7 +20,7 @@ struct CFLComposerTextView: UIViewRepresentable {
         view.textContainer.lineFragmentPadding = 0
         view.font = font
         view.text = text
-        view.returnKeyType = .send
+        view.returnKeyType = softwareReturnSends ? .send : .default
         view.delegate = context.coordinator
         view.onHardwareSubmit = { context.coordinator.parent.onSubmit() }
         view.accessibilityLabel = NSLocalizedString("Message", comment: "聊天输入框占位文本")
@@ -33,6 +34,11 @@ struct CFLComposerTextView: UIViewRepresentable {
         }
         view.font = font
         view.hardwareReturnSends = hardwareReturnSends
+        let returnKeyType: UIReturnKeyType = softwareReturnSends ? .send : .default
+        if view.returnKeyType != returnKeyType {
+            view.returnKeyType = returnKeyType
+            if view.isFirstResponder { view.reloadInputViews() }
+        }
         view.refreshPlaceholder()
         view.setNeedsLayout()
         if focus.wrappedValue && !view.isFirstResponder && view.window != nil {
@@ -73,6 +79,7 @@ struct CFLComposerTextView: UIViewRepresentable {
                       replacementText replacement: String) -> Bool {
             if (textView as? InputView)?.insertingHardwareNewline == true { return true }
             guard replacement == "\n", textView.markedTextRange == nil else { return true }
+            guard parent.softwareReturnSends else { return true }
             parent.onSubmit()
             return false
         }

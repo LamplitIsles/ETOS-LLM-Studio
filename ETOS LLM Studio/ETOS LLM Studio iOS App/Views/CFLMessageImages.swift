@@ -17,6 +17,7 @@ struct CFLMessageImages: View {
     let clientID: UUID
     var failedPending: CFLPending? = nil
     var showFailureIndicator = false
+    var canFavorite = true
 
     private var items: [CFLPresentedImage] {
         if images.isEmpty {
@@ -36,7 +37,7 @@ struct CFLMessageImages: View {
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: min(items.count, 3)), spacing: 4) {
                 ForEach(items) { image in
-                    CFLMessageImage(image: image, model: model, target: target, session: session, revision: revision, clientID: clientID)
+                    CFLMessageImage(image: image, model: model, target: target, session: session, revision: revision, clientID: clientID, canFavorite: canFavorite)
                 }
             }
             .frame(maxWidth: items.count == 1 ? 180 : 260)
@@ -62,6 +63,7 @@ private struct CFLMessageImage: View {
     let session: String?
     let revision: Int
     let clientID: UUID
+    let canFavorite: Bool
     @State private var thumbnail: CFLDecodedImage?
     @State private var failed = false
     @State private var attempt = 0
@@ -93,6 +95,17 @@ private struct CFLMessageImage: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(image.ref?.name ?? NSLocalizedString("图片", comment: "Image"))
+        .contextMenu {
+            if canFavorite, let ref = image.ref, ref.availability == "available",
+               let context = model.imageContext, context.target == target, context.session == session,
+               context.revision == revision, context.clientID == clientID {
+                Button {
+                    Task { await model.favoriteChatImage(ref, context: context) }
+                } label: {
+                    Label(NSLocalizedString("收藏表情", comment: "Favorite sticker"), systemImage: "heart")
+                }
+            }
+        }
         .task(id: "\(clientID)|\(target ?? "")|\(session ?? "")|\(revision)|\(model.imagePageRevision)|\(model.imagePageActive)|\(image.id)|\(image.preview != nil)|\(attempt)") { await loadThumbnail() }
         .sheet(isPresented: $showingOriginal) {
             CFLOriginalImage(image: image, model: model, target: target, session: session, revision: revision, clientID: clientID)
@@ -267,7 +280,7 @@ private struct CFLImageFrameSource: ImageFrameSource {
     func copy() -> Self { Self(data: data ?? Data(), maxPixelSize: maxPixelSize) }
 }
 
-private struct CFLImageContent: View {
+struct CFLImageContent: View {
     let image: CFLDecodedImage
     let contentMode: UIView.ContentMode
 

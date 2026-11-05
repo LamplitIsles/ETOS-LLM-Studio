@@ -46,9 +46,10 @@ struct TelegramMessageComposer: View {
     var addPhotos: ([PhotosPickerItem]) -> Void = { _ in }
     var addCameraImage: (UIImage) -> Void = { _ in }
     var removeImage: (UUID) -> Void = { _ in }
+    var showsStickerPanel = false
+    var toggleStickers: () -> Void = {}
 
     @StateObject var inlineSpeechRecorder = InlineSpeechRecorderController()
-    @Namespace var adaptiveGlassNamespace
     @State private var inlineSpeechStartTask: Task<Void, Never>?
     @State private var inlineSpeechTranscriptionTask: Task<Void, Never>?
     @State var inlineSpeechPreparedTranscript: String?
@@ -59,12 +60,6 @@ struct TelegramMessageComposer: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []
 
     var compactTextEdgeInset: CGFloat { 6 }
-    private var isLiquidGlassEnabled: Bool {
-        if #available(iOS 26.0, *) {
-            return appConfig.enableLiquidGlass
-        }
-        return false
-    }
     var body: some View {
         ChatComposerHeightLimit(maximumHeight: availableHeight) {
             VStack(spacing: 8) {
@@ -145,22 +140,28 @@ struct TelegramMessageComposer: View {
         }
         .frame(height: 80)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(glassRoundedBackground(cornerRadius: 18))
+        .background(composerRoundedBackground(cornerRadius: 18))
     }
 
     @ViewBuilder
-    func attachmentMenuButton(size: CGFloat, participatesInGlassContainer: Bool = false) -> some View {
-        if isSending {
-            Button(action: stopAction) {
-                Image(systemName: "stop.fill")
-                    .etFont(.system(size: min(17, max(14, size * 0.45)), weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: size, height: size)
-                    .background(Circle().fill(Color.red.opacity(0.85)).shadow(color: glassShadowColor, radius: 6, x: 0, y: 2))
-                    .contentShape(Circle())
+    func attachmentMenuButton(size: CGFloat) -> some View {
+        let showsSendButton = !appConfig.iOSSoftwareKeyboardReturnSendsMessage &&
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canPerformSend = composerCanSend && !isSendActionPending && !inlineSpeechRecorder.phase.isActive
+        if isSending && !showsSendButton {
+            ChatCircleActionButton(systemName: "stop.fill",
+                accessibilityLabel: NSLocalizedString("停止生成", comment: "Stop generation"),
+                isEnabled: true, circleSize: size, symbolSize: min(17, max(14, size * 0.45)),
+                iconColor: .white, fill: Color.red.opacity(0.85), action: stopAction)
+        } else if showsSendButton {
+            ChatCircleActionButton(systemName: "arrow.up",
+                accessibilityLabel: NSLocalizedString("发送", comment: "Send message"),
+                isEnabled: canPerformSend, circleSize: size, symbolSize: min(17, max(14, size * 0.45)),
+                iconColor: canPerformSend ? .white : Color.primary.opacity(0.55),
+                fill: canPerformSend ? TelegramColors.sendButtonColor : Color.primary.opacity(0.12)) {
+                guard canPerformSend else { return }
+                _ = sendAction()
             }
-            .buttonStyle(ComposerPressButtonStyle())
-            .accessibilityLabel(NSLocalizedString("停止生成", comment: "Stop generation"))
         } else {
             Menu {
                 Button {
@@ -182,20 +183,20 @@ struct TelegramMessageComposer: View {
                     }.disabled(!composerCanSend)
                 }
             } label: {
-                composerActionIcon("paperclip", size: size)
+                ChatCircleActionLabel(systemName: "plus", circleSize: size)
             }
-            .buttonStyle(ComposerPressButtonStyle(usesSystemGlassFeedback: participatesInGlassContainer && isLiquidGlassEnabled))
+            .buttonStyle(ComposerPressButtonStyle())
             .disabled((!canAttachImages && !cflState.hasImages) || isPreparingImages || inlineSpeechRecorder.phase.isActive)
             .accessibilityLabel(NSLocalizedString("添加附件", comment: ""))
         }
     }
 
-    private func composerActionIcon(_ symbol: String, size: CGFloat) -> some View {
-        Image(systemName: symbol)
-            .etFont(.system(size: max(14, size * 0.45), weight: .semibold))
-            .foregroundColor(TelegramColors.attachButtonColor)
-            .frame(width: size, height: size)
-            .background { glassCircleBackground }
+    func stickerButton(size: CGFloat) -> some View {
+        ChatCircleActionButton(systemName: showsStickerPanel ? "keyboard" : "face.smiling",
+            accessibilityLabel: showsStickerPanel
+            ? NSLocalizedString("切换到键盘", comment: "Show keyboard")
+            : NSLocalizedString("表情", comment: "Stickers"),
+            isEnabled: !inlineSpeechRecorder.phase.isActive, circleSize: size, action: toggleStickers)
     }
 
     func startInlineSpeechRecording() {
@@ -293,95 +294,9 @@ struct TelegramMessageComposer: View {
         text += separator + trimmed
     }
 
-    @ViewBuilder
-    func actionCircleBackground(fill: Color) -> some View {
-        if isLiquidGlassEnabled {
-            if #available(iOS 26.0, *) {
-                Circle()
-                    .fill(Color.clear)
-                    .glassEffect(.clear.interactive(), in: Circle())
-                    .overlay(
-                        Circle()
-                            .fill(fill.opacity(0.82))
-                    )
-                    .overlay(
-                        Circle()
-                            .stroke(glassStrokeColor, lineWidth: 0.5)
-                    )
-                    .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-            } else {
-                Circle()
-                    .fill(fill)
-                    .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-            }
-        } else {
-            Circle()
-                .fill(fill)
-                .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-        }
-    }
-
-    var glassCircleBackground: some View {
-        ChatComposerCircleBackground(usesLiquidGlass: isLiquidGlassEnabled, tint: glassOverlayColor,
-                                     stroke: glassStrokeColor, shadow: glassShadowColor)
-    }
-
-    func glassRoundedBackground(cornerRadius: CGFloat) -> some View {
+    func composerRoundedBackground(cornerRadius: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return Group {
-            if isLiquidGlassEnabled {
-                if #available(iOS 26.0, *) {
-                    shape
-                        .fill(Color.clear)
-                        .glassEffect(.clear, in: shape)
-                        .overlay(
-                            shape
-                                .fill(glassOverlayColor)
-                        )
-                        .overlay(
-                            shape
-                                .stroke(glassStrokeColor, lineWidth: 0.5)
-                        )
-                        .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-                } else {
-                    shape
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            shape
-                                .fill(glassOverlayColor)
-                        )
-                        .overlay(
-                            shape
-                                .stroke(glassStrokeColor, lineWidth: 0.5)
-                        )
-                        .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-                }
-            } else {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        shape
-                            .fill(glassOverlayColor)
-                    )
-                    .overlay(
-                        shape
-                            .stroke(glassStrokeColor, lineWidth: 0.5)
-                    )
-                    .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-            }
-        }
-    }
-
-    var glassOverlayColor: Color {
-        let opacity = LiquidGlassTintSetting.normalized(appConfig.liquidGlassTintOpacity)
-        return colorScheme == .dark ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
-    }
-
-    var glassStrokeColor: Color {
-        Color.white.opacity(colorScheme == .dark ? 0.18 : 0.28)
-    }
-
-    var glassShadowColor: Color {
-        Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1)
+        return ChatAssistantSurface(shape: shape)
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 6, x: 0, y: 2)
     }
 }

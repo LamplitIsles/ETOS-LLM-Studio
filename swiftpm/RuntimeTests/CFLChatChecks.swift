@@ -48,6 +48,7 @@ actor FakeSocket: CFLChatTransport {
     var queue: [String] = []
     var waiter: CheckedContinuation<String, Error>?
     var closed = false
+    var receiveError: CFLFailure = .offline
     var sent: [(String, [ChordJSON])] = []
     var dropSubmit = false
     var holdSubmit = false
@@ -64,8 +65,9 @@ actor FakeSocket: CFLChatTransport {
     var holdHistory = false
     var heldHistory: (String, ChordJSON)?
     let earlyUpdate: ChordJSON?
-    init(snapshot: ChordJSON, dropSubmit: Bool = false, lookupReceipt: ChordJSON = .null, earlyUpdate: ChordJSON? = nil, holdLookup: Bool = false) {
-        self.snapshot = snapshot; self.dropSubmit = dropSubmit; self.lookupReceipt = lookupReceipt; self.earlyUpdate = earlyUpdate; self.holdLookup = holdLookup
+    let earlyFrames: [ChordJSON]
+    init(snapshot: ChordJSON, dropSubmit: Bool = false, lookupReceipt: ChordJSON = .null, earlyUpdate: ChordJSON? = nil, holdLookup: Bool = false, earlyFrames: [ChordJSON] = []) {
+        self.snapshot = snapshot; self.dropSubmit = dropSubmit; self.lookupReceipt = lookupReceipt; self.earlyUpdate = earlyUpdate; self.holdLookup = holdLookup; self.earlyFrames = earlyFrames
     }
     func send(_ text: String) async throws {
         guard !closed, let call = try JSONDecoder().decode(ChordJSON.self, from: Data(text.utf8)).object,
@@ -81,6 +83,7 @@ actor FakeSocket: CFLChatTransport {
         switch method {
         case "subscribe":
             if let earlyUpdate { enqueue(String(decoding: try JSONEncoder().encode(earlyUpdate), as: UTF8.self)) }
+            for frame in earlyFrames { enqueue(String(decoding: try JSONEncoder().encode(frame), as: UTF8.self)) }
             result = snapshot
         case "submit":
             let operation = args[0].object!["operationId"]!
@@ -101,10 +104,13 @@ actor FakeSocket: CFLChatTransport {
     func enqueue(_ text: String) { if let waiter { self.waiter = nil; waiter.resume(returning: text) } else { queue.append(text) } }
     func receive() async throws -> String {
         if !queue.isEmpty { return queue.removeFirst() }
-        if closed { throw CFLFailure.offline }
+        if closed { throw receiveError }
         return try await withCheckedThrowingContinuation { waiter = $0 }
     }
     func close() async { closed = true; waiter?.resume(throwing: CFLFailure.offline); waiter = nil }
+    func failReceive(_ error: CFLFailure) {
+        receiveError = error; closed = true; waiter?.resume(throwing: error); waiter = nil
+    }
     func methods() -> [String] { sent.map { $0.0 } }
     func arguments(for method: String) -> [[ChordJSON]] { sent.filter { $0.0 == method }.map { $0.1 } }
     func setHistory(_ pages: [String: ChordJSON], hold: Bool = false) { historyPages = pages; holdHistory = hold }
@@ -119,6 +125,12 @@ actor FakeSocket: CFLChatTransport {
     func setFailedSubmit() { failedSubmit = true }
     func setHoldSubmit() { holdSubmit = true }
     func submitIsHeld() -> Bool { heldSubmitID != nil }
+    func releaseSubmit() throws {
+        guard let id = heldSubmitID, let operation = sent.last(where: { $0.0 == "submit" })?.1.first?.object?["operationId"] else { throw CFLFailure.protocolError }
+        heldSubmitID = nil; holdSubmit = false
+        let receipt: ChordJSON = .object(["operationId": operation, "state": .string("submitted"), "messageId": .null, "turnId": .null, "error": .null])
+        try emit(.object(["type": .string("result"), "id": .string(id), "result": receipt]))
+    }
     func setLookup(_ value: ChordJSON) { lookupReceipt = value }
     func historyIsHeld() -> Bool { heldHistory != nil }
     func releaseHistory() throws {
@@ -153,22 +165,21 @@ func historyPage(_ range: Range<Int>, before: String?) -> ChordJSON {
     .object(["messages": .array(range.map(historyMessage)), "before": before.map(ChordJSON.string) ?? .null])
 }
 
-func historySnapshot(_ range: Range<Int>, before: String?, session: String = "fixture-session", messages: [ChordJSON]? = nil) -> ChordJSON {
-    let view: ChordJSON = .object([
+func historySnapshot(_ range: Range<Int>, before: String?, session: String = "fixture-session", messages: [ChordJSON]? = nil, preview: ChordJSON? = nil) -> ChordJSON {
+    var fields: [String: ChordJSON] = [
         "version": .number(2), "sessionId": .string(session), "name": .string("Mica"), "activeTurnId": .null,
         "contextUsage": .null, "compaction": .null, "recovery": .array([]),
         "capabilities": .object(["text": .bool(true), "stop": .bool(true)]),
         "messages": .array(messages ?? range.map(historyMessage)), "before": before.map(ChordJSON.string) ?? .null,
-    ])
+    ]
+    if let preview { fields["streamingReply"] = preview }
+    let view: ChordJSON = .object(fields)
     return .object(["serviceId": .string("lamplit.chat.v2"), "mode": .string("singleton"), "instances": .array([
         .object(["members": .array([.object(["name": .string("view"), "kind": .string("state"), "sequence": .number(0),
             "ops": .array([.array([.string("r"), view])])])])])
     ])])
 }
 
-func timeline(_ change: ChordJSON, session: String = "fixture-session") -> ChordJSON {
-    .object(["type": .string("timeline"), "sessionId": .string(session), "change": change])
-}
 func imageSlot(_ id: String, state: String) -> ChordJSON {
     var fields: [String: ChordJSON] = ["id": .string(id), "role": .string("agent"), "text": .string(""), "createdAt": .number(1),
                                         "operationId": .null, "turnId": .string("turn"), "imageState": .string(state)]
@@ -226,6 +237,66 @@ func checkHistoryTimeout() async throws {
     await retry.disconnect()
 }
 
+func checkViewItemAndWindowContinuity() async throws {
+    func waitForName(_ client: CFLChatClient, _ name: String) async throws -> CFLChatState {
+        for _ in 0..<200 {
+            let state = await client.currentState()
+            if state.name == name { return state }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw CFLFailure.requestFailed
+    }
+    var state: CFLChatState
+    func text(_ id: String, _ value: String, _ status: String) -> ChordJSON {
+        .object(["id": .string(id), "role": .string("agent"), "text": .string(value), "createdAt": .number(1),
+                 "operationId": .null, "turnId": .string("turn"), "textState": .string(status),
+                 "ends": .array(value.isEmpty ? [] : [.number(Double(value.utf16.count))])])
+    }
+    let a = text("a", "one", "complete"), b = text("b", "two", "streaming")
+    let windowSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: [a, b]))
+    let window = CFLChatClient(target: "history", store: MemoryStore(), transport: { windowSocket })
+    await window.connect()
+    try await windowSocket.emit(update(sequence: 1, field: "messages", value: .array([a])))
+    try await windowSocket.emit(update(sequence: 2, field: "name", value: .string("tail absent")))
+    state = try await waitForName(window, "tail absent")
+    precondition(state.messages.map(\.id) == ["a", "b"] && state.messages.last?.text == "two")
+    let completeB = text("b", "two complete", "complete")
+    try await windowSocket.emit(update(sequence: 3, field: "messages", value: .array([a, completeB])))
+    try await windowSocket.emit(update(sequence: 4, field: "name", value: .string("tail restored")))
+    state = try await waitForName(window, "tail restored")
+    precondition(state.messages.map(\.id) == ["a", "b"] && state.messages.last?.text == "two complete" && state.messages.last?.textState == .complete)
+    let c = text("c", "three", "complete")
+    try await windowSocket.emit(update(sequence: 5, field: "messages", value: .array([completeB, c])))
+    try await windowSocket.emit(update(sequence: 6, field: "name", value: .string("prefix slid")))
+    state = try await waitForName(window, "prefix slid")
+    precondition(state.messages.map(\.id) == ["a", "b", "c"])
+    try await windowSocket.emit(update(sequence: 7, field: "messages", value: .array([c, completeB])))
+    try await windowSocket.emit(update(sequence: 8, field: "name", value: .string("view reordered")))
+    state = try await waitForName(window, "view reordered")
+    precondition(state.messages.map(\.id) == ["a", "c", "b"])
+    await window.disconnect()
+
+    // Loaded history stays in place through a temporary omission and a real
+    // prefix slide; the server's new cursor supplies the intervening page.
+    let historySocket = FakeSocket(snapshot: historySnapshot(2..<4, before: "c2"))
+    await historySocket.setHistory(["c2": historyPage(0..<2, before: nil), "c3": historyPage(0..<3, before: nil)])
+    let history = CFLChatClient(target: "history", store: MemoryStore(), transport: { historySocket })
+    await history.connect(); try await history.loadEarlier()
+    try await historySocket.emit(update(sequence: 1, field: "messages", value: .array([historyMessage(2)])))
+    try await historySocket.emit(update(sequence: 2, field: "name", value: .string("history tail absent")))
+    state = try await waitForName(history, "history tail absent")
+    precondition(state.messages.map(\.id) == (0..<4).map { "server-\($0)" })
+    let slide: ChordJSON = .object(["type": .string("update"), "subscriptionId": .string("view"), "update": .object([
+        "type": .string("state"), "member": .string("view"), "sequence": .number(3),
+        "ops": .array([.array([.string("s"), .array([.string("messages")]), .array([historyMessage(3), historyMessage(4)])]),
+                       .array([.string("s"), .array([.string("before")]), .string("c3")])])])])
+    try await historySocket.emit(slide)
+    try await historySocket.emit(update(sequence: 4, field: "name", value: .string("history slid")))
+    state = try await waitForName(history, "history slid")
+    precondition(state.messages.map(\.id) == (0..<5).map { "server-\($0)" })
+    await history.disconnect()
+}
+
 func checkOrderedTimeline() async throws {
     var invalid = imageSlot("bad", state: "ready").object!; invalid.removeValue(forKey: "images")
     var nullImages = imageSlot("bad", state: "preparing").object!; nullImages["images"] = .null
@@ -236,150 +307,22 @@ func checkOrderedTimeline() async throws {
         await bad.connect(); let value = await bad.currentState(); precondition(value.connection == .protocolError)
         await bad.disconnect()
     }
-    let socket = FakeSocket(snapshot: historySnapshot(60..<90, before: "c60"))
-    var oldest = (0..<30).map(historyMessage); oldest[3] = imageSlot("server-3", state: "preparing")
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(oldest), "before": .null])])
-    let sockets = SocketSequence([socket])
-    let client = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await sockets.next() })
-    await client.connect(); try await client.loadEarlier(); try await client.loadEarlier()
-    var current = await client.currentState()
-    precondition(current.messages.count == 90 && current.messages[3].imageState == .preparing)
-    let baseline = await socket.arguments(for: "history").count
-    try await socket.emit(timeline(.object(["type": .string("item"), "message": imageSlot("server-3", state: "ready")])))
-    for _ in 0..<200 { if await client.currentState().messages[3].imageState == .ready { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    current = await client.currentState(); precondition(current.messages[3].imageState == .ready && current.messages[3].images?.first?.attachmentId == "image")
-    let afterItem = await socket.arguments(for: "history").count; precondition(afterItem == baseline)
-    try await socket.emit(timeline(.object(["type": .string("item"), "message": imageSlot("not-loaded", state: "ready")])))
-    try await Task.sleep(nanoseconds: 20_000_000)
-    current = await client.currentState(); precondition(!current.messages.contains { $0.id == "not-loaded" })
-
-    let inserted = historyMessage(1000)
-    var shifted = Array(oldest.dropFirst()); shifted.insert(inserted, at: 1)
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(shifted), "before": .string("c0")]), "c0": historyPage(0..<1, before: nil)], hold: true)
-    try await socket.emit(timeline(.object(["type": .string("structure")])))
+    // An in-flight history read is fenced by the session even with no item channel.
+    let socket = FakeSocket(snapshot: historySnapshot(30..<60, before: "c30"))
+    await socket.setHistory(["c30": historyPage(0..<30, before: nil)], hold: true)
+    let client = CFLChatClient(target: "history", store: MemoryStore(), transport: { socket })
+    await client.connect()
+    let loading = Task { try await client.loadEarlier() }
     for _ in 0..<200 { if await socket.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
     let held = await socket.historyIsHeld(); precondition(held)
-    try await socket.emit(timeline(.object(["type": .string("item"), "message": imageSlot("server-3", state: "failed")])))
-    var live = (60..<90).map(historyMessage); var changed = live[0].object!; changed["text"] = .string("new view while reading"); live[0] = .object(changed)
-    try await socket.emit(update(sequence: 1, field: "messages", value: .array(live)))
-    shifted[3] = imageSlot("server-3", state: "failed")
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(shifted), "before": .string("c0")]), "c0": historyPage(0..<1, before: nil)])
-    try await socket.emit(timeline(.object(["type": .string("structure")])))
+    try await socket.emit(update(sequence: 1, field: "sessionId", value: .string("new-session")))
+    for _ in 0..<200 { if await client.currentState().sessionId == "new-session" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
     try await socket.releaseHistory()
-    for _ in 0..<300 {
-        let value = await client.currentState()
-        if value.messages.count == 91 && value.messages.contains(where: { $0.id == "server-3" && $0.imageState == .failed }) { break }
-        try await Task.sleep(nanoseconds: 5_000_000)
-    }
-    current = await client.currentState()
-    precondition(current.messages.count == 91 && current.messages[2].id == "server-1000" && current.messages[4].imageState == .failed && current.messages.first(where: { $0.id == "server-60" })?.text == "new view while reading" && !current.historySyncFailed)
-
-    await socket.setHistory(["c60": historyPage(30..<60, before: nil)])
-    try await socket.emit(timeline(.object(["type": .string("structure")])))
-    for _ in 0..<200 { if await client.currentState().historySyncFailed { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    current = await client.currentState(); precondition(current.historySyncFailed && current.messages.count == 91)
-    shifted[3] = imageSlot("server-3", state: "failed")
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(shifted), "before": .string("c0")]), "c0": historyPage(0..<1, before: nil)])
-    let beforeRetry = await socket.arguments(for: "history").count
-    await client.retryHistory()
-    for _ in 0..<200 {
-        let count = await socket.arguments(for: "history").count
-        let value = await client.currentState()
-        if count >= beforeRetry + 3 && !value.historySyncFailed { break }
-        try await Task.sleep(nanoseconds: 5_000_000)
-    }
-    let beforeReset = await socket.arguments(for: "history").count
-    try await socket.emit(.object(["type": .string("update"), "subscriptionId": .string("view"), "update": .object(["type": .string("reset"), "snapshot": historySnapshot(60..<90, before: "c60")])]))
-    for _ in 0..<200 { if await socket.arguments(for: "history").count >= beforeReset + 3 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    let resetCalls = await socket.arguments(for: "history").count; precondition(resetCalls >= beforeReset + 3)
-    let next = FakeSocket(snapshot: historySnapshot(90..<120, before: "c90"))
-    await next.setHistory(["c90": historyPage(60..<90, before: "c60"), "c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(shifted), "before": .string("c0")]), "c0": historyPage(0..<1, before: nil)])
-    await sockets.append(next); await client.disconnect(); await client.connect()
-    for _ in 0..<300 { if await client.currentState().messages.count == 121 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    current = await client.currentState()
-    precondition(current.messages.count == 121 && current.messages[4].imageState == .failed && current.before == nil && !current.historySyncFailed)
+    do { try await loading.value; preconditionFailure("old session page accepted") } catch CFLFailure.sessionChanged { }
+    let current = await client.currentState()
+    precondition(current.sessionId == "new-session" && current.messages.count == 30 && current.before == "c30")
     await client.disconnect()
 
-    let serialSocket = FakeSocket(snapshot: historySnapshot(60..<90, before: "c60"))
-    await serialSocket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": historyPage(0..<30, before: nil)])
-    let serial = CFLChatClient(target: "history", store: MemoryStore(), transport: { serialSocket })
-    await serial.connect(); try await serial.loadEarlier()
-    await serialSocket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": historyPage(0..<30, before: nil)], hold: true)
-    try await serialSocket.emit(timeline(.object(["type": .string("structure")])))
-    for _ in 0..<200 { if await serialSocket.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    let beforeManual = await serialSocket.arguments(for: "history").count
-    let manual = Task { try await serial.loadEarlier() }
-    try await Task.sleep(nanoseconds: 20_000_000)
-    let duringManual = await serialSocket.arguments(for: "history").count; precondition(duringManual == beforeManual)
-    try await serialSocket.releaseHistory(); try await manual.value
-    current = await serial.currentState(); precondition(current.messages.count == 90 && current.before == nil)
-    await serial.disconnect()
-
-    let cancelSocket = FakeSocket(snapshot: historySnapshot(30..<60, before: "c30"))
-    await cancelSocket.setHistory(["c30": historyPage(0..<30, before: nil)], hold: true)
-    let cancelled = CFLChatClient(target: "history", store: MemoryStore(), transport: { cancelSocket })
-    await cancelled.connect()
-    let loading = Task { try await cancelled.loadEarlier() }
-    for _ in 0..<200 { if await cancelSocket.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    loading.cancel(); try await cancelSocket.releaseHistory()
-    do { try await loading.value; preconditionFailure("cancelled page applied") } catch is CancellationError { }
-    current = await cancelled.currentState(); precondition(current.messages.count == 30 && current.before == "c30")
-    await cancelled.disconnect()
-
-    // Neither a pending manual page nor an automatic reconciliation from the
-    // previous session may block paging the new session or apply afterward.
-    for automatic in [false, true] {
-        let switchingSocket = FakeSocket(snapshot: historySnapshot(30..<60, before: "c30"))
-        await switchingSocket.setHistory(["c30": historyPage(0..<30, before: nil)])
-        let switching = CFLChatClient(target: "history", store: MemoryStore(), transport: { switchingSocket })
-        await switching.connect()
-        if automatic { try await switching.loadEarlier() }
-        await switchingSocket.setHistory(["c30": historyPage(0..<30, before: nil)], hold: true)
-        let oldLoad: Task<Void, Error>?
-        if automatic {
-            oldLoad = nil
-            try await switchingSocket.emit(timeline(.object(["type": .string("structure")])))
-        } else {
-            oldLoad = Task { try await switching.loadEarlier() }
-        }
-        for _ in 0..<200 { if await switchingSocket.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-        let heldOld = await switchingSocket.historyIsHeld(); precondition(heldOld)
-        try await switchingSocket.emit(update(sequence: 1, field: "sessionId", value: .string("new-session")))
-        for _ in 0..<200 { if await switching.currentState().sessionId == "new-session" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-        await switchingSocket.setHistory(["c30": historyPage(100..<130, before: nil)])
-        try await switching.loadEarlier()
-        current = await switching.currentState()
-        precondition(current.sessionId == "new-session" && current.messages.first?.id == "server-100" && current.before == nil)
-        try await switchingSocket.releaseHistory()
-        if let oldLoad {
-            do { try await oldLoad.value; preconditionFailure("old session page accepted") } catch CFLFailure.sessionChanged { }
-        }
-        try await Task.sleep(nanoseconds: 20_000_000)
-        current = await switching.currentState()
-        precondition(current.sessionId == "new-session" && current.messages.first?.id == "server-100" && current.before == nil)
-        await switching.disconnect()
-    }
-
-    let brokenSocket = FakeSocket(snapshot: historySnapshot(30..<60, before: "c30"))
-    await brokenSocket.setHistory(["c30": historyPage(0..<30, before: nil)])
-    let repairedSocket = FakeSocket(snapshot: historySnapshot(30..<60, before: "c30"))
-    await repairedSocket.setHistory(["c30": historyPage(0..<30, before: nil)])
-    let recoverySockets = SocketSequence([brokenSocket, repairedSocket])
-    let recovery = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await recoverySockets.next() })
-    await recovery.connect(); try await recovery.loadEarlier()
-    await brokenSocket.setHistory(["c30": historyPage(1..<30, before: nil)])
-    try await brokenSocket.emit(timeline(.object(["type": .string("structure")])))
-    for _ in 0..<200 { if await recovery.currentState().historySyncFailed { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    current = await recovery.currentState(); precondition(current.historySyncFailed && current.messages.count == 60)
-    await recovery.disconnect(); await recovery.connect()
-    for _ in 0..<200 {
-        let calls = await repairedSocket.arguments(for: "history").count
-        let value = await recovery.currentState()
-        if calls > 0 && !value.historySyncFailed { break }
-        try await Task.sleep(nanoseconds: 5_000_000)
-    }
-    current = await recovery.currentState(); precondition(!current.historySyncFailed && current.messages.count == 60)
-    await recovery.disconnect()
 }
 
 func checkReminderSources() async throws {
@@ -428,246 +371,215 @@ func checkReminderSources() async throws {
     print("CFL reminder source checks passed")
 }
 
+func checkReplySourceContract() async throws {
+    let rawText = "😀\nline\npartial"
+    let preview: ChordJSON = .object(["id": .string("source-1"), "turnId": .string("turn"), "createdAt": .number(1),
+                                      "text": .string(rawText), "ends": .array([.number(3), .number(8)])])
+    func reply(_ id: String, _ text: String, _ ends: ChordJSON) -> ChordJSON {
+        .object(["id": .string(id), "role": .string("agent"), "text": .string(text), "ends": ends,
+                 "createdAt": .number(1), "operationId": .null, "turnId": .string("turn")])
+    }
+    let old = reply("older-reply", "first\n```\nx\n```\n", .array([.number(6), .number(16)]))
+    let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: "older", messages: [historyMessage(1), imageSlot("image-1", state: "ready")], preview: preview))
+    await socket.setHistory(["older": .object(["messages": .array([old]), "before": .null])])
+    let client = CFLChatClient(target: "fixture", store: MemoryStore(), transport: { socket })
+    await client.connect()
+    var state = await client.currentState()
+    precondition(state.connection == .online && state.streamingReply?.id == "source-1" && state.streamingReply?.text == rawText)
+    let previewParts = try CFLReplySegments.texts(rawText, ends: state.streamingReply!.ends!)
+    precondition(previewParts == ["😀\n", "line\n"])
+    try await client.loadEarlier()
+    state = await client.currentState()
+    let history = state.messages.first!
+    let historyParts = try CFLReplySegments.texts(history.text, ends: history.ends!)
+    precondition(history.id == "older-reply" && historyParts == ["first\n", "```\nx\n```\n"])
+    let complete = reply("source-1", rawText, .array([.number(3), .number(8), .number(15)]))
+    let finalUpdate: ChordJSON = .object(["type": .string("update"), "subscriptionId": .string("view"), "update": .object([
+        "type": .string("state"), "member": .string("view"), "sequence": .number(1), "ops": .array([
+            .array([.string("s"), .array([.string("messages")]), .array([historyMessage(1), imageSlot("image-1", state: "ready"), complete])]),
+            .array([.string("d"), .array([.string("streamingReply")])])])])])
+    try await socket.emit(finalUpdate)
+    for _ in 0..<200 { if await client.currentState().messages.last?.id == "source-1" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    state = await client.currentState()
+    let completed = state.messages.last!
+    let completedParts = try CFLReplySegments.texts(completed.text, ends: completed.ends!)
+    precondition(state.streamingReply == nil && completed.id == "source-1" && completedParts == ["😀\n", "line\n", "partial"])
+    try await socket.emit(update(sequence: 2, field: "messages", value: .array([historyMessage(1), imageSlot("image-1", state: "failed"), complete])))
+    for _ in 0..<200 { if await client.currentState().messages.first(where: { $0.id == "image-1" })?.imageState == .failed { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    state = await client.currentState()
+    precondition(state.messages.first(where: { $0.id == "image-1" })?.imageState == .failed && state.messages.last?.id == "source-1")
+    await client.disconnect()
+
+    // Contract requires ends on ordinary replies and previews, including an empty array.
+    var missing = reply("bad", rawText, .array([])).object!; missing.removeValue(forKey: "ends")
+    let invalidEnds: [ChordJSON] = [.array([.number(1)]), .array([.number(3), .number(3)]),
+                                     .array([.number(0)]), .array([.number(99)]), .array([.number(2.5)]), .null]
+    for bad in [ChordJSON.object(missing)] + invalidEnds.map({ reply("bad", rawText, $0) }) {
+        let badSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: [bad]))
+        let badClient = CFLChatClient(target: "fixture", store: MemoryStore(), transport: { badSocket })
+        await badClient.connect(); let badState = await badClient.currentState()
+        precondition(badState.connection == .protocolError)
+        await badClient.disconnect()
+    }
+    var badPreview = preview.object!; badPreview["ends"] = .array([.number(1)])
+    let previewSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, preview: .object(badPreview)))
+    let previewClient = CFLChatClient(target: "fixture", store: MemoryStore(), transport: { previewSocket })
+    await previewClient.connect(); let invalidPreview = await previewClient.currentState()
+    precondition(invalidPreview.connection == .protocolError)
+    await previewClient.disconnect()
+    let historySocket = FakeSocket(snapshot: historySnapshot(0..<1, before: "bad"))
+    await historySocket.setHistory(["bad": .object(["messages": .array([reply("bad", rawText, .array([.number(1)]))]), "before": .null])])
+    let historyClient = CFLChatClient(target: "fixture", store: MemoryStore(), transport: { historySocket })
+    await historyClient.connect()
+    do { try await historyClient.loadEarlier(); preconditionFailure("invalid history ends accepted") } catch CFLFailure.protocolError { }
+    let afterBadPage = await historyClient.currentState()
+    precondition(afterBadPage.messages.count == 1 && afterBadPage.before == "bad")
+    await historyClient.disconnect()
+
+    // The retired independent channel is not accepted as a second source of truth.
+    let legacySocket = FakeSocket(snapshot: historySnapshot(0..<1, before: nil))
+    let legacy = CFLChatClient(target: "fixture", store: MemoryStore(), transport: { legacySocket })
+    await legacy.connect()
+    try await legacySocket.emit(.object(["type": .string("timeline"), "sessionId": .string("fixture-session"),
+                                         "change": .object(["type": .string("structure")])]))
+    for _ in 0..<200 { if await legacy.currentState().connection == .protocolError { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let legacyState = await legacy.currentState(); precondition(legacyState.connection == .protocolError)
+    await legacy.disconnect()
+}
+
 func checkHistoryWindows() async throws {
     let old = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
-    let fresh = FakeSocket(snapshot: historySnapshot(70..<100, before: "before-70"))
+    let middle = FakeSocket(snapshot: historySnapshot(70..<100, before: "c70"))
+    let fresh = FakeSocket(snapshot: historySnapshot(140..<170, before: "c140"))
     await fresh.setHistory([
-        "before-70": historyPage(40..<70, before: "before-40"),
-        "before-40": historyPage(10..<40, before: "before-10"),
-        "before-10": historyPage(0..<10, before: nil),
+        "c70": historyPage(40..<70, before: "c40"),
+        "c40": historyPage(10..<40, before: "c10"),
+        "c140": historyPage(110..<140, before: "c110"),
+        "c110": historyPage(80..<110, before: "c80"),
     ])
-    let sockets = SocketSequence([old, fresh])
+    let sockets = SocketSequence([old, middle, fresh])
     let client = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await sockets.next() })
     await client.connect(); await client.disconnect(); await client.connect()
     var state = await client.currentState()
-    for _ in 0..<200 {
-        state = await client.currentState()
-        if state.messages.count == 100 && state.before == nil { break }
-        try await Task.sleep(nanoseconds: 5_000_000)
-    }
+    precondition(state.historyGaps.count == 1 && state.historyGaps[0].afterId == "server-29" && state.historyGaps[0].beforeId == "server-70")
+    let first = state.historyGaps[0].id
+    await client.disconnect(); await client.connect()
     state = await client.currentState()
-    precondition(state.messages.map(\.id) == (0..<100).map { "server-\($0)" } && state.before == nil)
-    let calls = await fresh.arguments(for: "history")
-    precondition(calls == [[.string("before-70")], [.string("before-40")], [.string("before-10")]])
+    precondition(state.historyGaps.count == 2 && state.historyGaps[1].afterId == "server-99" && state.historyGaps[1].beforeId == "server-140")
+    let second = state.historyGaps[1].id
+    let initialCalls = await fresh.arguments(for: "history"); precondition(initialCalls.isEmpty)
+    await client.fillGap(id: first)
+    state = await client.currentState()
+    precondition(state.historyGaps.count == 2 && state.historyGaps[0].beforeId == "server-40" && state.historyGaps[0].status == .pending)
+    let firstCalls = await fresh.arguments(for: "history"); precondition(firstCalls == [[.string("c70")]])
+    await client.fillGap(id: first)
+    state = await client.currentState()
+    precondition(state.historyGaps.map(\.id) == [second] && state.messages.prefix(100).map(\.id) == (0..<100).map { "server-\($0)" })
+    await client.fillGap(id: second); await client.fillGap(id: second)
+    state = await client.currentState()
+    precondition(state.historyGaps.isEmpty && state.messages.map(\.id) == (0..<170).map { "server-\($0)" } && state.before == nil)
     let methods = await fresh.methods(); precondition(!methods.contains("submit"))
     await client.disconnect()
 
-    // An unreachable boundary leaves both windows visible and can be retried.
-    let failureOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
-    let failureNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "before-70"))
-    await failureNew.setHistory(["before-70": historyPage(40..<70, before: nil)])
-    let failureSockets = SocketSequence([failureOld, failureNew])
-    let failure = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await failureSockets.next() })
-    await failure.connect(); await failure.disconnect(); await failure.connect()
-    for _ in 0..<200 { if await failure.currentState().historySyncFailed { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    state = await failure.currentState()
-    precondition(state.historySyncFailed && state.messages.map(\.id) == ((0..<30).map { "server-\($0)" } + (70..<100).map { "server-\($0)" }))
-    await failureNew.setHistory(["before-70": historyPage(40..<70, before: "before-40"), "before-40": historyPage(10..<40, before: "before-10"), "before-10": historyPage(0..<10, before: nil)])
-    await failure.retryHistory()
-    for _ in 0..<200 { if await failure.currentState().messages.count == 100 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    state = await failure.currentState(); precondition(state.messages.map(\.id) == (0..<100).map { "server-\($0)" } && !state.historySyncFailed)
-    await failure.disconnect()
-
-    // A reconnect scan cannot block or overwrite a different session's page.
-    let switchOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
-    let switchNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "before-70"))
-    await switchNew.setHistory(["before-70": historyPage(40..<70, before: "before-40")], hold: true)
-    let switchSockets = SocketSequence([switchOld, switchNew])
-    let switched = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await switchSockets.next() })
-    await switched.connect(); await switched.disconnect(); await switched.connect()
-    for _ in 0..<200 { if await switchNew.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    let reconnectHeld = await switchNew.historyIsHeld(); precondition(reconnectHeld)
-    try await switchNew.emit(update(sequence: 1, field: "sessionId", value: .string("another-session")))
-    for _ in 0..<200 { if await switched.currentState().sessionId == "another-session" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    await switchNew.setHistory(["before-70": historyPage(200..<230, before: nil)])
-    try await switched.loadEarlier()
-    try await switchNew.releaseHistory()
-    try await Task.sleep(nanoseconds: 20_000_000)
-    state = await switched.currentState()
-    precondition(state.sessionId == "another-session" && state.messages.first?.id == "server-200" && state.messages.count == 60 && state.before == nil)
-    await switched.disconnect()
-
-    let overlappingOld = FakeSocket(snapshot: historySnapshot(30..<60, before: "before-30"))
-    await overlappingOld.setHistory(["before-30": historyPage(0..<30, before: nil)])
-    let overlappingNew = FakeSocket(snapshot: historySnapshot(50..<80, before: "before-50"))
-    let overlapSockets = SocketSequence([overlappingOld, overlappingNew])
+    // Ordinary sliding overlap does not make a gap or fetch history on reconnect.
+    let one = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
+    let two = FakeSocket(snapshot: historySnapshot(20..<50, before: "c20"))
+    let overlapSockets = SocketSequence([one, two])
     let overlap = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await overlapSockets.next() })
-    await overlap.connect(); try await overlap.loadEarlier(); await overlap.disconnect(); await overlap.connect()
-    state = await overlap.currentState()
-    precondition(state.messages.map(\.id) == (0..<80).map { "server-\($0)" } && state.before == nil)
+    await overlap.connect(); await overlap.disconnect(); await overlap.connect()
+    let overlapping = await overlap.currentState(), overlapCalls = await two.arguments(for: "history")
+    precondition(overlapping.historyGaps.isEmpty && overlapping.messages.count == 50 && overlapCalls.isEmpty)
     await overlap.disconnect()
 
-    // Filtered native windows can be empty while still pointing to earlier history.
-    let emptySocket = FakeSocket(snapshot: historySnapshot(0..<0, before: "empty"))
-    await emptySocket.setHistory(["empty": historyPage(0..<0, before: "earlier"), "earlier": historyPage(0..<2, before: nil)])
-    let empty = CFLChatClient(target: "history", store: MemoryStore(), transport: { emptySocket })
-    await empty.connect(); try await empty.loadEarlier()
-    try await emptySocket.emit(update(sequence: 1, field: "name", value: .string("Updated")))
-    for _ in 0..<100 {
-        if await empty.currentState().name == "Updated" { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    state = await empty.currentState(); precondition(state.name == "Updated" && state.before == "earlier")
-    try await empty.loadEarlier()
-    state = await empty.currentState()
-    precondition(state.messages.map(\.id) == ["server-0", "server-1"] && state.before == nil)
-    try await emptySocket.emit(update(sequence: 2, field: "name", value: .string("Updated again")))
-    for _ in 0..<100 {
-        if await empty.currentState().name == "Updated again" { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    state = await empty.currentState()
-    precondition(state.name == "Updated again" && state.messages.map(\.id) == ["server-0", "server-1"] && state.before == nil)
+    // An empty intermediate view must not erase the retained source window.
+    let emptyOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
+    let emptyMiddle = FakeSocket(snapshot: historySnapshot(0..<0, before: "empty"))
+    let emptyNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "c70"))
+    let emptySockets = SocketSequence([emptyOld, emptyMiddle, emptyNew])
+    let empty = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await emptySockets.next() })
+    await empty.connect(); await empty.disconnect(); await empty.connect()
+    let emptyState = await empty.currentState(); precondition(emptyState.messages.count == 30 && emptyState.before == nil)
+    await empty.disconnect(); await empty.connect()
+    let afterEmpty = await empty.currentState()
+    precondition(afterEmpty.historyGaps.count == 1 && afterEmpty.historyGaps[0].afterId == "server-29" && afterEmpty.historyGaps[0].beforeId == "server-70")
     await empty.disconnect()
 
-    let sameOld = FakeSocket(snapshot: historySnapshot(0..<0, before: "A"))
-    await sameOld.setHistory(["A": historyPage(0..<0, before: "earlier")])
-    let sameNew = FakeSocket(snapshot: historySnapshot(0..<0, before: "A"))
-    await sameNew.setHistory(["A": historyPage(0..<0, before: "earlier"), "earlier": historyPage(0..<2, before: nil)])
-    let sameSockets = SocketSequence([sameOld, sameNew])
-    let sameAnchor = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await sameSockets.next() })
-    await sameAnchor.connect(); try await sameAnchor.loadEarlier(); await sameAnchor.disconnect(); await sameAnchor.connect()
-    state = await sameAnchor.currentState(); precondition(state.messages.isEmpty && state.before == "earlier")
-    try await sameAnchor.loadEarlier()
-    state = await sameAnchor.currentState()
-    precondition(state.messages.map(\.id) == ["server-0", "server-1"] && state.before == nil)
-    await sameAnchor.disconnect()
+    // A locally submitted source remains ineligible after its pending record is retired.
+    let pendingStore = MemoryStore()
+    let pending = CFLPending(target: "history", sessionId: "fixture-session", operationId: "q", text: "text", createdAt: Date(), dispatched: true, status: .submitted)
+    await pendingStore.setEntries([pending])
+    let q = message(operation: "q")
+    let pendingOld = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: (0..<29).map(historyMessage) + [q]))
+    let pendingNew = FakeSocket(snapshot: historySnapshot(0..<0, before: "c70", messages: (70..<99).map(historyMessage) + [q]))
+    let pendingSockets = SocketSequence([pendingOld, pendingNew])
+    let pendingClient = CFLChatClient(target: "history", store: pendingStore, transport: { try await pendingSockets.next() })
+    await pendingClient.connect()
+    for _ in 0..<200 { if try await pendingStore.load().isEmpty { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    let retired = try await pendingStore.load(); precondition(retired.isEmpty)
+    await pendingClient.disconnect(); await pendingClient.connect()
+    state = await pendingClient.currentState()
+    precondition(state.historyGaps.count == 1 && state.historyGaps[0].afterId == "server-28" && state.historyGaps[0].beforeId == "server-70")
+    let pendingMethods = await pendingNew.methods(); precondition(!pendingMethods.contains("submit"))
+    await pendingClient.disconnect()
 
-    // A new empty native window may hide visible messages between its new
-    // anchor and the old history, even when the session is unchanged.
-    let emptyOld = FakeSocket(snapshot: historySnapshot(0..<0, before: "A"))
-    await emptyOld.setHistory(["A": historyPage(0..<2, before: "older")])
-    let emptyNew = FakeSocket(snapshot: historySnapshot(0..<0, before: "B"))
-    await emptyNew.setHistory(["B": historyPage(2..<4, before: "A"), "A": historyPage(0..<2, before: "older")])
-    let emptySockets = SocketSequence([emptyOld, emptyNew])
-    let reconnectedEmpty = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await emptySockets.next() })
-    await reconnectedEmpty.connect(); try await reconnectedEmpty.loadEarlier()
-    state = await reconnectedEmpty.currentState()
-    precondition(state.messages.map(\.id) == ["server-0", "server-1"] && state.before == "older")
-    await reconnectedEmpty.disconnect(); await reconnectedEmpty.connect()
-    for _ in 0..<200 {
-        state = await reconnectedEmpty.currentState()
-        if state.messages.map(\.id) == ["server-0", "server-1", "server-2", "server-3"] { break }
-        try await Task.sleep(nanoseconds: 5_000_000)
-    }
-    state = await reconnectedEmpty.currentState()
-    precondition(state.sessionId == "fixture-session" && state.messages.map(\.id) == ["server-0", "server-1", "server-2", "server-3"] && state.before == "older")
-    let emptyCalls = await emptyNew.arguments(for: "history")
-    precondition(emptyCalls == [[.string("B")], [.string("A")]])
-    await reconnectedEmpty.disconnect()
+    // Error is specific to the gap; an explicit retry performs one more read.
+    let badOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
+    let badNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "bad"))
+    await badNew.setHistory(["bad": .object(["messages": .array([])])])
+    let badSockets = SocketSequence([badOld, badNew])
+    let retry = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await badSockets.next() })
+    await retry.connect(); await retry.disconnect(); await retry.connect()
+    state = await retry.currentState(); let gap = state.historyGaps[0].id
+    await retry.fillGap(id: gap)
+    state = await retry.currentState(); precondition(state.historyGaps[0].status == .error && state.messages.count == 60)
+    await badNew.setHistory(["bad": historyPage(40..<70, before: "next")])
+    await retry.fillGap(id: gap)
+    state = await retry.currentState(); precondition(state.historyGaps[0].status == .pending && state.messages.count == 90)
+    await badNew.setHistory(["next": historyPage(0..<0, before: "advance"), "advance": historyPage(30..<40, before: "advance")])
+    await retry.fillGap(id: gap)
+    state = await retry.currentState(); precondition(state.historyGaps[0].status == .pending && state.historyGaps[0].beforeId == "server-40" && state.messages.count == 90)
+    await retry.fillGap(id: gap)
+    state = await retry.currentState(); precondition(state.historyGaps[0].status == .unavailable && state.messages.count == 100)
+    await retry.disconnect()
 
-    // A changed empty anchor also invalidates a page already in flight, even
-    // before the first history page has completed.
-    let emptyRaceSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: "A"))
-    await emptyRaceSocket.setHistory(["A": historyPage(0..<2, before: "older")], hold: true)
-    let emptyRace = CFLChatClient(target: "history", store: MemoryStore(), transport: { emptyRaceSocket })
-    await emptyRace.connect()
-    let emptyLoad = Task { try await emptyRace.loadEarlier() }
-    for _ in 0..<100 {
-        if await emptyRaceSocket.historyIsHeld() { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    let emptyHistoryHeld = await emptyRaceSocket.historyIsHeld(); precondition(emptyHistoryHeld)
-    try await emptyRaceSocket.emit(update(sequence: 1, field: "before", value: .string("B")))
-    for _ in 0..<100 {
-        if await emptyRace.currentState().before == "B" { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    state = await emptyRace.currentState(); precondition(state.before == "B")
-    try await emptyRaceSocket.releaseHistory()
-    do { try await emptyLoad.value; preconditionFailure("stale empty-window history accepted") } catch CFLFailure.sessionChanged { }
-    state = await emptyRace.currentState(); precondition(state.messages.isEmpty && state.before == "B")
-    await emptyRace.disconnect()
+    // The same gap is single-flight, and a response from the old session is discarded.
+    let raceOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
+    let raceNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "race"))
+    await raceNew.setHistory(["race": historyPage(40..<70, before: "next")], hold: true)
+    let raceSockets = SocketSequence([raceOld, raceNew])
+    let race = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await raceSockets.next() })
+    await race.connect(); await race.disconnect(); await race.connect()
+    state = await race.currentState(); let raceID = state.historyGaps[0].id
+    let flight = Task { await race.fillGap(id: raceID) }
+    for _ in 0..<200 { if await raceNew.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await race.fillGap(id: raceID)
+    let raceCalls = await raceNew.arguments(for: "history"); precondition(raceCalls.count == 1)
+    try await raceNew.emit(update(sequence: 1, field: "sessionId", value: .string("other")))
+    for _ in 0..<200 { if await race.currentState().sessionId == "other" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    try await raceNew.emit(update(sequence: 2, field: "sessionId", value: .string("fixture-session")))
+    for _ in 0..<200 { if await race.currentState().sessionId == "fixture-session" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    try await raceNew.releaseHistory(); await flight.value
+    state = await race.currentState()
+    precondition(state.sessionId == "fixture-session" && state.historyGaps.isEmpty && state.messages.map(\.id) == (70..<100).map { "server-\($0)" })
+    await race.disconnect()
 
-    let racingSocket = FakeSocket(snapshot: historySnapshot(30..<60, before: "before-30"))
-    await racingSocket.setHistory(["before-30": historyPage(0..<30, before: nil)], hold: true)
-    let racing = CFLChatClient(target: "history", store: MemoryStore(), transport: { racingSocket })
-    await racing.connect()
-    let load = Task { try await racing.loadEarlier() }
-    for _ in 0..<100 {
-        if await racingSocket.historyIsHeld() { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    let historyHeld = await racingSocket.historyIsHeld(); precondition(historyHeld)
-    await racingSocket.setHistory(["before-70": historyPage(40..<70, before: "before-40"), "before-40": historyPage(10..<40, before: "before-10")])
-    try await racingSocket.emit(.object(["type": .string("update"), "subscriptionId": .string("view"), "update": .object([
-        "type": .string("state"), "member": .string("view"), "sequence": .number(1),
-        "ops": .array([.array([.string("s"), .array([.string("messages")]), .array((70..<100).map(historyMessage))]),
-                       .array([.string("s"), .array([.string("before")]), .string("before-70")])])])]))
-    for _ in 0..<100 {
-        if await racing.currentState().messages.last?.id == "server-99" { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    try await racingSocket.releaseHistory()
-    do { try await load.value; preconditionFailure("stale history accepted") } catch CFLFailure.sessionChanged { }
-    for _ in 0..<200 {
-        state = await racing.currentState()
-        if state.messages.map(\.id) == (10..<100).map({ "server-\($0)" }) { break }
-        try await Task.sleep(nanoseconds: 5_000_000)
-    }
-    state = await racing.currentState()
-    precondition(state.messages.map(\.id) == (10..<100).map { "server-\($0)" } && state.before == "before-10" && !state.historySyncFailed)
-    await racing.disconnect()
-
-    let sessionSocket = FakeSocket(snapshot: historySnapshot(30..<60, before: "before-30"))
-    await sessionSocket.setHistory(["before-30": historyPage(0..<30, before: nil)], hold: true)
-    let sessionClient = CFLChatClient(target: "history", store: MemoryStore(), transport: { sessionSocket })
-    await sessionClient.connect()
-    let oldSessionLoad = Task { try await sessionClient.loadEarlier() }
-    for _ in 0..<100 {
-        if await sessionSocket.historyIsHeld() { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    let sessionHistoryHeld = await sessionSocket.historyIsHeld(); precondition(sessionHistoryHeld)
-    try await sessionSocket.emit(update(sequence: 1, field: "sessionId", value: .string("another-session")))
-    for _ in 0..<100 {
-        if await sessionClient.currentState().sessionId == "another-session" { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    state = await sessionClient.currentState(); precondition(state.sessionId == "another-session")
-    try await sessionSocket.emit(update(sequence: 2, field: "sessionId", value: .string("fixture-session")))
-    for _ in 0..<100 {
-        if await sessionClient.currentState().sessionId == "fixture-session" { break }
-        try await Task.sleep(nanoseconds: 10_000_000)
-    }
-    state = await sessionClient.currentState(); precondition(state.sessionId == "fixture-session")
-    try await sessionSocket.releaseHistory()
-    do { try await oldSessionLoad.value; preconditionFailure("old session history accepted") } catch CFLFailure.sessionChanged { }
-    state = await sessionClient.currentState()
-    precondition(state.messages.map(\.id) == (30..<60).map { "server-\($0)" } && state.before == "before-30")
-    await sessionClient.disconnect()
-}
-
-func checkHistoryPatchOrdering() async throws {
-    func text(_ number: Int, _ value: String, _ state: String) -> ChordJSON {
-        var fields = historyMessage(number).object!
-        fields["role"] = .string("agent"); fields["text"] = .string(value); fields["textState"] = .string(state)
-        return .object(fields)
-    }
-    let socket = FakeSocket(snapshot: historySnapshot(60..<90, before: "c60"))
-    var oldest = (0..<30).map(historyMessage)
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(oldest), "before": .null])])
-    let client = CFLChatClient(target: "history", store: MemoryStore(), transport: { socket })
-    await client.connect(); try await client.loadEarlier(); try await client.loadEarlier()
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(oldest), "before": .null])], hold: true)
-    try await socket.emit(timeline(.object(["type": .string("structure")])))
-    for _ in 0..<200 { if await socket.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    let held = await socket.historyIsHeld(); precondition(held)
-    try await socket.emit(timeline(.object(["type": .string("item"), "message": text(3, "partial", "streaming")])))
-    for _ in 0..<200 { if await client.currentState().messages[3].text == "partial" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    oldest[3] = text(3, "completed full text", "complete")
-    await socket.setHistory(["c60": historyPage(30..<60, before: "c30"), "c30": .object(["messages": .array(oldest), "before": .null])])
-    try await socket.emit(timeline(.object(["type": .string("structure")])))
-    try await Task.sleep(nanoseconds: 20_000_000)
-    try await socket.emit(timeline(.object(["type": .string("item"), "message": text(4, "later streaming", "streaming")])))
-    for _ in 0..<200 { if await client.currentState().messages[4].text == "later streaming" { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    try await socket.releaseHistory()
-    for _ in 0..<200 { if await socket.arguments(for: "history").count >= 5 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
-    try await Task.sleep(nanoseconds: 20_000_000)
-    let current = await client.currentState()
-    precondition(current.messages.count == 90 && current.messages[3].text == "completed full text" && current.messages[3].textState == .complete)
-    precondition(current.messages[4].text == "later streaming" && current.messages[4].textState == .streaming)
-    await client.disconnect()
+    // Disconnect releases the old flight; it cannot mutate the same gap after reconnect.
+    let connectionOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
+    let connectionMiddle = FakeSocket(snapshot: historySnapshot(70..<100, before: "race"))
+    let connectionNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "race"))
+    await connectionMiddle.setHistory(["race": historyPage(40..<70, before: "next")], hold: true)
+    let connectionSockets = SocketSequence([connectionOld, connectionMiddle, connectionNew])
+    let connection = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await connectionSockets.next() })
+    await connection.connect(); await connection.disconnect(); await connection.connect()
+    state = await connection.currentState(); let connectionID = state.historyGaps[0].id
+    let oldFlight = Task { await connection.fillGap(id: connectionID) }
+    for _ in 0..<200 { if await connectionMiddle.historyIsHeld() { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    await connection.disconnect(); await oldFlight.value; await connection.connect()
+    try await connectionMiddle.releaseHistory()
+    state = await connection.currentState()
+    precondition(state.historyGaps.count == 1 && state.historyGaps[0].id == connectionID && state.historyGaps[0].status == .pending && state.messages.count == 60)
+    let reconnectCalls = await connectionNew.arguments(for: "history"); precondition(reconnectCalls.isEmpty)
+    await connection.disconnect()
 }
 
 func update(sequence: Int, field: String, value: ChordJSON) -> ChordJSON {
@@ -679,7 +591,8 @@ func update(sequence: Int, field: String, value: ChordJSON) -> ChordJSON {
 
 func message(operation: String, role: String = "user") -> ChordJSON {
     .object(["id": .string("message-\(operation)-\(role)"), "role": .string(role), "text": .string("text"),
-             "createdAt": .number(1), "operationId": .string(operation), "turnId": .null])
+             "createdAt": .number(1), "operationId": .string(operation), "turnId": .null,
+             "ends": .array([.number(4)])])
 }
 
 actor FakeImageHTTP: CFLImageHTTP {
@@ -898,16 +811,18 @@ actor FakeExternalImageHTTP: CFLImageHTTP {
     var requests: [URLRequest] = []
     var responseURL: URL?
     var status = 200
+    var headers: [String: String] = [:]
     var held: CheckedContinuation<Void, Never>?
     var hold = false
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
         if hold { await withCheckedContinuation { held = $0 }; hold = false }
-        return (Data([1, 2, 3]), HTTPURLResponse(url: responseURL ?? request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        return (Data([1, 2, 3]), HTTPURLResponse(url: responseURL ?? request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!)
     }
     func last() -> URLRequest? { requests.last }
     func count() -> Int { requests.count }
     func setResponse(_ url: URL?, status: Int) { responseURL = url; self.status = status }
+    func setHeaders(_ value: [String: String]) { headers = value }
     func setHold() { hold = true }
     func isHeld() -> Bool { held != nil }
     func release() { held?.resume(); held = nil }
@@ -925,8 +840,68 @@ func checkExternalMarkdownImages() async throws {
     }
     precondition(CFLMarkdownImage.resolve("http://example.test/image.png") == .external("http://example.test/image.png"))
     let count = await fake.count(); precondition(count == 1)
+    let date = DateFormatter(); date.locale = Locale(identifier: "en_US_POSIX"); date.timeZone = TimeZone(secondsFromGMT: 0)
+    date.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+    await fake.setHeaders(["Date": date.string(from: Date()), "Cache-Control": "max-age=3600, no-store"])
+    let prohibited = try await loader.response(for: "https://example.test/private.png")
+    precondition(prohibited.policy == .prohibited)
+    await fake.setHeaders(["Date": date.string(from: Date()), "Cache-Control": "public, max-age=3600"])
+    let allowed = try await loader.response(for: "https://example.test/public.png")
+    guard case .until = allowed.policy else { preconditionFailure("explicit max-age") }
+    let externalDisk = FakeMediaCache(), authority = FakeStickerHTTP(), externalSocket = FakeSocket(snapshot: imageSnapshot())
+    let externalClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: authority,
+                                       mediaCache: externalDisk, externalImageLoader: loader, transport: { externalSocket })
+    await externalClient.connect(); let externalRevision = await externalClient.currentState().sessionRevision
+    await fake.setHeaders([:])
+    let ordinaryURL = "https://example.test/ordinary.png"
+    let beforeOrdinary = await fake.count()
+    let beforeOrdinaryPolicies = await externalDisk.expiryPolicies().count
+    _ = try await externalClient.externalImage(ordinaryURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    _ = try await externalClient.externalImage(ordinaryURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    let afterOrdinary = await fake.count(); precondition(afterOrdinary == beforeOrdinary + 1)
+    let ordinaryPolicies = await externalDisk.expiryPolicies()
+    precondition(Array(ordinaryPolicies.dropFirst(beforeOrdinaryPolicies)) == [false, false])
+    let restartSocket = FakeSocket(snapshot: imageSnapshot()), restartAuthority = FakeStickerHTTP()
+    let restarted = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: restartAuthority,
+                                  mediaCache: externalDisk, externalImageLoader: loader, transport: { restartSocket })
+    await restarted.connect(); let restartedRevision = await restarted.currentState().sessionRevision
+    _ = try await restarted.externalImage(ordinaryURL, expectedSessionId: "A", expectedSessionRevision: restartedRevision)
+    let afterRestart = await fake.count(); precondition(afterRestart == afterOrdinary)
+    await restarted.disconnect()
+    let otherSocket = FakeSocket(snapshot: imageSnapshot()), otherAuthority = FakeStickerHTTP()
+    let otherClient = CFLChatClient(target: "https://other.example", store: MemoryStore(), imageHTTP: otherAuthority,
+                                    mediaCache: externalDisk, externalImageLoader: loader, transport: { otherSocket })
+    await otherClient.connect(); let otherRevision = await otherClient.currentState().sessionRevision
+    _ = try await otherClient.externalImage(ordinaryURL, expectedSessionId: "A", expectedSessionRevision: otherRevision)
+    let afterOtherOrigin = await fake.count(); precondition(afterOtherOrigin == afterRestart + 1)
+    await otherClient.disconnect()
+    await fake.setHeaders(["Date": date.string(from: Date()), "Cache-Control": "public, max-age=3600"])
+    let publicURL = "https://example.test/public.png"
+    let beforePublic = await fake.count()
+    _ = try await externalClient.externalImage(publicURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    _ = try await externalClient.externalImage(publicURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    let afterPublic = await fake.count(); precondition(afterPublic == beforePublic + 1)
+    await fake.setHeaders(["Date": date.string(from: Date()), "Cache-Control": "no-store, max-age=3600"])
+    let privateURL = "https://example.test/no-store.png"
+    let beforePrivate = await fake.count(), beforePrivateWrites = await externalDisk.writeCount()
+    _ = try await externalClient.externalImage(privateURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    _ = try await externalClient.externalImage(privateURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    let afterPrivate = await fake.count(); precondition(afterPrivate == beforePrivate + 2)
+    let afterPrivateWrites = await externalDisk.writeCount(); precondition(afterPrivateWrites == beforePrivateWrites)
+    let keys = await externalDisk.keys()
+    precondition(!keys.contains { $0.contains(privateURL) })
+    await fake.setHeaders(["Cache-Control": "no-cache"])
+    let noCacheURL = "https://example.test/no-cache.png"
+    let beforeNoCacheWrites = await externalDisk.writeCount()
+    _ = try await externalClient.externalImage(noCacheURL, expectedSessionId: "A", expectedSessionRevision: externalRevision)
+    let afterNoCacheWrites = await externalDisk.writeCount(); precondition(afterNoCacheWrites == beforeNoCacheWrites)
+    let noCacheKeys = await externalDisk.keys()
+    precondition(!noCacheKeys.contains { $0.contains(noCacheURL) })
+    await externalClient.disconnect()
+    await fake.setHeaders(["Date": date.string(from: Date()), "Cache-Control": "public, max-age=3600"])
     await fake.setResponse(URL(string: "https://other.test/redirected.png")!, status: 200)
-    _ = try await loader.data(for: "https://example.test/image.png")
+    let redirect = try await loader.response(for: "https://example.test/image.png")
+    precondition(redirect.policy == .prohibited)
     await fake.setResponse(nil, status: 404)
     do { _ = try await loader.data(for: "https://example.test/image.png"); preconditionFailure() } catch CFLFailure.requestFailed { }
     await fake.setResponse(URL(string: "file:///tmp/image.png")!, status: 200)
@@ -960,6 +935,32 @@ func checkExternalMarkdownImages() async throws {
         delegate.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: proposed) { redirected = $0 }
         precondition(redirected == nil)
     }
+    let goodDelegate = CFLExternalImageDelegate()
+    let safeRedirect = HTTPURLResponse(url: task.originalRequest!.url!, statusCode: 302, httpVersion: nil, headerFields: nil)!
+    goodDelegate.urlSession(session, task: task, willPerformHTTPRedirection: safeRedirect,
+                            newRequest: URLRequest(url: URL(string: "https://other.test/safe.png")!)) { _ in }
+    precondition(goodDelegate.cachedCopyPolicy() == .lastAccess)
+    let finalResponse = HTTPURLResponse(url: URL(string: "https://other.test/safe.png")!, statusCode: 200,
+                                        httpVersion: nil, headerFields: nil)!
+    precondition(CFLExternalImageLoader.cachePolicy(finalResponse, redirectPolicy: goodDelegate.cachedCopyPolicy()) == .lastAccess)
+    for directive in ["no-store", "no-cache"] {
+        let restricted = CFLExternalImageDelegate()
+        let response = HTTPURLResponse(url: task.originalRequest!.url!, statusCode: 302, httpVersion: nil,
+                                       headerFields: ["Cache-Control": directive])!
+        restricted.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                              newRequest: URLRequest(url: URL(string: "https://other.test/safe.png")!)) { _ in }
+        restricted.urlSession(session, task: task, willPerformHTTPRedirection: safeRedirect,
+                              newRequest: URLRequest(url: URL(string: "https://other.test/final.png")!)) { _ in }
+        precondition(restricted.cachedCopyPolicy() == .prohibited)
+        precondition(CFLExternalImageLoader.cachePolicy(finalResponse, redirectPolicy: restricted.cachedCopyPolicy()) == .prohibited)
+    }
+    let limitedDelegate = CFLExternalImageDelegate()
+    let limited = HTTPURLResponse(url: task.originalRequest!.url!, statusCode: 302, httpVersion: nil,
+                                  headerFields: ["Cache-Control": "max-age=60"])!
+    limitedDelegate.urlSession(session, task: task, willPerformHTTPRedirection: limited,
+                               newRequest: URLRequest(url: URL(string: "https://other.test/safe.png")!)) { _ in }
+    guard case .until(let deadline) = CFLExternalImageLoader.cachePolicy(finalResponse, redirectPolicy: limitedDelegate.cachedCopyPolicy()) else { preconditionFailure("redirect freshness") }
+    precondition(deadline.timeIntervalSinceNow > 0 && deadline.timeIntervalSinceNow <= 60)
     print("CFL external Markdown image checks passed")
 }
 
@@ -968,7 +969,7 @@ func imageSnapshot(before: String? = nil) -> ChordJSON {
     let images: [ChordJSON] = (0..<7).map { .object(["attachmentId": .string("output_\($0)"), "name": .string("out.png"), "mediaType": .string("image/png"), "availability": .string($0 == 0 ? "missing" : "available")]) }
     let view: ChordJSON = .object(["version": .number(2), "sessionId": .string("A"), "name": .string("test"), "activeTurnId": .null,
         "contextUsage": .null, "compaction": .null, "recovery": .array([]), "capabilities": .object(["text": .bool(true), "stop": .bool(true), "images": limits]),
-        "messages": .array([.object(["id": .string("agent"), "role": .string("agent"), "text": .string(""), "createdAt": .number(1), "operationId": .null, "turnId": .null, "images": .array(images)])]), "before": before.map(ChordJSON.string) ?? .null])
+        "messages": .array([.object(["id": .string("agent"), "role": .string("agent"), "text": .string(""), "ends": .array([]), "createdAt": .number(1), "operationId": .null, "turnId": .null, "images": .array(images)])]), "before": before.map(ChordJSON.string) ?? .null])
     return .object(["serviceId": .string("lamplit.chat.v2"), "mode": .string("singleton"), "instances": .array([.object(["members": .array([.object(["name": .string("view"), "kind": .string("state"), "sequence": .number(0), "ops": .array([.array([.string("r"), view])])])])])])])
 }
 
@@ -1070,6 +1071,141 @@ func checkRetryImages() async throws {
     await expired.disconnect()
 }
 
+func checkCallerSendIdentity() async throws {
+    let operation = "12345678-1234-4234-8234-123456789abc"
+    let png = Data([137, 80, 78, 71, 13, 10, 26, 10, 1]), jpeg = Data([255, 216, 255, 1])
+    let image = CFLPreparedImage(id: "one", name: "same.png", mediaType: "image/png", original: png, preview: jpeg, model: jpeg)
+    let socket = FakeSocket(snapshot: imageSnapshot()), http = FakeImageHTTP(), store = MemoryStore()
+    let client = CFLChatClient(target: "https://example.com", store: store, imageHTTP: http, transport: { socket })
+    await client.connect(); let revision = await client.currentState().sessionRevision
+    do { _ = try await client.send("bad", operationId: "not-a-uuid", expectedSessionId: "A", expectedSessionRevision: revision); preconditionFailure("invalid operation") } catch CFLFailure.invalidInput { }
+    await http.setHold()
+    let send = Task { try await client.send("photo", images: [image], operationId: operation, expectedSessionId: "A", expectedSessionRevision: revision) }
+    while !(await http.isHeld()) { await Task.yield() }
+    let draft = await client.currentState().localDrafts.first
+    precondition(draft?.operationId == operation && draft?.images.first?.originOperationId == operation)
+    do { _ = try await client.send("duplicate", operationId: operation.uppercased(), expectedSessionId: "A", expectedSessionRevision: revision); preconditionFailure("in-flight duplicate") } catch CFLSendFailure.duplicateOperationId { }
+    await http.release()
+    let result = try await send.value
+    let calls = await socket.arguments(for: "submit"), requests = await http.allRequests(), records = try await store.load()
+    let upload = try JSONSerialization.jsonObject(with: requests[0].httpBody!) as! [String: Any]
+    precondition(result == .submitted && upload["operationId"] as? String == operation && calls.count == 1 && calls[0][0].object?["operationId"] == .string(operation))
+    precondition(records.count == 1 && records[0].operationId == operation && records[0].dispatched && records[0].status == .submitted)
+    do { _ = try await client.send("duplicate", operationId: operation, expectedSessionId: "A", expectedSessionRevision: revision); preconditionFailure("completed duplicate") } catch CFLSendFailure.duplicateOperationId { }
+    let finalCalls = await socket.arguments(for: "submit"), finalRequests = await http.allRequests()
+    precondition(finalCalls.count == 1 && finalRequests.count == 1)
+    await client.disconnect()
+
+    let observedSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, session: "A", messages: [message(operation: operation)]))
+    let observed = CFLChatClient(target: "https://example.com", store: MemoryStore(), transport: { observedSocket })
+    await observed.connect(); let observedRevision = await observed.currentState().sessionRevision
+    do { _ = try await observed.send("duplicate", operationId: operation, expectedSessionId: "A", expectedSessionRevision: observedRevision); preconditionFailure("observed duplicate") } catch CFLSendFailure.duplicateOperationId { }
+    let observedCalls = await observedSocket.arguments(for: "submit")
+    precondition(observedCalls.isEmpty)
+    await observed.disconnect()
+
+    // A lost submit remains unknown and is looked up under the original ID.
+    let lostStore = MemoryStore(), lostSocket = FakeSocket(snapshot: imageSnapshot(), dropSubmit: true), lostHTTP = FakeImageHTTP()
+    let lost = CFLChatClient(target: "https://example.com", store: lostStore, imageHTTP: lostHTTP, transport: { lostSocket })
+    await lost.connect(); let lostRevision = await lost.currentState().sessionRevision
+    let unknown = try await lost.send("text", images: [image], operationId: operation, expectedSessionId: "A", expectedSessionRevision: lostRevision)
+    let lostRecords = try await lostStore.load(), lostCalls = await lostSocket.arguments(for: "submit")
+    precondition(unknown == .unknown && lostRecords.first?.operationId == operation && lostRecords.first?.dispatched == true && lostRecords.first?.images?.first?.attachmentId == "stored_0" && lostCalls.first?.first?.object?["operationId"] == .string(operation))
+    await lost.disconnect()
+    let receipt: ChordJSON = .object(["operationId": .string(operation), "state": .string("submitted"), "messageId": .null, "turnId": .null, "error": .null])
+    let restoredSocket = FakeSocket(snapshot: imageSnapshot(), lookupReceipt: receipt)
+    let restored = CFLChatClient(target: "https://example.com", store: lostStore, transport: { restoredSocket })
+    await restored.connect(); try await restored.reconcile()
+    let restoredRevision = await restored.currentState().sessionRevision
+    do { _ = try await restored.send("duplicate", operationId: operation, expectedSessionId: "A", expectedSessionRevision: restoredRevision); preconditionFailure("persisted duplicate") } catch CFLSendFailure.duplicateOperationId { }
+    let lookups = await restoredSocket.arguments(for: "lookup"), restoredCalls = await restoredSocket.arguments(for: "submit")
+    precondition(lookups.contains([.string(operation)]) && restoredCalls.isEmpty)
+    await restored.disconnect()
+
+    let failureSocket = FakeSocket(snapshot: imageSnapshot()), failureStore = MemoryStore()
+    let failure = CFLChatClient(target: "https://example.com", store: failureStore, transport: { failureSocket })
+    await failure.connect(); let failureRevision = await failure.currentState().sessionRevision
+    await failureSocket.setFailedSubmit()
+    let rejected = try await failure.send("rejected", operationId: operation, expectedSessionId: "A", expectedSessionRevision: failureRevision)
+    precondition(rejected == .failed)
+    await failure.disconnect()
+
+    // A first-save error with unreadable storage is not a submitted operation.
+    let uncertainSocket = FakeSocket(snapshot: imageSnapshot()), uncertainStore = MemoryStore()
+    let uncertain = CFLChatClient(target: "https://example.com", store: uncertainStore, transport: { uncertainSocket })
+    await uncertain.connect(); let uncertainRevision = await uncertain.currentState().sessionRevision
+    await uncertainStore.injectSaveFailure(1, afterCommit: true, unreadable: true)
+    do { _ = try await uncertain.send("saved?", operationId: operation, expectedSessionId: "A", expectedSessionRevision: uncertainRevision); preconditionFailure("uncertain save") }
+    catch let error as CFLPendingStorageUncertain { precondition(error.pending.operationId == operation && !error.pending.dispatched) }
+    let uncertainCalls = await uncertainSocket.arguments(for: "submit")
+    precondition(uncertainCalls.isEmpty)
+    await uncertain.disconnect()
+
+    let saveSocket = FakeSocket(snapshot: imageSnapshot()), saveStore = MemoryStore()
+    let saveClient = CFLChatClient(target: "https://example.com", store: saveStore, transport: { saveSocket })
+    await saveClient.connect(); let saveRevision = await saveClient.currentState().sessionRevision
+    await saveStore.injectSaveFailure(1, afterCommit: false)
+    do { _ = try await saveClient.send("unsaved", operationId: operation, expectedSessionId: "A", expectedSessionRevision: saveRevision); preconditionFailure("failed save") } catch CFLFailure.storage { }
+    let unsavedRecords = try await saveStore.load(), unsavedCalls = await saveSocket.arguments(for: "submit")
+    precondition(unsavedRecords.isEmpty && unsavedCalls.isEmpty)
+    await saveClient.disconnect()
+
+    let uploadSocket = FakeSocket(snapshot: imageSnapshot()), uploadHTTP = FakeImageHTTP(), uploadStore = MemoryStore()
+    let uploadClient = CFLChatClient(target: "https://example.com", store: uploadStore, imageHTTP: uploadHTTP, transport: { uploadSocket })
+    await uploadClient.connect(); let uploadRevision = await uploadClient.currentState().sessionRevision
+    await uploadHTTP.setFailure()
+    do { _ = try await uploadClient.send("unsent image", images: [image], operationId: operation, expectedSessionId: "A", expectedSessionRevision: uploadRevision); preconditionFailure("failed upload") } catch CFLFailure.requestFailed { }
+    let uploadRecords = try await uploadStore.load(), uploadCalls = await uploadSocket.arguments(for: "submit")
+    precondition(uploadRecords.isEmpty && uploadCalls.isEmpty)
+    await uploadClient.disconnect()
+
+    let markerSocket = FakeSocket(snapshot: imageSnapshot()), markerStore = MemoryStore()
+    let markerClient = CFLChatClient(target: "https://example.com", store: markerStore, transport: { markerSocket })
+    await markerClient.connect(); let markerRevision = await markerClient.currentState().sessionRevision
+    await markerStore.injectSaveFailure(2, afterCommit: false)
+    let notDispatched = try await markerClient.send("saved before dispatch", operationId: operation, expectedSessionId: "A", expectedSessionRevision: markerRevision)
+    let markerRecords = try await markerStore.load(), markerCalls = await markerSocket.arguments(for: "submit")
+    precondition(notDispatched == .notDispatched && markerRecords.first?.operationId == operation && markerRecords.first?.dispatched == false && markerCalls.isEmpty)
+    await markerClient.disconnect()
+
+    let offlineSocket = FakeSocket(snapshot: imageSnapshot()), offlineStore = MemoryStore()
+    let offline = CFLChatClient(target: "https://example.com", store: offlineStore, transport: { offlineSocket })
+    await offline.connect(); let offlineRevision = await offline.currentState().sessionRevision
+    await offlineSocket.close()
+    while await offline.currentState().connection == .online { await Task.yield() }
+    do { _ = try await offline.send("accepted before disconnect", operationId: operation, expectedSessionId: "A", expectedSessionRevision: offlineRevision); preconditionFailure("offline submit") } catch CFLFailure.offline { }
+    let offlineRecords = try await offlineStore.load(), offlineCalls = await offlineSocket.arguments(for: "submit")
+    precondition(offlineRecords.isEmpty && offlineCalls.isEmpty)
+    await offline.disconnect()
+
+    let staleSocket = FakeSocket(snapshot: imageSnapshot()), staleHTTP = FakeImageHTTP()
+    let stale = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: staleHTTP, transport: { staleSocket })
+    await stale.connect(); let staleRevision = await stale.currentState().sessionRevision
+    await staleHTTP.setHold()
+    let staleSend = Task { try await stale.send("stale", images: [image], operationId: operation, expectedSessionId: "A", expectedSessionRevision: staleRevision) }
+    while !(await staleHTTP.isHeld()) { await Task.yield() }
+    try await staleSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await stale.currentState().sessionId != "B" { await Task.yield() }
+    await staleHTTP.release()
+    do { _ = try await staleSend.value; preconditionFailure("stale upload submitted") } catch CFLFailure.sessionChanged { }
+    let staleCalls = await staleSocket.arguments(for: "submit")
+    precondition(staleCalls.isEmpty)
+    await stale.disconnect()
+
+    let lateSocket = FakeSocket(snapshot: imageSnapshot()), lateStore = MemoryStore()
+    let late = CFLChatClient(target: "https://example.com", store: lateStore, transport: { lateSocket })
+    await late.connect(); let lateRevision = await late.currentState().sessionRevision
+    await lateSocket.setHoldSubmit()
+    let lateSend = Task { try await late.send("late", operationId: operation, expectedSessionId: "A", expectedSessionRevision: lateRevision) }
+    while !(await lateSocket.submitIsHeld()) { await Task.yield() }
+    try await lateSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await late.currentState().sessionId != "B" { await Task.yield() }
+    try await lateSocket.releaseSubmit()
+    let lateOutcome = try await lateSend.value, lateState = await late.currentState(), lateRecords = try await lateStore.load()
+    precondition(lateOutcome == .unknown && lateState.sessionId == "B" && lateState.error == nil && lateRecords.first?.sessionId == "A" && lateRecords.first?.status == .unknown && lateRecords.first?.dispatched == true)
+    await late.disconnect()
+}
+
 func checkImages() async throws {
     let legacy = Data("[{\"target\":\"x\",\"sessionId\":\"A\",\"operationId\":\"old\",\"text\":\"hello\",\"createdAt\":0,\"dispatched\":true,\"status\":\"unknown\"}]".utf8)
     let decodedLegacy = try JSONDecoder().decode([CFLPending].self, from: legacy)
@@ -1126,7 +1262,7 @@ func checkImages() async throws {
 
     let fallbackSocket = FakeSocket(snapshot: imageSnapshot(before: "older")), fallbackHTTP = FakeImageHTTP()
     let historyRef: ChordJSON = .object(["attachmentId": .string("history_1"), "name": .string("history.png"), "mediaType": .string("image/png"), "availability": .string("available")])
-    let historyMessage: ChordJSON = .object(["id": .string("older-agent"), "role": .string("agent"), "text": .string(""), "createdAt": .number(0), "operationId": .null, "turnId": .null, "images": .array([historyRef])])
+    let historyMessage: ChordJSON = .object(["id": .string("older-agent"), "role": .string("agent"), "text": .string(""), "ends": .array([]), "createdAt": .number(0), "operationId": .null, "turnId": .null, "images": .array([historyRef])])
     await fallbackSocket.setHistory(["older": .object(["messages": .array([historyMessage]), "before": .null])])
     let fallbackClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: fallbackHTTP, transport: { fallbackSocket })
     await fallbackClient.connect()
@@ -1218,21 +1354,695 @@ func checkImages() async throws {
     print("CFL image checks passed")
 }
 
+actor FakeStickerHTTP: CFLImageHTTP, CFLStickerCacheAuthority {
+    let version = String(repeating: "a", count: 64)
+    var requests: [URLRequest] = []
+    var failStage = false
+    var badStage = false
+    var status = 200
+    var offline = false
+    var denied = false
+    var scope = UUID()
+    var hold = false
+    var extraFavorite = false
+    var favoriteRemoved = false
+    var catalogHidden = false
+    var catalogUnavailable = false
+    var assistantFavorites: Set<String> = ["sticker_1"]
+    var thumbnailData = Data([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])
+    var thumbnailETag = "\"thumb\""
+    var continuation: CheckedContinuation<Void, Never>?
+    var holdFavoritePage = false
+    var heldFavoritePage: CheckedContinuation<Void, Never>?
+    var holdPackPage = false
+    var heldPackPage: CheckedContinuation<Void, Never>?
+    func stickerThumbnailScope() throws -> UUID {
+        if denied { throw CFLFailure.accessDenied }
+        return scope
+    }
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        if hold { await withCheckedContinuation { continuation = $0 }; hold = false }
+        let path = request.url!.path
+        if holdFavoritePage && path.hasSuffix("/favorites") && request.httpMethod == "GET" {
+            holdFavoritePage = false
+            await withCheckedContinuation { heldFavoritePage = $0 }
+        }
+        if holdPackPage && path.hasSuffix("/packs") && request.httpMethod == "GET" {
+            holdPackPage = false
+            await withCheckedContinuation { heldPackPage = $0 }
+        }
+        if offline { throw URLError(.notConnectedToInternet) }
+        if path == "/api/auth/status" {
+            return (Data("{\"state\":\"signed_in\"}".utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        if status != 200 { return (Data(), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["ETag": thumbnailETag])!) }
+        if path.hasSuffix("/stage") && failStage { throw CFLFailure.offline }
+        let item: [String: Any] = ["id": "sticker_1", "version": version, "name": "Wave", "tags": ["hello"], "mediaType": "image/gif", "available": !catalogUnavailable]
+        let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+        let value: [String: Any]
+        if path.hasSuffix("/packs") {
+            value = ["packs": [["id": "pack_1", "name": "Pack", "description": "", "cover": item]], "nextCursor": "page_2"]
+        } else if path.hasSuffix("/favorites/image") {
+            value = ["sticker": item, "favorite": true]
+        } else if path.hasSuffix("/favorites") && request.httpMethod == "POST" {
+            favoriteRemoved = (body["favorite"] as? Bool) == false
+            value = ["sticker": item, "favorite": body["favorite"]!]
+        } else if path.hasSuffix("/stage") {
+            value = ["sessionId": body["sessionId"]!, "operationId": badStage ? "wrong" : body["operationId"]!,
+                     "image": ["attachmentId": "staged_1", "name": "Wave", "mediaType": "image/gif", "availability": "available", "sticker": body["sticker"]!]]
+        } else if path.contains("/media/") {
+            let original = path.hasSuffix("/original")
+            let bytes = original ? Data("GIF89a".utf8) : thumbnailData
+            return (bytes, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": original ? "image/gif" : "image/webp", "ETag": thumbnailETag])!)
+        } else {
+            let cursor = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "cursor" })?.value
+            let favorites = path.hasSuffix("/favorites")
+            var items = (favorites ? favoriteRemoved : catalogHidden) ? [] : [item]
+            if extraFavorite && path.hasSuffix("/favorites") {
+                var other = item; other["id"] = "sticker_2"; items.append(other)
+            }
+            value = ["stickers": cursor == "page_2" ? [] : items, "nextCursor": cursor == "page_2" ? NSNull() as Any : "page_2" as Any]
+        }
+        return (try JSONSerialization.data(withJSONObject: value), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!)
+    }
+    func allRequests() -> [URLRequest] { requests }
+    func setFailStage() { failStage = true }
+    func setBadStage() { badStage = true }
+    func setStatus(_ value: Int) { status = value }
+    func setOffline(_ value: Bool) { offline = value }
+    func setExtraFavorite() { extraFavorite = true }
+    func setCatalogHidden(_ value: Bool) { catalogHidden = value }
+    func setCatalogUnavailable(_ value: Bool) { catalogUnavailable = value }
+    func assistantFavoriteIDs() -> Set<String> { assistantFavorites }
+    func setThumbnailData(_ data: Data) { thumbnailData = data; thumbnailETag = "\"thumb-updated\"" }
+    func changeScope() { scope = UUID() }
+    func setDenied(_ value: Bool) { denied = value }
+    func setHold() { hold = true }
+    func holdNextFavoritePage() { holdFavoritePage = true }
+    func favoritePageIsHeld() -> Bool { heldFavoritePage != nil }
+    func releaseFavoritePage() { heldFavoritePage?.resume(); heldFavoritePage = nil }
+    func holdNextPackPage() { holdPackPage = true }
+    func packPageIsHeld() -> Bool { heldPackPage != nil }
+    func releasePackPage() { heldPackPage?.resume(); heldPackPage = nil }
+    func isHeld() -> Bool { continuation != nil }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+actor FakeMediaCache: CFLMediaCache {
+    private var entries: [String: Data] = [:]
+    private var failed = false
+    private var writes = 0
+    private var policies: [Bool] = []
+    private var pauseRead = false
+    private var heldRead: CheckedContinuation<Void, Never>?
+    func setFailed(_ value: Bool) { failed = value }
+    func keys() -> [String] { Array(entries.keys) }
+    func writeCount() -> Int { writes }
+    func expiryPolicies() -> [Bool] { policies }
+    func pauseNextRead() { pauseRead = true }
+    func readIsHeld() -> Bool { heldRead != nil }
+    func releaseRead() { heldRead?.resume(); heldRead = nil }
+    func read(key: String) async throws -> Data? {
+        if pauseRead { pauseRead = false; await withCheckedContinuation { heldRead = $0 } }
+        if failed { throw CFLFailure.storage }
+        return entries[key]
+    }
+    func write(_ data: Data, key: String, withoutExpiry: Bool) throws { if failed { throw CFLFailure.storage }; writes += 1; policies.append(withoutExpiry); entries[key] = data }
+    func update(key: String, withoutExpiry: Bool, transform: @Sendable (Data?) -> Data?) throws {
+        if failed { throw CFLFailure.storage }
+        if let result = transform(entries[key]) { writes += 1; policies.append(withoutExpiry); entries[key] = result }
+    }
+    func remove(key: String) throws { if failed { throw CFLFailure.storage }; entries.removeValue(forKey: key) }
+}
+
+func checkOfflineStickerOriginal(_ sticker: CFLSticker) async throws {
+    let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot()), disk = FakeMediaCache()
+    let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, mediaCache: disk, transport: { socket })
+    await client.connect(); let revision = await client.currentState().sessionRevision
+    let thumbnail = try await client.stickerMedia(sticker, session: "A", revision: revision)
+    _ = try await client.searchStickers("hello", session: "A", revision: revision)
+    let original = try await client.stickerMedia(sticker, original: true, session: "A", revision: revision)
+    precondition(original == Data("GIF89a".utf8))
+
+    // Online cache hits return immediately and schedule one revalidation.
+    let beforeOnline = await http.allRequests().count, beforeWrites = await disk.writeCount()
+    await http.setHold()
+    let onlineOriginal = try await client.stickerMedia(sticker, original: true, session: "A", revision: revision)
+    precondition(onlineOriginal == original)
+    while !(await http.isHeld()) { await Task.yield() }
+    await http.release()
+    while await disk.writeCount() == beforeWrites { await Task.yield() }
+    let afterOnline = await http.allRequests().count; precondition(afterOnline == beforeOnline + 1)
+
+    // A session change while a cached read is suspended must discard the data.
+    await disk.pauseNextRead()
+    let stale = Task { try await client.stickerMedia(sticker, original: true, session: "A", revision: revision) }
+    while !(await disk.readIsHeld()) { await Task.yield() }
+    try await socket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await client.currentState().sessionId != "B" { await Task.yield() }
+    await disk.releaseRead()
+    do { _ = try await stale.value; preconditionFailure("stale original") } catch CFLFailure.sessionChanged { }
+    try await socket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+    while await client.currentState().sessionId != "A" { await Task.yield() }
+    let currentRevision = await client.currentState().sessionRevision
+
+    // A transport failure leaves the current session active but offline.
+    await socket.close()
+    while await client.currentState().connection != .offline { await Task.yield() }
+    let before = await http.allRequests().count
+    let offlineOriginal = try await client.stickerMedia(sticker, original: true, session: "A", revision: currentRevision)
+    precondition(offlineOriginal == original)
+    let offlineThumbnail = try await client.cachedStickerThumbnail(sticker, session: "A", revision: currentRevision)
+    let offlinePage = try await client.cachedSearchStickers("hello", session: "A", revision: currentRevision)
+    precondition(offlineThumbnail == thumbnail && offlinePage?.stickers.map(\.id) == [sticker.id])
+    let missingObject: [String: Any] = ["id": "other_sticker", "version": String(repeating: "b", count: 64),
+        "name": "Other", "tags": [String](), "mediaType": "image/gif", "available": true]
+    let missing = try JSONDecoder().decode(CFLSticker.self, from: JSONSerialization.data(withJSONObject: missingObject))
+    do { _ = try await client.stickerMedia(missing, original: true, session: "A", revision: currentRevision); preconditionFailure("offline miss") }
+    catch CFLFailure.offline { }
+    do { _ = try await client.stickerMedia(sticker, original: true, session: "B", revision: currentRevision); preconditionFailure("wrong session") }
+    catch CFLFailure.sessionChanged { }
+    do { _ = try await client.setStickerFavorite(sticker.id, favorite: false, session: "A", revision: currentRevision); preconditionFailure("offline favorite") }
+    catch CFLFailure.offline { }
+    do { _ = try await client.sendSticker(sticker, expectedSessionId: "A", expectedSessionRevision: currentRevision); preconditionFailure("offline send") }
+    catch CFLFailure.offline { }
+    let after = await http.allRequests().count
+    precondition(after == before)
+    await client.disconnect()
+
+    // A confirmed login failure blocks cache display without deleting the copy.
+    let deniedHTTP = FakeStickerHTTP(), deniedSocket = FakeSocket(snapshot: imageSnapshot())
+    let denied = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: deniedHTTP, mediaCache: disk, transport: { deniedSocket })
+    await denied.connect(); let deniedRevision = await denied.currentState().sessionRevision
+    let beforeDenied = Set(await disk.keys())
+    await deniedHTTP.setDenied(true); await deniedSocket.failReceive(.accessDenied)
+    while await denied.currentState().connection != .accessDenied { await Task.yield() }
+    do { _ = try await denied.stickerMedia(sticker, original: true, session: "A", revision: deniedRevision); preconditionFailure("denied cached original") }
+    catch CFLFailure.sessionChanged { }
+    let afterDenied = Set(await disk.keys()); precondition(afterDenied == beforeDenied)
+    await denied.disconnect()
+
+    let restoredHTTP = FakeStickerHTTP(), restoredSocket = FakeSocket(snapshot: imageSnapshot())
+    let restored = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: restoredHTTP, mediaCache: disk, transport: { restoredSocket })
+    await restored.connect(); let restoredRevision = await restored.currentState().sessionRevision
+    let afterLogin = try await restored.stickerMedia(sticker, original: true, session: "A", revision: restoredRevision)
+    precondition(afterLogin == original)
+    await restored.disconnect()
+}
+
+func checkConcurrentFavoritePages() async throws {
+    do {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        await http.holdNextPackPage()
+        let before = await http.allRequests().count
+        let first = Task { try await client.stickerPacks(session: "A", revision: revision) }
+        while !(await http.packPageIsHeld()) { await Task.yield() }
+        let second = Task { try await client.stickerPacks(session: "A", revision: revision) }
+        while await client.stickerPackWaiterCount(session: "A") != 2 { await Task.yield() }
+        await http.releasePackPage()
+        let a = try await first.value, b = try await second.value
+        precondition(a == b && a.packs.count == 1)
+        let after = await http.allRequests().count; precondition(after == before + 1)
+        await client.disconnect()
+    }
+    // The panel loads visible favorites and favorite IDs simultaneously.
+    do {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot()), disk = FakeMediaCache()
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, mediaCache: disk, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        await http.holdNextFavoritePage()
+        let before = await http.allRequests().count
+        let first = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while !(await http.favoritePageIsHeld()) { await Task.yield() }
+        let second = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while await client.favoritePageWaiterCount(session: "A") != 2 { await Task.yield() }
+        await http.releaseFavoritePage()
+        let a = try await first.value, b = try await second.value
+        precondition(a == b && a.stickers.map(\.id) == ["sticker_1"])
+        let after = await http.allRequests().count; precondition(after == before + 1)
+        let snapshot = try await client.cachedFavoriteSnapshot(session: "A", revision: revision)
+        precondition(snapshot?.page == a)
+        await client.disconnect()
+    }
+    // A confirmed mutation supersedes both waiters and their old snapshot.
+    do {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot()), disk = FakeMediaCache()
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, mediaCache: disk, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        _ = try await client.favoriteStickers(session: "A", revision: revision)
+        await http.holdNextFavoritePage()
+        let first = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while !(await http.favoritePageIsHeld()) { await Task.yield() }
+        let second = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while await client.favoritePageWaiterCount(session: "A") != 2 { await Task.yield() }
+        _ = try await client.setStickerFavorite("sticker_1", favorite: false, session: "A", revision: revision)
+        let afterMutation = try await client.cachedFavoriteSnapshot(session: "A", revision: revision)
+        precondition(afterMutation?.needsRevalidation == true && afterMutation?.page.stickers.isEmpty == true)
+        let newer = try await client.favoriteStickers(session: "A", revision: revision)
+        precondition(newer.stickers.isEmpty)
+        await http.releaseFavoritePage()
+        do { _ = try await first.value; preconditionFailure("old favorite page") } catch CFLFailure.sessionChanged { }
+        do { _ = try await second.value; preconditionFailure("old favorite page") } catch CFLFailure.sessionChanged { }
+        let snapshot = try await client.cachedFavoriteSnapshot(session: "A", revision: revision)
+        precondition(snapshot?.needsRevalidation == false && snapshot?.page.stickers.isEmpty == true)
+        await client.disconnect()
+    }
+    // A changed session or login scope invalidates both callers and their write.
+    for switchSession in [true, false] {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot()), disk = FakeMediaCache()
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, mediaCache: disk, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        await http.holdNextFavoritePage()
+        let first = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while !(await http.favoritePageIsHeld()) { await Task.yield() }
+        let second = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while await client.favoritePageWaiterCount(session: "A") != 2 { await Task.yield() }
+        if switchSession {
+            try await socket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+            while await client.currentState().sessionId != "B" { await Task.yield() }
+        } else { await http.changeScope() }
+        await http.releaseFavoritePage()
+        do { _ = try await first.value; preconditionFailure("stale first page") } catch CFLFailure.sessionChanged { }
+        do { _ = try await second.value; preconditionFailure("stale second page") } catch CFLFailure.sessionChanged { }
+        if switchSession {
+            try await socket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+            while await client.currentState().sessionId != "A" { await Task.yield() }
+        }
+        let currentRevision = await client.currentState().sessionRevision
+        let snapshot = try await client.cachedFavoriteSnapshot(session: "A", revision: currentRevision)
+        precondition(snapshot == nil)
+        await client.disconnect()
+    }
+    // Cancellation of a single view leaves the shared fetch for the other view.
+    do {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        await http.holdNextFavoritePage()
+        let first = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while !(await http.favoritePageIsHeld()) { await Task.yield() }
+        let second = Task { try await client.favoriteStickers(session: "A", revision: revision) }
+        while await client.favoritePageWaiterCount(session: "A") != 2 { await Task.yield() }
+        first.cancel(); await http.releaseFavoritePage()
+        do { _ = try await first.value; preconditionFailure("cancelled view") } catch CFLFailure.sessionChanged { }
+        let retained = try await second.value; precondition(retained.stickers.count == 1)
+        await client.disconnect()
+    }
+}
+
+func checkPersistentMedia(_ sticker: CFLSticker) async throws {
+    let disk = FakeMediaCache(), http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+    await http.setExtraFavorite()
+    let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, mediaCache: disk, transport: { socket })
+    await client.connect(); let revision = await client.currentState().sessionRevision
+    let first = try await client.favoriteStickers(session: "A", revision: revision)
+    precondition(first.stickers.count == 2 && first.nextCursor == "page_2")
+    _ = try await client.searchStickers("hello", session: "A", revision: revision)
+    _ = try await client.stickerPackMembers("pack_1", session: "A", revision: revision)
+    _ = try await client.stickerMedia(sticker, session: "A", revision: revision)
+    let original = try await client.stickerMedia(sticker, original: true, session: "A", revision: revision)
+    _ = try await client.setStickerFavorite(sticker.id, favorite: false, session: "A", revision: revision)
+    let afterRemoval = try await client.cachedFavoriteSnapshot(session: "A", revision: revision)!
+    precondition(afterRemoval.needsRevalidation && afterRemoval.page.stickers.map(\.id) == ["sticker_2"] && afterRemoval.page.nextCursor == "page_2")
+    let groupAfterRemoval = try await client.cachedStickerPackMembers("pack_1", session: "A", revision: revision)
+    let assistantAfterRemoval = await http.assistantFavoriteIDs()
+    precondition(groupAfterRemoval?.stickers.map(\.id) == [sticker.id] && assistantAfterRemoval == [sticker.id])
+    let requestsAfterRemoval = await http.allRequests()
+    let humanPost = requestsAfterRemoval.last { $0.url?.path == "/api/stickers/favorites" && $0.httpMethod == "POST" }!
+    let humanBody = try JSONSerialization.jsonObject(with: humanPost.httpBody!) as! [String: Any]
+    precondition(Set(humanBody.keys) == Set(["sessionId", "stickerId", "favorite"]))
+    _ = try await client.setStickerFavorite(sticker.id, favorite: true, session: "A", revision: revision)
+    let afterAddition = try await client.cachedFavoriteSnapshot(session: "A", revision: revision)!
+    precondition(afterAddition.needsRevalidation && afterAddition.page.stickers.map(\.id) == ["sticker_2"])
+    await client.disconnect()
+
+    // A new client and login scope for the same origin reuse the same bytes.
+    let nextHTTP = FakeStickerHTTP(), nextSocket = FakeSocket(snapshot: imageSnapshot())
+    let next = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: nextHTTP, mediaCache: disk, transport: { nextSocket })
+    await next.connect(); let nextRevision = await next.currentState().sessionRevision
+    let restored = try await next.cachedStickerThumbnail(sticker, session: "A", revision: nextRevision)
+    precondition(restored == Data([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]))
+    let restoredPage = try await next.cachedFavoriteSnapshot(session: "A", revision: nextRevision)
+    precondition(restoredPage?.page.stickers.map(\.id) == ["sticker_2"])
+    await nextHTTP.setDenied(true)
+    do { _ = try await next.cachedStickerThumbnail(sticker, session: "A", revision: nextRevision); preconditionFailure("denied display") } catch CFLFailure.accessDenied { }
+    await nextHTTP.setDenied(false); await nextHTTP.changeScope()
+    let afterLogin = try await next.cachedStickerThumbnail(sticker, session: "A", revision: nextRevision)
+    precondition(afterLogin == restored)
+    await nextHTTP.setStatus(403)
+    do { _ = try await next.stickerMedia(sticker, session: "A", revision: nextRevision); preconditionFailure("forbidden") } catch CFLFailure.requestFailed { }
+    await next.disconnect()
+
+    let againHTTP = FakeStickerHTTP(), againSocket = FakeSocket(snapshot: imageSnapshot())
+    let again = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: againHTTP, mediaCache: disk, transport: { againSocket })
+    await again.connect(); let againRevision = await again.currentState().sessionRevision
+    let afterForbidden = try await again.cachedStickerThumbnail(sticker, session: "A", revision: againRevision)
+    precondition(afterForbidden == restored)
+    await againHTTP.setStatus(404)
+    let writesBeforeReadFailures = await disk.writeCount()
+    do { _ = try await again.stickerMedia(sticker, session: "A", revision: againRevision); preconditionFailure("unavailable read") } catch CFLFailure.requestFailed { }
+    do { _ = try await again.stickerMedia(sticker, original: true, session: "A", revision: againRevision, revalidate: true); preconditionFailure("original unavailable read") } catch CFLFailure.requestFailed { }
+    let retainedOriginal = try await again.stickerMedia(sticker, original: true, session: "A", revision: againRevision)
+    precondition(retainedOriginal == original)
+    let missingObject: [String: Any] = ["id": "missing_sticker", "version": String(repeating: "b", count: 64), "name": "Missing", "tags": [String](), "mediaType": "image/gif", "available": true]
+    let missing = try JSONDecoder().decode(CFLSticker.self, from: JSONSerialization.data(withJSONObject: missingObject))
+    do { _ = try await again.stickerMedia(missing, session: "A", revision: againRevision); preconditionFailure("uncached unavailable read") } catch CFLFailure.requestFailed { }
+    do { _ = try await again.stickerMedia(missing, original: true, session: "A", revision: againRevision); preconditionFailure("uncached original unavailable read") } catch CFLFailure.requestFailed { }
+    let writesAfterReadFailures = await disk.writeCount()
+    precondition(writesAfterReadFailures == writesBeforeReadFailures)
+    await again.disconnect()
+    let lastHTTP = FakeStickerHTTP(), lastSocket = FakeSocket(snapshot: imageSnapshot())
+    let last = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: lastHTTP, mediaCache: disk, transport: { lastSocket })
+    await last.connect(); let lastRevision = await last.currentState().sessionRevision
+    let afterReadFailure = try await last.cachedStickerThumbnail(sticker, session: "A", revision: lastRevision)
+    precondition(afterReadFailure == restored)
+    let oldSearch = try await last.cachedSearchStickers("hello", session: "A", revision: lastRevision)
+    precondition(oldSearch?.stickers.map(\.id) == [sticker.id] && oldSearch?.nextCursor == "page_2")
+    var updatedBytes = restored!; updatedBytes.append(42)
+    await lastHTTP.setThumbnailData(updatedBytes)
+    let updated = try await last.stickerMedia(sticker, session: "A", revision: lastRevision)
+    precondition(updated == updatedBytes)
+    let updatedCache = try await last.cachedStickerThumbnail(sticker, session: "A", revision: lastRevision)
+    precondition(updatedCache == updatedBytes)
+    await lastHTTP.setCatalogHidden(true)
+    let refreshed = try await last.searchStickers("hello", session: "A", revision: lastRevision)
+    let refreshedCache = try await last.cachedSearchStickers("hello", session: "A", revision: lastRevision)
+    let stillFavorite = try await last.cachedFavoriteSnapshot(session: "A", revision: lastRevision)
+    precondition(refreshed.stickers.isEmpty && refreshedCache?.stickers.isEmpty == true && stillFavorite?.page.stickers.map(\.id) == ["sticker_2"])
+    await lastHTTP.setCatalogHidden(false); await lastHTTP.setCatalogUnavailable(true)
+    let unavailablePage = try await last.searchStickers("hello", session: "A", revision: lastRevision)
+    let unavailable = unavailablePage.stickers[0]
+    precondition(!unavailable.available)
+    let beforeUnavailable = Set(await disk.keys())
+    do { _ = try await last.cachedStickerThumbnail(unavailable, session: "A", revision: lastRevision); preconditionFailure("unavailable item") } catch CFLStickerThumbnailFailure.removed { }
+    do { _ = try await last.sendSticker(unavailable, expectedSessionId: "A", expectedSessionRevision: lastRevision); preconditionFailure("unavailable send") } catch CFLFailure.invalidInput { }
+    let afterUnavailable = Set(await disk.keys())
+    let stillCached = try await last.cachedStickerThumbnail(sticker, session: "A", revision: lastRevision)
+    precondition(beforeUnavailable == afterUnavailable && stillCached == updatedBytes)
+    try await lastSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await last.currentState().sessionId != "B" { await Task.yield() }
+    let bRevision = await last.currentState().sessionRevision
+    let otherSession = try await last.cachedFavoriteSnapshot(session: "B", revision: bRevision)
+    precondition(otherSession == nil)
+    await last.disconnect()
+
+    let otherHTTP = FakeStickerHTTP(), otherSocket = FakeSocket(snapshot: imageSnapshot())
+    let other = CFLChatClient(target: "https://other.example", store: MemoryStore(), imageHTTP: otherHTTP, mediaCache: disk, transport: { otherSocket })
+    await other.connect(); let otherRevision = await other.currentState().sessionRevision
+    let unrelated = try await other.cachedFavoriteSnapshot(session: "A", revision: otherRevision)
+    precondition(unrelated == nil)
+    await disk.setFailed(true)
+    let networkBytes = try await other.stickerMedia(sticker, session: "A", revision: otherRevision)
+    precondition(networkBytes == restored)
+    await other.disconnect()
+}
+
+func checkConcurrentStickerThumbnails(_ sticker: CFLSticker) async throws {
+    let bytes = Data([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80])
+    // Two views wait for one revalidation, including the conditional 304 path.
+    for status in [200, 304, 403, 404] {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        if status != 200 { _ = try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        let before = await http.allRequests().count
+        await http.setStatus(status); await http.setHold()
+        let first = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        while !(await http.isHeld()) { await Task.yield() }
+        let second = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        while await client.thumbnailWaiterCount(sticker, session: "A") != 2 { await Task.yield() }
+        await http.release()
+        if status == 200 || status == 304 {
+            let a = try await first.value, b = try await second.value
+            precondition(a == bytes && b == bytes)
+        } else {
+            do { _ = try await first.value; preconditionFailure("failed first waiter") } catch CFLFailure.requestFailed { }
+            do { _ = try await second.value; preconditionFailure("failed second waiter") } catch CFLFailure.requestFailed { }
+            let cached = try await client.cachedStickerThumbnail(sticker, session: "A", revision: revision)
+            precondition(cached == bytes)
+        }
+        let requests = await http.allRequests()
+        precondition(requests.count == before + 1)
+        if status == 304 {
+            precondition(requests.last?.value(forHTTPHeaderField: "If-None-Match") == "\"thumb\"")
+            await http.setStatus(403)
+            do { _ = try await client.stickerMedia(sticker, session: "A", revision: revision); preconditionFailure("later read failure") } catch CFLFailure.requestFailed { }
+            let cached = try await client.cachedStickerThumbnail(sticker, session: "A", revision: revision)
+            precondition(cached == bytes)
+        }
+        await client.disconnect()
+    }
+    // An explicitly unavailable item cancels the old shared request, while
+    // any existing copy remains usable if the directory later permits it.
+    for status in [200, 304] {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        if status == 304 { _ = try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        await http.setStatus(status); await http.setHold()
+        let first = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        while !(await http.isHeld()) { await Task.yield() }
+        let second = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        while await client.thumbnailWaiterCount(sticker, session: "A") != 2 { await Task.yield() }
+        let object: [String: Any] = ["id": sticker.id, "version": sticker.version, "name": sticker.name,
+            "tags": sticker.tags, "mediaType": sticker.mediaType, "available": false]
+        let unavailable = try JSONDecoder().decode(CFLSticker.self, from: JSONSerialization.data(withJSONObject: object))
+        do { _ = try await client.cachedStickerThumbnail(unavailable, session: "A", revision: revision); preconditionFailure("unavailable item") } catch CFLStickerThumbnailFailure.removed { }
+        await http.release()
+        do { _ = try await first.value; preconditionFailure("stale first waiter") } catch CFLFailure.sessionChanged { }
+        do { _ = try await second.value; preconditionFailure("stale second waiter") } catch CFLFailure.sessionChanged { }
+        let cached = try await client.cachedStickerThumbnail(sticker, session: "A", revision: revision)
+        precondition(cached == (status == 304 ? bytes : nil))
+        await client.disconnect()
+    }
+    // Identity replacement while both callers are waiting invalidates the shared result.
+    do {
+        let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+        let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, transport: { socket })
+        await client.connect(); let revision = await client.currentState().sessionRevision
+        await http.setHold()
+        let first = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        while !(await http.isHeld()) { await Task.yield() }
+        let second = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+        while await client.thumbnailWaiterCount(sticker, session: "A") != 2 { await Task.yield() }
+        await http.changeScope(); await http.release()
+        do { _ = try await first.value; preconditionFailure("old identity first") } catch CFLFailure.sessionChanged { }
+        do { _ = try await second.value; preconditionFailure("old identity second") } catch CFLFailure.sessionChanged { }
+        let cached = try await client.cachedStickerThumbnail(sticker, session: "A", revision: revision)
+        precondition(cached == nil)
+        await client.disconnect()
+    }
+    // A caller cancelling its own view must not cancel a second live waiter.
+    let http = FakeStickerHTTP(), socket = FakeSocket(snapshot: imageSnapshot())
+    let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: http, transport: { socket })
+    await client.connect(); let revision = await client.currentState().sessionRevision
+    await http.setHold()
+    let first = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+    while !(await http.isHeld()) { await Task.yield() }
+    let second = Task { try await client.stickerMedia(sticker, session: "A", revision: revision) }
+    while await client.thumbnailWaiterCount(sticker, session: "A") != 2 { await Task.yield() }
+    first.cancel(); await http.release()
+    do { _ = try await first.value; preconditionFailure("cancelled caller") } catch CFLFailure.sessionChanged { }
+    let live = try await second.value; precondition(live == bytes)
+    await client.disconnect()
+}
+
+func checkStickers() async throws {
+    try await checkConcurrentFavoritePages()
+    let socket = FakeSocket(snapshot: imageSnapshot()), http = FakeStickerHTTP(), store = MemoryStore()
+    let auth = CFLAuthorization(store: ImageTestCredentials(), http: http)
+    try await auth.select(origin: "https://example.com")
+    let client = CFLChatClient(target: "https://example.com", store: store,
+        imageHTTP: CFLAuthorizedHTTP(authorization: auth, http: http), transport: { socket })
+    await client.connect()
+    let state = await client.currentState(), revision = state.sessionRevision
+    let packs = try await client.stickerPacks(session: "A", revision: revision)
+    precondition(packs.nextCursor == "page_2" && packs.packs[0].cover.id == "sticker_1")
+    let members = try await client.stickerPackMembers("pack_1", session: "A", revision: revision)
+    let sticker = members.stickers[0]
+    try await checkOfflineStickerOriginal(sticker)
+    try await checkConcurrentStickerThumbnails(sticker)
+    try await checkPersistentMedia(sticker)
+    let last = try await client.stickerPackMembers("pack_1", session: "A", revision: revision, cursor: members.nextCursor)
+    precondition(last.stickers.isEmpty && last.nextCursor == nil)
+    let search = try await client.searchStickers("hello & 波", session: "A", revision: revision)
+    let favorites = try await client.favoriteStickers(session: "A", revision: revision)
+    precondition(search.stickers == favorites.stickers)
+    _ = try await client.setStickerFavorite(sticker.id, favorite: false, session: "A", revision: revision)
+    let stickerImage = CFLImageRef(attachmentId: "staged_1", name: "Wave", mediaType: "image/gif", availability: "available", sticker: sticker.identity)
+    _ = try await client.favoriteChatImage(stickerImage, session: "A", revision: revision)
+    _ = try await client.favoriteChatImage(CFLImageRef(attachmentId: "image_1", name: "photo.png", mediaType: "image/png", availability: "available"), session: "A", revision: revision)
+    let emptyCache = try await client.cachedStickerThumbnail(sticker, session: "A", revision: revision)
+    precondition(emptyCache == nil)
+    let preview = try await client.stickerMedia(sticker, session: "A", revision: revision)
+    precondition(preview == Data([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]))
+    let cachedPreview = try await client.cachedStickerThumbnail(sticker, session: "A", revision: revision)
+    precondition(cachedPreview == preview)
+    await http.setStatus(304)
+    let revalidated = try await client.stickerMedia(sticker, session: "A", revision: revision)
+    precondition(revalidated == preview)
+    let conditional = await http.allRequests().last!
+    precondition(conditional.url!.path.hasSuffix("/thumbnail") && conditional.value(forHTTPHeaderField: "If-None-Match") == "\"thumb\"")
+    await http.setStatus(200)
+    let original = try await client.stickerMedia(sticker, original: true, session: "A", revision: revision)
+    precondition(original == Data("GIF89a".utf8))
+    let operation = try await client.sendSticker(sticker, expectedSessionId: "A", expectedSessionRevision: revision)
+    let requests = await http.allRequests()
+    precondition(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token" && $0.value(forHTTPHeaderField: "Origin") == "https://example.com" })
+    let searchRequest = requests.first { $0.url!.path.hasSuffix("/search") }!
+    precondition(URLComponents(url: searchRequest.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "query" })?.value == "hello & 波")
+    let mutations = requests.filter { $0.httpMethod == "POST" }
+    precondition(mutations.map { $0.url!.path } == ["/api/stickers/favorites", "/api/stickers/favorites", "/api/stickers/favorites/image", "/api/stickers/stage"])
+    let favoriteBody = try JSONSerialization.jsonObject(with: mutations[1].httpBody!) as! [String: Any]
+    precondition(favoriteBody["stickerId"] as? String == sticker.id && favoriteBody["imageId"] == nil)
+    let imageBody = try JSONSerialization.jsonObject(with: mutations[2].httpBody!) as! [String: Any]
+    precondition(imageBody["imageId"] as? String == "image_1" && (imageBody["tags"] as? [String]) == [])
+    let stageBody = try JSONSerialization.jsonObject(with: mutations[3].httpBody!) as! [String: Any]
+    let submissions = await socket.arguments(for: "submit"), saved = try await store.load()
+    precondition(stageBody["operationId"] as? String == operation && submissions[0][0].object?["operationId"] == .string(operation))
+    precondition(submissions[0][0].object?["text"] == .string("") && saved.first?.images?.first?.sticker == sticker.identity && saved.first?.dispatched == true)
+    await client.disconnect()
+
+    for malformed in [false, true] {
+        let h = FakeStickerHTTP(), sock = FakeSocket(snapshot: imageSnapshot()), st = MemoryStore()
+        if malformed { await h.setBadStage() } else { await h.setFailStage() }
+        let c = CFLChatClient(target: "https://example.com", store: st, imageHTTP: h, transport: { sock })
+        await c.connect(); let rev = await c.currentState().sessionRevision
+        do { _ = try await c.sendSticker(sticker, expectedSessionId: "A", expectedSessionRevision: rev); preconditionFailure("invalid stage accepted") } catch { }
+        let sent = await sock.methods(), records = try await st.load(), reqs = await h.allRequests()
+        precondition(!sent.contains("submit") && records.isEmpty && reqs.filter { $0.url!.path.hasSuffix("/stage") }.count == 1)
+        await c.disconnect()
+    }
+    let cacheHTTP = FakeStickerHTTP(), cacheSocket = FakeSocket(snapshot: imageSnapshot())
+    let cacheClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: cacheHTTP, transport: { cacheSocket })
+    await cacheClient.connect(); let cacheRevision = await cacheClient.currentState().sessionRevision
+    _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision)
+    await cacheHTTP.setOffline(true)
+    do { _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision); preconditionFailure("network accepted") } catch { }
+    let retained = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision)
+    precondition(retained == preview)
+    await cacheHTTP.setOffline(false); await cacheHTTP.setStatus(404)
+    do { _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision); preconditionFailure("failed read accepted") } catch CFLFailure.requestFailed { }
+    let after404 = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision)
+    precondition(after404 == preview)
+    await cacheHTTP.setStatus(200)
+    _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision)
+    await cacheHTTP.setStatus(403)
+    do { _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision); preconditionFailure("forbidden accepted") } catch CFLFailure.requestFailed { }
+    let forbidden = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision)
+    precondition(forbidden == preview)
+    await cacheHTTP.setStatus(200)
+    _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision)
+    await cacheHTTP.changeScope()
+    let otherIdentity = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision)
+    precondition(otherIdentity == nil)
+    await cacheHTTP.setStatus(304)
+    do { _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision); preconditionFailure("304 without cache") } catch CFLFailure.protocolError { }
+    await cacheHTTP.setStatus(200)
+    await cacheHTTP.setHold()
+    let staleThumbnail = Task { try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision) }
+    while !(await cacheHTTP.isHeld()) { await Task.yield() }
+    await cacheHTTP.changeScope(); await cacheHTTP.release()
+    do { _ = try await staleThumbnail.value; preconditionFailure("old identity result") } catch CFLFailure.sessionChanged { }
+    let afterRace = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision)
+    precondition(afterRace == nil)
+    _ = try await cacheClient.stickerMedia(sticker, session: "A", revision: cacheRevision)
+    await cacheHTTP.setDenied(true)
+    do { _ = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision); preconditionFailure("revoked cache") } catch CFLFailure.accessDenied { }
+    await cacheHTTP.setDenied(false)
+    let afterRevocation = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision)
+    precondition(afterRevocation == nil)
+    try await cacheSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await cacheClient.currentState().sessionId != "B" { await Task.yield() }
+    let nextRevision = await cacheClient.currentState().sessionRevision
+    do { _ = try await cacheClient.cachedStickerThumbnail(sticker, session: "A", revision: cacheRevision); preconditionFailure("stale session cache") } catch CFLFailure.sessionChanged { }
+    let otherSession = try await cacheClient.cachedStickerThumbnail(sticker, session: "B", revision: nextRevision)
+    precondition(otherSession == nil)
+    try await cacheSocket.emit(update(sequence: 2, field: "sessionId", value: .string("A")))
+    while await cacheClient.currentState().sessionId != "A" { await Task.yield() }
+    let finalRevision = await cacheClient.currentState().sessionRevision
+    // The process-local cache is bounded and evicts least-recently-used entries.
+    for index in 0...128 {
+        let object: [String: Any] = ["id": "item_\(index)", "version": sticker.version, "name": "Item", "tags": [String](), "mediaType": "image/gif", "available": true]
+        let item = try JSONDecoder().decode(CFLSticker.self, from: JSONSerialization.data(withJSONObject: object))
+        _ = try await cacheClient.stickerMedia(item, session: "A", revision: finalRevision)
+    }
+    let oldestData = try JSONSerialization.data(withJSONObject: ["id": "item_0", "version": sticker.version, "name": "Item", "tags": [String](), "mediaType": "image/gif", "available": true])
+    let oldest = try JSONDecoder().decode(CFLSticker.self, from: oldestData)
+    let evicted = try await cacheClient.cachedStickerThumbnail(oldest, session: "A", revision: finalRevision)
+    precondition(evicted == nil)
+    await cacheClient.disconnect()
+    let deniedHTTP = FakeStickerHTTP(), deniedSocket = FakeSocket(snapshot: imageSnapshot())
+    let denied = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: deniedHTTP, transport: { deniedSocket })
+    await denied.connect(); let deniedRevision = await denied.currentState().sessionRevision
+    await deniedHTTP.setStatus(403)
+    do { _ = try await denied.stickerPacks(session: "A", revision: deniedRevision); preconditionFailure("unauthorized catalog") } catch CFLFailure.accessDenied { }
+    do { _ = try await denied.sendSticker(sticker, expectedSessionId: "A", expectedSessionRevision: deniedRevision); preconditionFailure("unauthorized send") } catch CFLFailure.accessDenied { }
+    let deniedMethods = await deniedSocket.methods(); precondition(!deniedMethods.contains("submit"))
+    await denied.disconnect()
+    let staleHTTP = FakeStickerHTTP(), staleSocket = FakeSocket(snapshot: imageSnapshot())
+    let staleClient = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: staleHTTP, transport: { staleSocket })
+    await staleClient.connect(); let staleRevision = await staleClient.currentState().sessionRevision
+    await staleHTTP.setHold()
+    let pending = Task { try await staleClient.sendSticker(sticker, expectedSessionId: "A", expectedSessionRevision: staleRevision) }
+    while !(await staleHTTP.isHeld()) { await Task.yield() }
+    try await staleSocket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await staleClient.currentState().sessionId != "B" { await Task.yield() }
+    await staleHTTP.release()
+    do { _ = try await pending.value; preconditionFailure("stale stage accepted") } catch CFLFailure.sessionChanged { }
+    let staleMethods = await staleSocket.methods(); precondition(!staleMethods.contains("submit"))
+    await staleClient.disconnect()
+
+    // A lost submit is saved with its sticker identity. Recovery checks it and
+    // never sends either the stage request or submit again.
+    let lostStore = MemoryStore(), lostHTTP = FakeStickerHTTP()
+    let lostSocket = FakeSocket(snapshot: imageSnapshot(), dropSubmit: true)
+    let lost = CFLChatClient(target: "https://example.com", store: lostStore, imageHTTP: lostHTTP, transport: { lostSocket })
+    await lost.connect(); let lostRevision = await lost.currentState().sessionRevision
+    let lostOperation = try await lost.sendSticker(sticker, expectedSessionId: "A", expectedSessionRevision: lostRevision)
+    await lost.disconnect()
+    let lostRecords = try await lostStore.load()
+    precondition(lostRecords.count == 1 && lostRecords[0].dispatched && lostRecords[0].images?.first?.sticker == sticker.identity)
+    let old = lostRecords[0]
+    await lostStore.setEntries([CFLPending(target: old.target, sessionId: old.sessionId, operationId: old.operationId,
+        text: old.text, createdAt: Date(timeIntervalSinceNow: -120), dispatched: true, status: .unknown, images: old.images)])
+    let restoreHTTP = FakeStickerHTTP(), restoreSocket = FakeSocket(snapshot: imageSnapshot())
+    let restored = CFLChatClient(target: "https://example.com", store: lostStore, imageHTTP: restoreHTTP, transport: { restoreSocket })
+    await restored.connect(); try await restored.reconcile()
+    let restoreMethods = await restoreSocket.methods(), restoreRequests = await restoreHTTP.allRequests()
+    let finalize = await restoreSocket.arguments(for: "finalizeSubmission")
+    precondition(!restoreMethods.contains("submit") && restoreRequests.isEmpty && finalize.count == 1)
+    let recovered = finalize[0][0].object?["submission"]?.object
+    precondition(recovered?["operationId"] == .string(lostOperation) && recovered?["images"]?.array?.first?.object?["sticker"]?.object?["id"] == .string(sticker.id))
+    await restored.disconnect()
+    print("CFL sticker checks passed")
+}
+
 #if !CFL_SOURCE_CHECKS
 @main
 #endif
 struct CFLChatChecks {
     static func main() async throws {
-        if CommandLine.arguments.dropFirst().elementsEqual(["--patch-only"]) { try await checkHistoryPatchOrdering(); print("CFL history patch ordering checks passed"); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--stickers-only"]) { try await checkStickers(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--timeout-only"]) { try await checkHistoryTimeout(); print("CFL history timeout checks passed"); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--ordered-only"]) { try await checkOrderedTimeline(); print("CFL ordered timeline checks passed"); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--view-window-only"]) { try await checkViewItemAndWindowContinuity(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--retry-only"]) { try await checkRetryImages(); print("CFL retry image checks passed"); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--voice-only"]) { try await checkVoiceMessages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--external-images-only"]) { try await checkExternalMarkdownImages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--markdown-images-only"]) { try await checkMarkdownImages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--reminders-only"]) { try await checkReminderSources(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--images-only"]) { try await checkImages(); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--send-identity-only"]) { try await checkCallerSendIdentity(); return }
+        try await checkReplySourceContract()
+        try await checkCallerSendIdentity()
+        try await checkStickers()
         try await checkReminderSources()
+        try await checkViewItemAndWindowContinuity()
         try await checkOrderedTimeline()
         try await checkRetryImages()
         try await checkHistoryWindows()

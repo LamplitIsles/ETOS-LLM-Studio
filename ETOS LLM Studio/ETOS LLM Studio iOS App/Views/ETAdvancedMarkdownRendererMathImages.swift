@@ -125,7 +125,7 @@ struct CFLMarkdownImageContext {
             let data = try await status.data(for: key, context: context) {
                 switch resolvedTarget {
                 case .external(let destination):
-                    return try await CFLExternalImageLoader().data(for: destination)
+                    return try await model.externalImage(destination, target: self.target, session: session, revision: revision, clientID: clientID)
                 case .workspace, .api:
                     return try await model.markdownImage(source, target: self.target, session: session, revision: revision, clientID: clientID)
                 case .invalid:

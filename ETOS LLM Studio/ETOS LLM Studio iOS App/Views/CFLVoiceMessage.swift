@@ -230,7 +230,7 @@ struct CFLVoiceMessage: View {
             .padding(12)
             .background {
                 if !config.enableNoBubbleUI {
-                    ChatBubbleBackground(shape: RoundedRectangle(cornerRadius: 18), fill: AnyShapeStyle(bubbleColor), enableLiquidGlass: config.enableLiquidGlass)
+                    ChatBubbleBackground(shape: RoundedRectangle(cornerRadius: CGFloat(config.chatBubbleCornerRadius)), fill: AnyShapeStyle(bubbleColor), enableLiquidGlass: config.enableLiquidGlass)
                 }
             }
             Spacer(minLength: 20)

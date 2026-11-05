@@ -330,7 +330,7 @@ extension ChatBubble {
     }
 
     var bubbleShape: BubbleCornerShape {
-        let baseRadius: CGFloat = 18
+        let baseRadius = CGFloat(appConfig.chatBubbleCornerRadius)
         let mergedRadius: CGFloat = 0
         let topRadius = mergeWithPrevious ? mergedRadius : baseRadius
         let bottomRadius = mergeWithNext ? mergedRadius : baseRadius
@@ -371,7 +371,6 @@ extension ChatBubble {
         if usesNoBubbleStyle {
             return AnyShapeStyle(Color.clear)
         }
-        let assistantOpacity = enableBackground ? 0.75 : 1.0
         let errorOpacity = enableBackground ? 0.8 : 1.0
 
         if isError {
@@ -393,15 +392,8 @@ extension ChatBubble {
 
         switch message.role {
         case .user, .assistant, .system, .tool:
-            let baseColor: Color
-            if let resolvedAssistantBubbleColor {
-                baseColor = resolvedAssistantBubbleColor.opacity(enableBackground ? assistantOpacity : 1)
-            } else {
-                baseColor = enableBackground
-                    ? Color(uiColor: .secondarySystemBackground).opacity(assistantOpacity)
-                    : Color(uiColor: .systemBackground)
-            }
-            return AnyShapeStyle(baseColor)
+            return AnyShapeStyle(ChatAssistantBubbleAppearance.fill(profile: activeAppearanceProfile,
+                                                                      enableBackground: enableBackground))
         case .error:
             return AnyShapeStyle(Color.red.opacity(0.15 * errorOpacity))
         @unknown default:
@@ -514,16 +506,17 @@ extension ChatBubble {
     }
 
     var standaloneBubbleShape: BubbleCornerShape {
-        BubbleCornerShape(
-            topLeft: 18,
-            topRight: 18,
-            bottomLeft: 18,
-            bottomRight: 18
+        let radius = CGFloat(appConfig.chatBubbleCornerRadius)
+        return BubbleCornerShape(
+            topLeft: radius,
+            topRight: radius,
+            bottomLeft: radius,
+            bottomRight: radius
         )
     }
 
     func connectedAssistantBubbleShape(isFirst: Bool, isLast: Bool) -> BubbleCornerShape {
-        let baseRadius: CGFloat = 18
+        let baseRadius = CGFloat(appConfig.chatBubbleCornerRadius)
         let mergedRadius: CGFloat = 0
         let topRadius = isFirst ? (mergeWithPrevious ? mergedRadius : baseRadius) : mergedRadius
         let bottomRadius = isLast ? (mergeWithNext ? mergedRadius : baseRadius) : mergedRadius

@@ -19,23 +19,11 @@ enum AdaptiveComposerPresentation: Equatable {
 
 struct ComposerPressButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let usesSystemGlassFeedback: Bool
-
-    init(usesSystemGlassFeedback: Bool = false) {
-        self.usesSystemGlassFeedback = usesSystemGlassFeedback
-    }
-
-    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        if usesSystemGlassFeedback {
-            // 交互式 Liquid Glass 已提供完整按压反馈，避免叠加反向缩放削弱系统高光。
-            configuration.label
-        } else {
-            configuration.label
-                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
-                .opacity(configuration.isPressed ? 0.78 : 1)
-                .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-        }
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.78 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
@@ -59,61 +47,20 @@ extension TelegramMessageComposer {
         return .idle
     }
 
-    @ViewBuilder
     var adaptiveComposerContent: some View {
-        Group {
-            if #available(iOS 26.0, *), appConfig.enableLiquidGlass {
-                GlassEffectContainer(spacing: 8) {
-                    adaptiveGlassComposerRow
-                }
-            } else {
-                adaptiveComposerRow
-            }
-        }
-    }
-
-    private var adaptiveComposerRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            adaptiveCenterContainer(participatesInGlassContainer: false)
+            adaptiveCenterContainer
+            stickerButton(size: adaptiveControlSize)
             attachmentMenuButton(size: adaptiveControlSize)
         }
     }
 
-    @available(iOS 26.0, *)
-    private var adaptiveGlassComposerRow: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            adaptiveCenterContainer(participatesInGlassContainer: true)
-                .glassEffectID("adaptive-center", in: adaptiveGlassNamespace)
-            if isSending {
-                attachmentMenuButton(size: adaptiveControlSize)
-            } else {
-                attachmentMenuButton(size: adaptiveControlSize, participatesInGlassContainer: true)
-                    .glassEffectID("adaptive-attachment", in: adaptiveGlassNamespace)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func adaptiveCenterContainer(
-        participatesInGlassContainer: Bool
-    ) -> some View {
+    private var adaptiveCenterContainer: some View {
         let cornerRadius = adaptiveControlSize / 2
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-
-        if #available(iOS 26.0, *),
-           appConfig.enableLiquidGlass,
-           participatesInGlassContainer {
-            adaptiveCenterForeground(shape: shape)
-                .background(shape.fill(glassOverlayColor))
-                .glassEffect(.clear, in: shape)
-                .overlay(shape.stroke(glassStrokeColor, lineWidth: 0.5))
-                .shadow(color: glassShadowColor, radius: 6, x: 0, y: 2)
-                .animation(adaptiveComposerAnimation, value: adaptivePresentation)
-        } else {
-            adaptiveCenterForeground(shape: shape)
-                .background(glassRoundedBackground(cornerRadius: cornerRadius))
-                .animation(adaptiveComposerAnimation, value: adaptivePresentation)
-        }
+        return adaptiveCenterForeground(shape: shape)
+            .background(composerRoundedBackground(cornerRadius: cornerRadius))
+            .animation(adaptiveComposerAnimation, value: adaptivePresentation)
     }
 
     private func adaptiveCenterForeground(
@@ -160,6 +107,7 @@ extension TelegramMessageComposer {
         return CFLComposerTextView(text: $text, focus: focus, font: font,
                                    maximumHeight: adaptiveMaximumInputHeight,
                                    hardwareReturnSends: appConfig.iOSHardwareKeyboardReturnSendsMessage,
+                                   softwareReturnSends: appConfig.iOSSoftwareKeyboardReturnSendsMessage,
                                    onSubmit: adaptiveSubmitContent)
             .padding(.leading, adaptiveTextLeadingInset + 5)
             .padding(.trailing, adaptiveTextTrailingInset)

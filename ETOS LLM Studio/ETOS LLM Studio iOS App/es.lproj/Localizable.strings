@@ -8688,3 +8688,18 @@ If solo el Archivar state changes, Sin re-embedding es performed.";
 
 "图片生成失败" = "No se pudo generar la imagen";
 "图片状态未确认" = "Estado de la imagen sin confirmar";
+
+"气泡圆角" = "Redondez de los globos";
+"恢复默认圆角" = "Restablecer redondez predeterminada";
+
+"聊天样例" = "Vista previa del chat";
+"预览用户消息" = "¡Hola! ¿Qué tal se ve?";
+"预览助手消息" = "Aquí tienes una **vista previa** con una fórmula: $E=mc^2$.";
+
+/* Software keyboard Return behavior */
+"屏幕键盘按发送键发送消息" = "Enviar con la tecla del teclado en pantalla";
+"屏幕键盘" = "Teclado en pantalla";
+"关闭后，键盘右下角用于换行；输入文字后，点击右侧箭头发送。" = "Al desactivarlo, la tecla inferior derecha inserta un salto de línea. Escribe texto y toca la flecha de la derecha para enviarlo.";
+"加载中间的消息" = "Cargar mensajes intermedios";
+"中间的消息加载失败。" = "No se pudieron cargar los mensajes intermedios.";
+"无法继续加载这段消息。" = "No se pueden cargar más mensajes en este intervalo.";

@@ -8,6 +8,15 @@ Xcode 工程的 `Cloud` 是本地 build configuration；即使在 Mac 上使用�
 
 Mac 本地 iOS 构建复用获准的现有 checkout、DerivedData 和 SwiftPM 缓存。已验证的无签名诊断使用 workspace、`ETOS LLM Studio App` scheme、`Cloud` 配置和 Xcode 26.6，覆盖 `SWIFT_OPTIMIZATION_LEVEL=-Onone`、`SWIFT_COMPILATION_MODE=incremental` 及 `CODE_SIGNING_ALLOWED=NO`；已有独立的 Debug 无签名构建也通过。`Cloud` 配置默认优化与该诊断不同，不能把 `-Onone` 成功当作优化归档通过。指定已有 DerivedData 和 SourcePackages 路径，避免意外新建缓存或下载；必要的新依赖或缓存须先取得明确授权。
 
+在已有 ETOS 构建缓存和开发证书的 Mac 上，可从常驻 checkout 使用固定入口构建和安装：
+
+```sh
+python3 scripts/ios-device.py build
+python3 scripts/ios-device.py install
+```
+
+两步复用同一个 `Cloud-iphoneos/ETOS LLM Studio App.app`；构建成功后记录源码状态和产物身份，安装前重新核对。安装只使用现有开发证书与匹配已连接 iPhone 的描述文件，不启动 App。多个符合条件的 iPhone 连接时，`install --device <设备标识>` 明确选择。安装提交后如果结果未知，先核实结果，不自动重试。构建或签名改变产物、源码状态变化时按提示重新构建。该脚本使用既有 Mac DerivedData 路径，不会创建独立依赖缓存。
+
 使用已选定的 Xcode，在项目根目录运行时，将以下占位符替换为本次获准的现有路径和设备标识：
 
 ```sh

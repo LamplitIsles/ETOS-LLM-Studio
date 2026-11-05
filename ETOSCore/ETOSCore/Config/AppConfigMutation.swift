@@ -91,6 +91,7 @@ extension AppConfigStore {
         case .watchModelPickerGroupsByProvider: watchModelPickerGroupsByProvider = value
         case .enableSlashCommands: enableSlashCommands = value
         case .iOSHardwareKeyboardReturnSendsMessage: iOSHardwareKeyboardReturnSendsMessage = value
+        case .iOSSoftwareKeyboardReturnSendsMessage: iOSSoftwareKeyboardReturnSendsMessage = value
         case .providerDetailGroupByMainstream: providerDetailGroupByMainstream = value
         case .openAITailContextUsesSystemRole: openAITailContextUsesSystemRole = value
         case .includeSystemTimeInPrompt: includeSystemTimeInPrompt = value
@@ -143,6 +144,8 @@ extension AppConfigStore {
         case .backgroundOpacity: backgroundOpacity = value
         case .liquidGlassTintOpacity:
             liquidGlassTintOpacity = LiquidGlassTintSetting.normalized(value)
+        case .chatBubbleCornerRadius:
+            chatBubbleCornerRadius = ChatBubbleCornerRadiusSetting.normalized(value)
         case .fontCustomScale: fontCustomScale = value
         case .fontLineSpacingEmIOS:
             fontLineSpacingEmIOS = FontLibrary.normalizedLineSpacingEm(
@@ -614,6 +617,8 @@ extension AppConfigStore {
             )
         case .liquidGlassTintOpacity:
             return LiquidGlassTintSetting.normalized(value)
+        case .chatBubbleCornerRadius:
+            return ChatBubbleCornerRadiusSetting.normalized(value)
         case .backgroundGenerationAudioKeepAliveVolume:
             return BackgroundGenerationAudioKeepAliveSettings.normalizedVolume(value)
         default:

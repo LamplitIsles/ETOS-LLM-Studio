@@ -3,64 +3,63 @@ import UIKit
 import AVFoundation
 import ETOSCore
 
-struct ChatComposerCircleBackground: View {
-    let usesLiquidGlass: Bool
-    let tint: Color
-    let stroke: Color
-    let shadow: Color
+struct ChatAssistantSurface<S: Shape>: View {
+    let shape: S
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var config = AppConfigStore.shared
+    @ObservedObject private var appearance = ChatAppearanceProfileManager.shared
 
     var body: some View {
-        Group {
-            if #available(iOS 26.0, *), usesLiquidGlass {
-                Circle().fill(Color.clear)
-                    .glassEffect(.clear.interactive(), in: Circle())
-                    .overlay(Circle().fill(tint))
-                    .overlay(Circle().stroke(stroke, lineWidth: 0.5))
-                    .shadow(color: shadow, radius: 6, x: 0, y: 2)
-            } else {
-                Circle().fill(.ultraThinMaterial)
-                    .overlay(Circle().fill(tint))
-                    .overlay(Circle().stroke(stroke, lineWidth: 0.5))
-                    .shadow(color: shadow, radius: 6, x: 0, y: 2)
-            }
-        }
+        shape.fill(.ultraThinMaterial)
+            .opacity(config.enableBackground ? 0.25 : 0)
+            .overlay(shape.fill(ChatAssistantBubbleAppearance.fill(profile: appearance.activeProfile,
+                                                                   enableBackground: config.enableBackground)))
+            .overlay(shape.stroke(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.28), lineWidth: 0.5))
     }
 }
 
-struct ChatScrollNavigationButton: View {
+struct ChatCircleActionLabel: View {
+    let systemName: String
+    let circleSize: CGFloat
+    var symbolSize: CGFloat? = nil
+    var iconColor: Color = TelegramColors.attachButtonColor
+    var fill: Color? = nil
+    @Environment(\.colorScheme) private var colorScheme
+    private var shadow: Color { Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1) }
+
+    var body: some View {
+        Image(systemName: systemName)
+            .etFont(.system(size: symbolSize ?? max(14, circleSize * 0.45), weight: .semibold))
+            .foregroundColor(iconColor)
+            .frame(width: circleSize, height: circleSize)
+            .background {
+                Group {
+                    if let fill {
+                        Circle().fill(fill)
+                    } else {
+                        ChatAssistantSurface(shape: Circle())
+                    }
+                }.shadow(color: shadow, radius: 6, x: 0, y: 2)
+            }
+            .contentShape(Circle())
+    }
+}
+
+struct ChatCircleActionButton: View {
     let systemName: String
     let accessibilityLabel: String
     let isEnabled: Bool
-    let usesLiquidGlass: Bool
     var circleSize: CGFloat = 40
+    var symbolSize: CGFloat? = nil
+    var iconColor: Color = TelegramColors.attachButtonColor
+    var fill: Color? = nil
     let action: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject private var config = AppConfigStore.shared
-
-    private var tint: Color {
-        let opacity = LiquidGlassTintSetting.normalized(config.liquidGlassTintOpacity)
-        return colorScheme == .dark ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
-    }
-    private var stroke: Color { Color.white.opacity(colorScheme == .dark ? 0.18 : 0.28) }
-    private var shadow: Color { Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1) }
-    private var usesSystemGlassFeedback: Bool {
-        if #available(iOS 26.0, *) { return usesLiquidGlass }
-        return false
-    }
-    private var icon: some View {
-        Image(systemName: systemName)
-            .etFont(.system(size: max(14, circleSize * 0.45), weight: .semibold))
-            .foregroundColor(TelegramColors.attachButtonColor)
-            .frame(width: circleSize, height: circleSize)
-            .contentShape(Circle())
-    }
     var body: some View {
         Button(action: action) {
-            icon.background {
-                ChatComposerCircleBackground(usesLiquidGlass: usesLiquidGlass, tint: tint, stroke: stroke, shadow: shadow)
-            }
+            ChatCircleActionLabel(systemName: systemName, circleSize: circleSize,
+                                  symbolSize: symbolSize, iconColor: iconColor, fill: fill)
         }
-        .buttonStyle(ComposerPressButtonStyle(usesSystemGlassFeedback: usesSystemGlassFeedback))
+        .buttonStyle(ComposerPressButtonStyle())
         .frame(width: max(44, circleSize), height: max(44, circleSize))
         .contentShape(Rectangle())
         .accessibilityLabel(accessibilityLabel)
@@ -165,6 +164,7 @@ struct ChatBackgroundLayer: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var appConfig = AppConfigStore.shared
     let isChatVisible: Bool
+    var updatesDisplayTarget = true
 
     var body: some View {
         GeometryReader { geometry in
@@ -215,7 +215,9 @@ struct ChatBackgroundLayer: View {
                 size: geometry.size, scale: displayScale,
                 fillsBounds: background.backgroundContentMode == "fill"
             )) {
-                background.updateBackgroundDisplayTarget(size: geometry.size, scale: displayScale)
+                if updatesDisplayTarget {
+                    background.updateBackgroundDisplayTarget(size: geometry.size, scale: displayScale)
+                }
             }
         }
     }

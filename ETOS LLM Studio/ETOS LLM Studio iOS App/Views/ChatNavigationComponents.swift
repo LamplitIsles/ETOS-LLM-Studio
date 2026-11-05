@@ -24,25 +24,6 @@ struct ChatNavigationBar<Leading: View, Center: View, Trailing: View>: View {
     }
 }
 
-struct ChatNavigationIconSurface<Content: View>: View {
-    let content: Content
-    let usesLiquidGlass: Bool
-    let tint: Color
-    let strokeColor: Color
-    let lineWidth: CGFloat
-
-    var body: some View {
-        Group {
-            if #available(iOS 26.0, *), usesLiquidGlass {
-                content.background(Circle().fill(tint)).glassEffect(.clear.interactive(), in: Circle())
-            } else {
-                content.background(Circle().fill(.ultraThinMaterial))
-            }
-        }
-        .overlay(Circle().stroke(strokeColor, lineWidth: lineWidth))
-    }
-}
-
 struct ChatNavigationPillSurface<Content: View>: View {
     let content: Content
     let usesLiquidGlass: Bool

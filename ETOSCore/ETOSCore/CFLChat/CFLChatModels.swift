@@ -64,6 +64,8 @@ public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let role: String
     public let text: String
+    /// End offsets of published reply segments, measured in UTF-16 code units.
+    public let ends: [Int]?
     /// Milliseconds since the Unix epoch, as provided by the shared contract.
     public let createdAt: Double
     public let operationId: String?
@@ -121,12 +123,58 @@ public struct CFLImageRef: Codable, Equatable, Sendable, Identifiable {
 }
 public struct CFLStickerIdentity: Codable, Equatable, Sendable {
     public let id: String, version: String
+    public init(id: String, version: String) { self.id = id; self.version = version }
     var valid: Bool {
         !id.isEmpty && id.utf8.count <= 100 && id.utf8.allSatisfy {
             (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
         } && CFLVoiceRef(id: version).valid
     }
 }
+/// A catalog entry has no favorite flag; read the Human favorites pages to derive it.
+public struct CFLSticker: Codable, Equatable, Sendable, Identifiable {
+    public let id: String, version: String, name: String
+    public let tags: [String]
+    public let mediaType: String
+    public let available: Bool
+    public var identity: CFLStickerIdentity { CFLStickerIdentity(id: id, version: version) }
+    var valid: Bool {
+        identity.valid && name.utf16.count <= 160 && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        tags.count <= 32 && Set(tags).count == tags.count && tags.allSatisfy {
+            $0.utf16.count <= 80 && !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } && CFLImageLimits.types.contains(mediaType)
+    }
+}
+public struct CFLStickerPack: Codable, Equatable, Sendable, Identifiable {
+    public let id: String, name: String, description: String
+    public let cover: CFLSticker
+    var valid: Bool {
+        CFLStickerIdentity(id: id, version: String(repeating: "0", count: 64)).valid &&
+        name.utf16.count <= 160 && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        description.utf16.count <= 2000 && cover.valid
+    }
+}
+public struct CFLStickerPage: Codable, Equatable, Sendable {
+    public let stickers: [CFLSticker]
+    public let nextCursor: String?
+}
+/// A cached page is historical; `needsRevalidation` means its cursor and page
+/// boundaries must not be treated as a current, complete ordering.
+public struct CFLFavoriteSnapshot: Codable, Equatable, Sendable {
+    public let page: CFLStickerPage
+    public let needsRevalidation: Bool
+    public init(page: CFLStickerPage, needsRevalidation: Bool) {
+        self.page = page; self.needsRevalidation = needsRevalidation
+    }
+}
+public struct CFLStickerPackPage: Codable, Equatable, Sendable {
+    public let packs: [CFLStickerPack]
+    public let nextCursor: String?
+}
+public struct CFLStickerFavoriteResult: Codable, Equatable, Sendable {
+    public let sticker: CFLSticker
+    public let favorite: Bool
+}
+
 public struct CFLImageLimits: Codable, Equatable, Sendable {
     static let types: Set<String> = ["image/png", "image/jpeg", "image/webp", "image/gif"]
     public let mediaTypes: [String]
@@ -180,6 +228,36 @@ public struct CFLStreamingReply: Codable, Equatable, Sendable, Identifiable {
     /// Milliseconds since the Unix epoch, as provided by the shared contract.
     public let createdAt: Double
     public let text: String
+    /// End offsets of published reply segments, measured in UTF-16 code units.
+    public let ends: [Int]?
+}
+
+/// Slices only at host-provided boundaries; it does not infer Markdown segments.
+public enum CFLReplySegments {
+    static func valid(_ text: String, ends: [Int]) -> Bool {
+        valid(Array(text.utf16), ends: ends)
+    }
+    private static func valid(_ units: [UInt16], ends: [Int]) -> Bool {
+        var previous = 0
+        for end in ends {
+            guard end > previous, end <= units.count else { return false }
+            if end < units.count, (0xD800...0xDBFF).contains(units[end - 1]),
+               (0xDC00...0xDFFF).contains(units[end]) { return false }
+            previous = end
+        }
+        return true
+    }
+    public static func texts(_ text: String, ends: [Int]) throws -> [String] {
+        let units = Array(text.utf16)
+        guard valid(units, ends: ends) else { throw CFLFailure.protocolError }
+        var start = 0
+        var result: [String] = []
+        for end in ends {
+            result.append(String(decoding: units[start..<end], as: UTF16.self))
+            start = end
+        }
+        return result
+    }
 }
 struct CFLView: Decodable, Sendable {
     let version: Int
@@ -207,6 +285,9 @@ struct CFLRetryImageMapping: Decodable, Sendable {
     let images: [Item]
 }
 public enum CFLConnection: Equatable, Sendable { case offline, connecting, online, accessDenied, protocolError }
+/// The supplied directory item is unavailable. HTTP read failures use CFLFailure.
+public enum CFLStickerThumbnailFailure: Error, Equatable, Sendable { case removed }
+
 public enum CFLFailure: Error, Equatable, Sendable { case offline, accessDenied, invalidInput, storage, protocolError, requestFailed, sessionChanged }
 
 /// Classifies the original Markdown destination, before any URL decoding.
@@ -229,6 +310,16 @@ public enum CFLMarkdownImage: Equatable, Sendable {
     }
 }
 public enum CFLPendingStatus: String, Codable, Equatable, Sendable { case unknown, submitted, failed }
+/// Result of this invocation; pending state may subsequently change through reconciliation.
+public enum CFLSendOutcome: Equatable, Sendable {
+    /// This invocation did not send submit. Inspect pending state and resolve any
+    /// storage error before deciding how to handle or retry the original input.
+    case notDispatched
+    /// A submit may have reached the server. Reconcile; never send it again.
+    case unknown
+    case submitted, failed
+}
+public enum CFLSendFailure: Error, Equatable, Sendable { case duplicateOperationId }
 public struct CFLPending: Codable, Equatable, Sendable, Identifiable {
     public var id: String { operationId }
     public let target: String
@@ -243,6 +334,13 @@ public struct CFLPending: Codable, Equatable, Sendable, Identifiable {
     public var images: [CFLImageRef]? = nil
     /// A manually retried failed operation; operationId is the new attempt.
     public var retrySource: String? = nil
+
+    public init(target: String, sessionId: String, operationId: String, text: String, createdAt: Date,
+                dispatched: Bool, status: CFLPendingStatus, images: [CFLImageRef]? = nil, retrySource: String? = nil) {
+        self.target = target; self.sessionId = sessionId; self.operationId = operationId; self.text = text
+        self.createdAt = createdAt; self.dispatched = dispatched; self.status = status
+        self.images = images; self.retrySource = retrySource
+    }
 }
 public struct CFLLocalImageIdentity: Hashable, Sendable {
     public let sessionId: String, originOperationId: String, draftId: String
@@ -253,16 +351,36 @@ public struct CFLLocalImagePreview: Equatable, Sendable, Identifiable {
     public let order: Int
     public let attachmentId: String?
     public let data: Data
+
+    public init(sessionId: String, operationId: String, originOperationId: String, draftId: String,
+                order: Int, attachmentId: String?, data: Data) {
+        self.sessionId = sessionId; self.operationId = operationId; self.originOperationId = originOperationId
+        self.draftId = draftId; self.order = order; self.attachmentId = attachmentId; self.data = data
+    }
 }
 public struct CFLLocalDraft: Equatable, Sendable, Identifiable {
     public var id: String { operationId }
     public let sessionId: String, operationId: String, text: String
     public let images: [CFLLocalImagePreview]
+
+    public init(sessionId: String, operationId: String, text: String, images: [CFLLocalImagePreview]) {
+        self.sessionId = sessionId; self.operationId = operationId; self.text = text; self.images = images
+    }
 }
 /// The first save failed and its outcome could not be read back. No submit was dispatched.
 /// Preserve the input and identity until the pending store can be read again.
 public struct CFLPendingStorageUncertain: Error, Sendable {
     public let pending: CFLPending
+}
+public enum CFLHistoryGapStatus: String, Equatable, Sendable {
+    case pending, loading, error, unavailable
+}
+/// A discontinuity between retained source messages, in the current session.
+public struct CFLHistoryGap: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let afterId: String
+    public var beforeId: String
+    public var status: CFLHistoryGapStatus
 }
 public struct CFLChatState: Sendable {
     public var connection: CFLConnection = .offline
@@ -273,6 +391,7 @@ public struct CFLChatState: Sendable {
     public var name: String = ""
     public var messages: [CFLMessage] = []
     public var before: String?
+    public var historyGaps: [CFLHistoryGap] = []
     public var activeTurnId: String?
     public var streamingReply: CFLStreamingReply?
     public var replyCompletedTurnId: String?

@@ -213,6 +213,19 @@ public enum LiquidGlassTintSetting {
     }
 }
 
+/// The shared radius for the supported chat message bubbles, in points.
+public enum ChatBubbleCornerRadiusSetting {
+    public static let minimum = 0.0
+    public static let maximum = 36.0
+    public static let defaultValue = 18.0
+    public static let step = 1.0
+
+    public static func normalized(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultValue }
+        return min(max(value, minimum), maximum).rounded()
+    }
+}
+
 public enum BackgroundGenerationAudioKeepAliveSettings {
     public static let minimumVolume = 0.05
     public static let maximumVolume = 1.0
@@ -346,6 +359,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case enableChatTopBlurFade = "enableChatTopBlurFade"
     case chatTimelineNavigationEnabled = "chat.timelineNavigation.enabled"
     case enableNoBubbleUI = "enableNoBubbleUI"
+    case chatBubbleCornerRadius = "chat.bubble.cornerRadius"
     case chatScrollAnimationEnabled = "chat.scrollAnimation.enabled"
     case chatScrollAnimationSpringResponse = "chat.scrollAnimation.springResponse"
     case chatScrollAnimationSpringDamping = "chat.scrollAnimation.springDamping"
@@ -378,6 +392,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
     case enableSlashCommands = "chat.slashCommands.enabled"
     case customChatSlashCommands = "chat.slashCommands.custom"
     case iOSHardwareKeyboardReturnSendsMessage = "chat.composer.hardwareKeyboard.returnSendsMessage.iOS"
+    case iOSSoftwareKeyboardReturnSendsMessage = "chat.composer.softwareKeyboard.returnSendsMessage.iOS"
     case chatComposerDraft = "chat.composer.draft"
     case providerDetailGroupByMainstream = "providerDetail.groupByMainstream"
     case backgroundCropTarget = "backgroundCropTarget"
@@ -622,6 +637,8 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
             return .real(0.7)
         case .liquidGlassTintOpacity:
             return .real(LiquidGlassTintSetting.defaultOpacity)
+        case .chatBubbleCornerRadius:
+            return .real(ChatBubbleCornerRadiusSetting.defaultValue)
         case .reasoningPreviewHeightPercent:
             #if os(watchOS)
             return .real(58.0)
@@ -653,7 +670,7 @@ public enum AppConfigKey: String, CaseIterable, Sendable {
              .watchBackgroundLastSource,
              .chatComposerDraft:
             return .text("")
-        case .iOSHardwareKeyboardReturnSendsMessage:
+        case .iOSHardwareKeyboardReturnSendsMessage, .iOSSoftwareKeyboardReturnSendsMessage:
             return .bool(true)
         case .watchAttachmentSourceHistory,
              .watchBackgroundSourceHistory:

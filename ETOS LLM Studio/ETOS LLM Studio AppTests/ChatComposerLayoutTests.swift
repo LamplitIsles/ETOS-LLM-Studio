@@ -1,5 +1,6 @@
 import Testing
 import UIKit
+import SwiftUI
 @testable import ETOS_LLM_Studio_App
 
 @MainActor
@@ -35,5 +36,35 @@ struct ChatComposerLayoutTests {
         input.textContainer.lineFragmentPadding = 0
         input.text = String(repeating: "文字", count: 25)
         #expect(input.fittingHeight(width: 120, maximum: 300) > input.fittingHeight(width: 260, maximum: 300))
+    }
+
+    @Test("屏幕键盘换行设置不影响硬件换行或粘贴")
+    func softwareReturnHonorsSetting() {
+        var submissions = 0
+        let composer = CFLComposerTextView(
+            text: .constant("草稿"), focus: .constant(false), font: .systemFont(ofSize: 16),
+            maximumHeight: 130, hardwareReturnSends: true, softwareReturnSends: true,
+            onSubmit: { submissions += 1 }
+        )
+        let coordinator = composer.makeCoordinator()
+        let input = CFLComposerTextView.InputView()
+        let range = NSRange(location: 0, length: 0)
+
+        #expect(!coordinator.textView(input, shouldChangeTextIn: range, replacementText: "\n"))
+        #expect(submissions == 1)
+        #expect(coordinator.textView(input, shouldChangeTextIn: range, replacementText: "第一行\n第二行"))
+        #expect(submissions == 1)
+
+        input.insertingHardwareNewline = true
+        #expect(coordinator.textView(input, shouldChangeTextIn: range, replacementText: "\n"))
+        input.insertingHardwareNewline = false
+
+        coordinator.parent = CFLComposerTextView(
+            text: .constant("草稿"), focus: .constant(false), font: .systemFont(ofSize: 16),
+            maximumHeight: 130, hardwareReturnSends: true, softwareReturnSends: false,
+            onSubmit: { submissions += 1 }
+        )
+        #expect(coordinator.textView(input, shouldChangeTextIn: range, replacementText: "\n"))
+        #expect(submissions == 1)
     }
 }

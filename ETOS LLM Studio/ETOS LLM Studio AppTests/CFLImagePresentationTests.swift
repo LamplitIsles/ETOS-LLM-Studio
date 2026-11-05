@@ -11,6 +11,94 @@ import Testing
 @MainActor
 @Suite("CFL image presentation")
 struct CFLImagePresentationTests {
+    @Test("Host segments keep the same row identity from preview to completed history")
+    func hostSegmentsKeepTheirIdentity() async throws {
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        let decoder = JSONDecoder()
+        let source = "A😀\r\nB\n尾"
+        let first = "A😀\r\n".utf16.count
+        let second = "A😀\r\nB\n".utf16.count
+        var state = CFLChatState()
+        state.connection = .online
+        state.sessionId = "session"
+        state.sessionRevision = 1
+        state.streamingReply = try decoder.decode(CFLStreamingReply.self, from: JSONSerialization.data(withJSONObject: [
+            "id": "reply", "turnId": "turn", "createdAt": 1, "text": source, "ends": [first, second]
+        ]))
+        model.state = state
+        for _ in 0..<100 where model.visibleReply.count != 2 { try await Task.sleep(for: .milliseconds(5)) }
+        let preview = model.visibleReply
+        #expect(preview.map(\.text) == ["A😀\r\n", "B\n"])
+        state.streamingReply = nil
+        state.messages = try decoder.decode([CFLMessage].self, from: JSONSerialization.data(withJSONObject: [[
+            "id": "reply", "role": "agent", "createdAt": 1, "text": source,
+            "ends": [first, second, source.utf16.count]
+        ]]))
+        model.state = state
+        for _ in 0..<100 where model.visibleMessages.count != 3 { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(model.visibleMessages.count == 3 && preview.count == 2)
+        #expect(model.visibleMessages.map(\.text) == ["A😀\r\n", "B\n", "尾"])
+        #expect(Array(model.visibleMessages.prefix(2).map(\.id)) == preview.map(\.id))
+        #expect(CFLTimelineRow.message(model.visibleMessages[0]).message == CFLTimelineRow.message(preview[0]).message)
+    }
+
+    @Test("History gaps stay between their source rows and retain their identity when loading")
+    func gapRowsFollowSourceBoundaries() async throws {
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        var state = CFLChatState()
+        state.connection = .online
+        state.sessionId = "session"
+        state.sessionRevision = 1
+        state.messages = try JSONDecoder().decode([CFLMessage].self, from: JSONSerialization.data(withJSONObject: [
+            ["id": "older", "role": "user", "createdAt": 1, "text": "older"],
+            ["id": "held", "role": "agent", "createdAt": 2, "text": "unfinished", "ends": []],
+            ["id": "newer", "role": "agent", "createdAt": 2, "text": "newer", "ends": [5]]
+        ]))
+        let id = UUID()
+        state.historyGaps = [CFLHistoryGap(id: id, afterId: "older", beforeId: "held", status: .pending)]
+        model.state = state
+        for _ in 0..<100 where model.timelineRows.count != 3 { try await Task.sleep(for: .milliseconds(5)) }
+        let before = model.timelineRows.map(\.message)
+        try #require(before.count == 3)
+        if case .message(let marker) = model.timelineRows[1] { #expect(marker.historyGap?.id == id) }
+        else { Issue.record("Missing gap marker") }
+        state.historyGaps[0].status = .loading
+        model.state = state
+        for _ in 0..<100 where model.timelineRows.map(\.message) == before { try await Task.sleep(for: .milliseconds(5)) }
+        let after = model.timelineRows.map(\.message)
+        #expect(after.map(\.id) == before.map(\.id))
+        #expect(after[0] == before[0] && after[2] == before[2] && after[1] != before[1])
+        state.messages.removeLast()
+        state.streamingReply = try JSONDecoder().decode(CFLStreamingReply.self, from: JSONSerialization.data(withJSONObject: [
+            "id": "live", "turnId": "turn", "createdAt": 3, "text": "live\n", "ends": [5]
+        ]))
+        state.historyGaps[0].status = .pending
+        model.state = state
+        for _ in 0..<100 where model.visibleReply.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(model.timelineRows.count == 3)
+        if case .message(let marker) = model.timelineRows[1] { #expect(marker.historyGap?.id == id) }
+        else { Issue.record("Gap must precede the live reply") }
+        if case .message(let reply) = model.timelineRows[2] { #expect(reply.id.message == "live") }
+        else { Issue.record("Missing live reply") }
+    }
+
+    @Test("Media captions remain visible without reply segment boundaries")
+    func mediaCaptionsRemainVisible() async throws {
+        let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
+        var state = CFLChatState()
+        state.sessionId = "session"
+        state.messages = try JSONDecoder().decode([CFLMessage].self, from: JSONSerialization.data(withJSONObject: [
+            ["id": "image", "role": "agent", "createdAt": 1, "text": "Image failed", "imageState": "failed"],
+            ["id": "voice", "role": "agent", "createdAt": 2, "text": "**Voice caption**", "voice": ["id": String(repeating: "a", count: 64)]]
+        ]))
+        model.state = state
+        for _ in 0..<100 where model.visibleMessages.count != 3 { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(model.visibleMessages.count == 3)
+        #expect(model.visibleMessages.map(\.text) == ["Image failed", "**Voice caption**", ""])
+        #expect(model.visibleMessages[0].imageState == .failed)
+        #expect(model.visibleMessages[1].markdown && model.visibleMessages[2].voice != nil)
+    }
+
     @Test("Only a definite failure or unsent message needs user action")
     func pendingPresentationDistinguishesUnknownOutcomes() {
         var pending = CFLPending(target: "https://example.invalid", sessionId: "session", operationId: "op",
@@ -53,6 +141,59 @@ struct CFLImagePresentationTests {
         #expect(CFLImageDecoder.needsOriginal(ref("image/webp")))
         #expect(!CFLImageDecoder.needsOriginal(ref("image/png")))
         #expect(!CFLImageDecoder.needsOriginal(ref("image/jpeg")))
+    }
+
+    @Test("Sticker previews keep transparency and show only the first GIF frame")
+    func stickerPreviewsPreserveTransparency() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 1), format: format)
+        let transparent = renderer.image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 1, y: 0, width: 1, height: 1))
+        }
+        let png = try #require(transparent.pngData())
+        let thumbnail = try #require(CFLStickerPreview.firstFrame(png))
+        let image = try #require(thumbnail.cgImage)
+        var pixels = [UInt8](repeating: 0, count: 8)
+        try pixels.withUnsafeMutableBytes { buffer in
+            let bitmap = try #require(CGContext(
+                data: buffer.baseAddress, width: 2, height: 1, bitsPerComponent: 8,
+                bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ))
+            bitmap.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 1))
+        }
+        #expect(pixels[3] == 0)
+        #expect(pixels[7] == 255)
+
+        func frame(_ color: UIColor) -> CGImage {
+            renderer.image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 2, height: 1))
+            }.cgImage!
+        }
+        let bytes = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(bytes, UTType.gif.identifier as CFString, 2, nil))
+        let properties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.15]] as CFDictionary
+        CGImageDestinationAddImage(destination, frame(.red), properties)
+        CGImageDestinationAddImage(destination, frame(.blue), properties)
+        #expect(CGImageDestinationFinalize(destination))
+        let still = try #require(CFLStickerPreview.firstFrame(bytes as Data))
+        #expect(still.images == nil)
+        let first = try #require(still.cgImage)
+        var firstPixel = [UInt8](repeating: 0, count: 8)
+        try firstPixel.withUnsafeMutableBytes { buffer in
+            let bitmap = try #require(CGContext(
+                data: buffer.baseAddress, width: 2, height: 1, bitsPerComponent: 8,
+                bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ))
+            bitmap.draw(first, in: CGRect(x: 0, y: 0, width: 2, height: 1))
+        }
+        #expect(firstPixel[0] > 200 && firstPixel[2] < 50)
+        #expect(CFLStickerPreview.firstFrame(Data([0, 1, 2])) == nil)
     }
 
     @Test("Exyte refreshes a completed image without changing its message identity")
@@ -160,8 +301,9 @@ struct CFLImagePresentationTests {
         state.sessionId = "session"
         state.sessionRevision = 1
         func reply(_ text: String) throws -> CFLStreamingReply {
-            try JSONDecoder().decode(CFLStreamingReply.self, from: JSONSerialization.data(withJSONObject: [
-                "id": "reply", "turnId": "turn", "createdAt": 1, "text": text
+            let ends = text.utf16.enumerated().compactMap { $0.element == 10 ? $0.offset + 1 : nil }
+            return try JSONDecoder().decode(CFLStreamingReply.self, from: JSONSerialization.data(withJSONObject: [
+                "id": "reply", "turnId": "turn", "createdAt": 1, "text": text, "ends": ends
             ]))
         }
         state.streamingReply = try reply("![first](work/a%25.png)\n")
@@ -204,8 +346,8 @@ struct CFLImagePresentationTests {
              "mediaType": "image/png", "availability": "available"]
         }
         let source: [[String: Any]] = [
-            ["id": "image-only", "role": "agent", "text": "", "createdAt": 1, "images": refs],
-            ["id": "mixed", "role": "agent", "text": "First line\nSecond line", "createdAt": 2, "images": refs],
+            ["id": "image-only", "role": "agent", "text": "", "ends": [], "createdAt": 1, "images": refs],
+            ["id": "mixed", "role": "agent", "text": "First line\nSecond line", "ends": [11, 22], "createdAt": 2, "images": refs],
             ["id": "user", "role": "user", "text": "", "createdAt": 3, "images": [refs[0]]]
         ]
         let messages = try JSONDecoder().decode([CFLMessage].self, from: JSONSerialization.data(withJSONObject: source))
@@ -237,7 +379,7 @@ struct CFLImagePresentationTests {
                    "images": [["attachmentId": "photo", "name": "photo.png", "mediaType": "image/png", "availability": "available"]]]
                 : ["id": "image", "role": "agent", "text": "", "createdAt": 2, "imageState": "preparing"]
             let source: [[String: Any]] = [
-                ["id": "text", "role": "agent", "text": "Hello\n", "createdAt": 1, "textState": "streaming"],
+                ["id": "text", "role": "agent", "text": "Hello\n", "ends": [6], "createdAt": 1, "textState": "streaming"],
                 image,
                 ["id": "voice", "role": "agent", "text": "", "createdAt": 3, "voice": ["id": String(repeating: "a", count: 64)]]
             ]
@@ -250,7 +392,7 @@ struct CFLImagePresentationTests {
         state.sessionRevision = 1
         state.messages = try messages(false)
         state.streamingReply = try decoder.decode(CFLStreamingReply.self, from: JSONSerialization.data(withJSONObject: [
-            "id": "text", "turnId": "turn", "createdAt": 1, "text": "Hello\n"
+            "id": "text", "turnId": "turn", "createdAt": 1, "text": "Hello\n", "ends": [6]
         ]))
         model.state = state
         for _ in 0..<100 where model.visibleMessages.count < 3 { try await Task.sleep(for: .milliseconds(5)) }
@@ -317,8 +459,8 @@ struct CFLImagePresentationTests {
         func messages(_ entries: [[String: Any]]) throws -> [CFLMessage] {
             try JSONDecoder().decode([CFLMessage].self, from: JSONSerialization.data(withJSONObject: entries))
         }
-        let before: [String: Any] = ["id": "before", "role": "agent", "text": "Before", "createdAt": 1]
-        let after: [String: Any] = ["id": "after", "role": "agent", "text": "After", "createdAt": 3]
+        let before: [String: Any] = ["id": "before", "role": "agent", "text": "Before", "ends": [6], "createdAt": 1]
+        let after: [String: Any] = ["id": "after", "role": "agent", "text": "After", "ends": [5], "createdAt": 3]
         let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())
         var state = CFLChatState()
         state.connection = .online
@@ -356,7 +498,7 @@ struct CFLImagePresentationTests {
     func restoredPendingDoesNotJumpToTopOrReuseAnotherSession() async throws {
         func message(_ id: String) throws -> CFLMessage {
             try JSONDecoder().decode(CFLMessage.self, from: JSONSerialization.data(withJSONObject: [
-                "id": id, "role": "agent", "text": id, "createdAt": 1
+                "id": id, "role": "agent", "text": id, "ends": [id.utf16.count], "createdAt": 1
             ]))
         }
         func pending(_ operation: String, session: String) -> CFLPending {
@@ -389,7 +531,7 @@ struct CFLImagePresentationTests {
     func laterSendFollowsInterveningReply() async throws {
         func message(_ id: String) throws -> CFLMessage {
             try JSONDecoder().decode(CFLMessage.self, from: JSONSerialization.data(withJSONObject: [
-                "id": id, "role": "agent", "text": id, "createdAt": 1
+                "id": id, "role": "agent", "text": id, "ends": [id.utf16.count], "createdAt": 1
             ]))
         }
         let model = CFLConversationModel(draftChanges: PassthroughSubject<String, Never>().eraseToAnyPublisher())

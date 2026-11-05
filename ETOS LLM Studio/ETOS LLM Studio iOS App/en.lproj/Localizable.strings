@@ -8611,3 +8611,18 @@
 
 "图片生成失败" = "Image generation failed";
 "图片状态未确认" = "Image status unconfirmed";
+
+"气泡圆角" = "Bubble corners";
+"恢复默认圆角" = "Reset bubble corners";
+
+"聊天样例" = "Chat preview";
+"预览用户消息" = "Hello! How does this look?";
+"预览助手消息" = "Here's a **preview** with a formula: $E=mc^2$.";
+
+/* Software keyboard Return behavior */
+"屏幕键盘按发送键发送消息" = "Send with the onscreen keyboard";
+"屏幕键盘" = "Onscreen keyboard";
+"关闭后，键盘右下角用于换行；输入文字后，点击右侧箭头发送。" = "When off, the keyboard inserts a new line. Tap the arrow on the right to send your text.";
+"加载中间的消息" = "Load missing messages";
+"中间的消息加载失败。" = "Could not load the messages in between.";
+"无法继续加载这段消息。" = "These messages cannot be loaded further.";

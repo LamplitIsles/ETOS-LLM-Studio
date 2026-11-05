@@ -10,6 +10,29 @@ public actor CFLChatClient {
     private let store: any CFLPendingStore
     private let transportFactory: TransportFactory
     private let imageHTTP: any CFLImageHTTP
+    private let externalImageLoader: CFLExternalImageLoader
+    private let mediaCache: (any CFLMediaCache)?
+    private var cacheVersions: [String: UUID] = [:]
+    private var cacheReads: [String: Set<UUID>] = [:]
+    private var favoriteEpoch = 0
+    private var favoriteSnapshotBusy = false
+    private var favoriteSnapshotWaiters: [CheckedContinuation<Void, Never>] = []
+    private struct CatalogFlight<Page: Sendable> {
+        let token: UUID, generation: Int, revision: Int, scope: UUID?
+        let favoriteEpoch: Int
+        let task: Task<Page, Error>
+        var waiters: Int
+    }
+    private var stickerPageFlights: [String: CatalogFlight<CFLStickerPage>] = [:]
+    private var stickerPackFlights: [String: CatalogFlight<CFLStickerPackPage>] = [:]
+    private struct FavoriteArchive: Codable, Sendable {
+        struct Entry: Codable, Sendable { let snapshot: CFLFavoriteSnapshot; let stored: Date }
+        var pages: [String: Entry] = [:]
+    }
+    private struct ExternalImageCacheRecord: Codable {
+        // nil delegates expiration entirely to Kingfisher's last-access rule.
+        let freshUntil: Date?
+    }
     private var requestTimeout: @Sendable (String) async throws -> Void = { _ in try await Task.sleep(nanoseconds: 30_000_000_000) }
     private var entries: [CFLPending] = []
     private var loaded = false
@@ -20,6 +43,7 @@ public actor CFLChatClient {
     private var retirementRequested = false
     private var retirementRunning = false
     private var state = CFLChatState()
+    private var suppressPublications = false
     private var errorRevision = 0
     private var observers: [UUID: AsyncStream<CFLChatState>.Continuation] = [:]
     private var transport: (any CFLChatTransport)?
@@ -38,15 +62,15 @@ public actor CFLChatClient {
     private var historyLoadingID: UUID?
     private var historyRevision = 0
     private var historyLoaded = false
-    private var historyDirty = false
-    private var historyErrorRevision: Int?
-    private var historyTask: Task<Void, Never>?
-    private var historyTaskID: UUID?
-    private var historyPatches: [String: CFLMessage] = [:]
-    private var historyPatchBytes = 0
-    private var queuedTimeline: [ChordJSON] = []
-    private var queuedTimelineBytes = 0
-    private var queuedTimelineReset = false
+    private struct HistoryGapWork {
+        var gap: CFLHistoryGap
+        var cursor: String?
+        var visited: Set<String>
+    }
+    private var gaps: [HistoryGapWork] = []
+    private var historySources: Set<String> = []
+    private var unconfirmedInputs: Set<String> = []
+    private var lastLiveMessages: [CFLMessage] = []
     private struct CheckKey: Hashable {
         let generation: Int
         let sessionRevision: Int
@@ -58,16 +82,119 @@ public actor CFLChatClient {
     private var finalized: Set<CheckKey> = []
     private var submitting: Set<String> = []
     private var sending = false
+    private var usedSendOperations: Set<UUID> = []
     private var olderMessages: [CFLMessage] = []
     private var latestMessages: [CFLMessage] = []
     private var latestBefore: String?
+    private struct ThumbnailKey: Hashable {
+        let session: String, id: String, version: String
+    }
+    private struct ThumbnailEntry {
+        let data: Data, etag: String?
+        var used: UInt64
+    }
+    private struct ThumbnailFlight {
+        let token: UUID, generation: Int, revision: Int, scope: UUID?
+        let task: Task<Data, Error>
+        var waiters: Int
+    }
+    private var thumbnailScope: UUID?
+    private var thumbnails: [ThumbnailKey: ThumbnailEntry] = [:]
+    private var thumbnailFlights: [ThumbnailKey: ThumbnailFlight] = [:]
+    private var thumbnailClock: UInt64 = 0
+    private let thumbnailByteLimit = 5 * 1024 * 1024
+    private let thumbnailCountLimit = 128
+    private func clearThumbnails() {
+        for flight in thumbnailFlights.values { flight.task.cancel() }
+        thumbnails.removeAll(); thumbnailFlights.removeAll(); thumbnailScope = nil
+    }
+    private func cancelThumbnailFlight(_ key: ThumbnailKey) {
+        thumbnailFlights.removeValue(forKey: key)?.task.cancel()
+    }
+    private func finishThumbnailWaiter(_ key: ThumbnailKey, token: UUID) {
+        guard var flight = thumbnailFlights[key], flight.token == token else { return }
+        flight.waiters -= 1
+        if flight.waiters == 0 { thumbnailFlights.removeValue(forKey: key) }
+        else { thumbnailFlights[key] = flight }
+    }
+    // Internal observation seam for deterministic fake-transport concurrency checks.
+    func thumbnailWaiterCount(_ sticker: CFLSticker, session: String) -> Int {
+        thumbnailFlights[ThumbnailKey(session: session, id: sticker.id, version: sticker.version)]?.waiters ?? 0
+    }
+    // Internal observation seam for deterministic fake-transport concurrency checks.
+    func favoritePageWaiterCount(session: String, cursor: String? = nil, limit: Int = 30, query: String? = nil) -> Int {
+        guard let request = try? stickerRequest(path: "favorites", session: session, cursor: cursor, limit: limit, query: query),
+              let url = request.url else { return 0 }
+        return stickerPageFlights[cacheKey("catalog", session: session, parts: [url.absoluteString])]?.waiters ?? 0
+    }
+    func stickerPackWaiterCount(session: String) -> Int {
+        guard let request = try? stickerRequest(path: "packs", session: session, cursor: nil, limit: 30, query: nil),
+              let url = request.url else { return 0 }
+        return stickerPackFlights[cacheKey("catalog", session: session, parts: [url.absoluteString])]?.waiters ?? 0
+    }
+
 
     /// target is a stable, credential-free identifier for the connection; use one active client per store.
-    public init(target: String, store: any CFLPendingStore, imageHTTP: any CFLImageHTTP = CFLImageURLSession.shared, transport: @escaping TransportFactory) {
-        self.target = target; self.store = store; self.imageHTTP = imageHTTP; self.transportFactory = transport
+    public init(target: String, store: any CFLPendingStore, imageHTTP: any CFLImageHTTP = CFLImageURLSession.shared, mediaCache: (any CFLMediaCache)? = nil, externalImageLoader: CFLExternalImageLoader = CFLExternalImageLoader(), transport: @escaping TransportFactory) {
+        self.target = target; self.store = store; self.imageHTTP = imageHTTP; self.mediaCache = mediaCache; self.externalImageLoader = externalImageLoader; self.transportFactory = transport
     }
     init(target: String, store: any CFLPendingStore, requestTimeout: @escaping @Sendable (String) async throws -> Void, transport: @escaping TransportFactory) {
-        self.target = target; self.store = store; self.imageHTTP = CFLImageURLSession.shared; self.transportFactory = transport; self.requestTimeout = requestTimeout
+        self.target = target; self.store = store; self.imageHTTP = CFLImageURLSession.shared; self.mediaCache = nil; self.externalImageLoader = CFLExternalImageLoader(); self.transportFactory = transport; self.requestTimeout = requestTimeout
+    }
+    private func cacheKey(_ kind: String, session: String, parts: [String]) -> String {
+        // Encoding an array avoids ambiguity between caller-supplied components.
+        let bytes = (try? JSONEncoder().encode([target, session, kind] + parts)) ?? Data()
+        return String(decoding: bytes, as: UTF8.self)
+    }
+    private static func supportedImageBytes(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        return bytes.starts(with: [255, 216, 255]) || bytes.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) ||
+            bytes.starts(with: Array("GIF87a".utf8)) || bytes.starts(with: Array("GIF89a".utf8)) ||
+            (bytes.count >= 12 && bytes.starts(with: Array("RIFF".utf8)) && Array(bytes[8..<12]) == Array("WEBP".utf8))
+    }
+    private func cacheAuthority() async -> UUID? {
+        guard mediaCache != nil, let authority = imageHTTP as? any CFLStickerCacheAuthority else { return nil }
+        // Runtime identity checks prevent an old client from displaying a value;
+        // the persistent key itself remains stable across login to this origin.
+        return try? await authority.stickerThumbnailScope()
+    }
+    private func cacheRead(_ key: String, session: String, revision: Int, current: Int) async throws -> Data? {
+        guard let cache = mediaCache, let scope = await cacheAuthority() else { return nil }
+        try thumbnailContext(session, revision, generation: current)
+        let version = cacheVersions[key], readID = UUID()
+        cacheReads[key, default: []].insert(readID)
+        defer {
+            cacheReads[key]?.remove(readID)
+            if cacheReads[key]?.isEmpty == true { cacheReads.removeValue(forKey: key) }
+        }
+        let data = try? await cache.read(key: key)
+        try thumbnailContext(session, revision, generation: current)
+        guard await cacheAuthority() == scope, cacheVersions[key] == version, cacheReads[key]?.contains(readID) == true else { return nil }
+        try thumbnailContext(session, revision, generation: current)
+        return data
+    }
+    @discardableResult private func cacheWrite(_ data: Data, key: String, session: String, revision: Int,
+                            current: Int, version: UUID, withoutExpiry: Bool = false) async -> Bool {
+        guard let cache = mediaCache, cacheVersions[key] == version,
+              await cacheAuthority() != nil, cacheVersions[key] == version,
+              (try? thumbnailContext(session, revision, generation: current)) != nil else { return false }
+        cacheReads.removeValue(forKey: key)
+        do { try await cache.write(data, key: key, withoutExpiry: withoutExpiry); return true }
+        catch { return false }
+    }
+    private func cacheRemove(_ key: String) async {
+        let version = UUID(); cacheVersions[key] = version; cacheReads.removeValue(forKey: key)
+        defer { if cacheVersions[key] == version { cacheVersions.removeValue(forKey: key) } }
+        guard let cache = mediaCache, await cacheAuthority() != nil else { return }
+        try? await cache.remove(key: key)
+    }
+    private func acquireFavoriteSnapshot() async {
+        if !favoriteSnapshotBusy { favoriteSnapshotBusy = true; return }
+        await withCheckedContinuation { favoriteSnapshotWaiters.append($0) }
+    }
+    private func releaseFavoriteSnapshot() {
+        if favoriteSnapshotWaiters.isEmpty { favoriteSnapshotBusy = false }
+        else { favoriteSnapshotWaiters.removeFirst().resume() }
     }
     public func currentState() -> CFLChatState { state }
     public func states() -> AsyncStream<CFLChatState> {
@@ -79,7 +206,7 @@ public actor CFLChatClient {
         }
     }
     private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
-    private func publish() { for observer in observers.values { observer.yield(state) } }
+    private func publish() { if !suppressPublications { for observer in observers.values { observer.yield(state) } } }
     private func setError(_ error: CFLFailure?) {
         errorRevision += 1
         state.error = error
@@ -118,6 +245,11 @@ public actor CFLChatClient {
         }
         retirementRequested = false
         let observed = Set(state.messages.filter { $0.role == "user" }.compactMap(\.operationId))
+        for message in state.messages where message.role == "user" && !historySources.contains(message.id) {
+            if let operation = message.operationId, entries.contains(where: { $0.target == target && $0.sessionId == session && $0.operationId == operation }) {
+                unconfirmedInputs.insert(operation)
+            }
+        }
         let next = entries.filter { entry in
             !(entry.target == target && entry.sessionId == session && entry.status == .submitted && observed.contains(entry.operationId))
         }
@@ -182,6 +314,7 @@ public actor CFLChatClient {
         retirementRequested = false
         await disconnected(CFLFailure.offline, reconnect: false)
         if writing { await withCheckedContinuation { storeDrainWaiters.append($0) } }
+        clearThumbnails()
         state.localDrafts.removeAll(); state.localPreviews.removeAll(); publish()
         disconnecting = false
         let waiters = disconnectWaiters; disconnectWaiters.removeAll()
@@ -194,29 +327,24 @@ public actor CFLChatClient {
         state.connection = .connecting; publish()
         let socket = try await transportFactory()
         guard active && generation == current else { await socket.close(); throw CFLFailure.offline }
-        transport = socket; chord = ChordState(); subscribed = false; queuedUpdates = []; queuedTimeline = []; queuedTimelineBytes = 0; queuedTimelineReset = false
+        transport = socket; chord = ChordState(); subscribed = false
+        queuedUpdates = []
         receiveTask = Task { [weak self] in await self?.receiveLoop(socket, generation: current) }
         let snapshot = try await call(service: "$chord.service", method: "subscribe", args: [.string("view"), .string("lamplit.chat.v2"), .string("singleton")])
         guard generation == current else { throw CFLFailure.offline }
         try chord.hydrate(snapshot)
         subscribed = true
-        for update in queuedUpdates {
-            try chord.update(update)
-            if update.object?["type"]?.string == "reset" { queuedTimelineReset = true }
-        }
-        queuedUpdates.removeAll()
-        try applyView()
+        suppressPublications = true
+        do {
+            try applyView()
+            for update in queuedUpdates {
+                try chord.update(update)
+                try applyView()
+            }
+        } catch { suppressPublications = false; throw error }
+        suppressPublications = false
+        queuedUpdates = []
         state.connection = .online; publish()
-        if state.historySyncFailed {
-            state.historySyncFailed = false
-            if let revision = historyErrorRevision { clearError(since: revision, only: .requestFailed) }
-            historyErrorRevision = nil
-            publish()
-        }
-        if queuedTimelineReset { requestHistorySync() }
-        for event in queuedTimeline { try applyTimeline(event) }
-        queuedTimeline = []; queuedTimelineBytes = 0; queuedTimelineReset = false
-        requestHistorySync()
         if state.error != .storage { clearError(since: previousError) }
         requestRetirement()
         requestReconcile(publication: true)
@@ -232,20 +360,13 @@ public actor CFLChatClient {
                 if type == "update" {
                     guard frame["subscriptionId"]?.string == "view", let update = frame["update"] else { throw CFLFailure.protocolError }
                     if subscribed {
-                        try chord.update(update); try applyView()
-                        if update.object?["type"]?.string == "reset" {
-                            historyPatches.removeAll(); historyPatchBytes = 0
-                            requestHistorySync()
-                        }
+                        try chord.update(update)
+                        try applyView()
                         requestReconcile(publication: true)
                     }
-                    else { guard queuedUpdates.count < 100 else { throw CFLFailure.protocolError }; queuedUpdates.append(update) }
-                } else if type == "timeline" {
-                    if subscribed { try applyTimeline(.object(frame)) }
                     else {
-                        if queuedTimeline.count >= 100 || queuedTimelineBytes + data.count > 1_048_576 {
-                            queuedTimeline = []; queuedTimelineBytes = 0; queuedTimelineReset = true
-                        } else if !queuedTimelineReset { queuedTimeline.append(.object(frame)); queuedTimelineBytes += data.count }
+                        guard queuedUpdates.count < 100 else { throw CFLFailure.protocolError }
+                        queuedUpdates.append(update)
                     }
                 } else if type == "result" || type == "error" {
                     guard let id = frame["id"]?.string else { throw CFLFailure.protocolError }
@@ -261,14 +382,16 @@ public actor CFLChatClient {
     }
     private func disconnected(_ error: Error, reconnect: Bool) async {
         generation += 1; receiveTask?.cancel(); receiveTask = nil
-        historyTask?.cancel(); historyTask = nil; historyTaskID = nil; historyPatches.removeAll(); historyPatchBytes = 0
         historyLoading = false; historyLoadingID = nil
+        for index in gaps.indices where gaps[index].gap.status == .loading { gaps[index].gap.status = .pending }
+        state.historyGaps = gaps.map(\.gap)
         deadlineTask?.cancel(); deadlineTask = nil
         checks.removeAll(); finalized.removeAll()
         let old = transport; transport = nil
         for continuation in calls.values { continuation.resume(throwing: CFLFailure.offline) }; calls.removeAll()
         for timer in timeouts.values { timer.cancel() }; timeouts.removeAll()
-        subscribed = false; chord = ChordState(); queuedUpdates = []; queuedTimeline = []; queuedTimelineBytes = 0; queuedTimelineReset = false
+        subscribed = false; chord = ChordState()
+        queuedUpdates = []
         let failure: CFLFailure?
         if let authorization = error as? CFLAuthorizationError {
             switch authorization {
@@ -277,6 +400,19 @@ public actor CFLChatClient {
             default: failure = .offline
             }
         } else { failure = error as? CFLFailure }
+        if failure == .accessDenied {
+            // A persisted pending refresh can also surface as accessDenied even
+            // though its network outcome is unknown. Only the authority can
+            // distinguish that case from confirmed loss of authorization.
+            let current = generation
+            do {
+                if let scope = try await thumbnailAuthority() {
+                    guard generation == current else { return }
+                    adoptThumbnailScope(scope)
+                } else { clearThumbnails() }
+            } catch { /* thumbnailAuthority evicts only confirmed denial. */ }
+            guard generation == current else { return }
+        }
         state.connection = failure == .accessDenied ? .accessDenied : failure == .protocolError || error is ChordError ? .protocolError : .offline
         if failure == .storage { setError(.storage) }
         else if state.error != .storage { setError(nil) }
@@ -338,17 +474,64 @@ public actor CFLChatClient {
     }
     private func validMessageWire(_ raw: ChordJSON) -> Bool {
         guard let fields = raw.object,
-              Set(fields.keys).isSubset(of: Set(["id", "role", "text", "createdAt", "operationId", "turnId", "images", "imageState", "textState", "voice", "source", "thinking"])),
+              Set(fields.keys).isSubset(of: Set(["id", "role", "text", "ends", "createdAt", "operationId", "turnId", "images", "imageState", "textState", "voice", "source", "thinking"])),
               let id = fields["id"]?.string, !id.isEmpty, id.utf16.count <= 300,
-              fields["role"]?.string != nil, fields["text"]?.string != nil,
+              let role = fields["role"]?.string, let text = fields["text"]?.string,
               fields["operationId"] == .null || fields["operationId"]?.string != nil,
               fields["turnId"] == .null || fields["turnId"]?.string != nil else { return false }
+        let isReply = role == "agent" && fields["source"] == nil && fields["imageState"] == nil && fields["voice"] == nil
+        guard validReplyEnds(fields["ends"], text: text, required: isReply) else { return false }
         if let images = fields["images"] { guard let items = images.array, items.allSatisfy(validImageWire) else { return false } }
         if let imageState = fields["imageState"] { guard let value = imageState.string, CFLImageState(rawValue: value) != nil else { return false } }
         if let textState = fields["textState"] { guard let value = textState.string, CFLTextState(rawValue: value) != nil else { return false } }
         if let voice = fields["voice"] { guard let value = voice.object, Set(value.keys) == Set(["id"]), let id = value["id"]?.string, CFLVoiceRef(id: id).valid else { return false } }
         if let thinking = fields["thinking"], thinking.string == nil { return false }
         return true
+    }
+    private func validReplyEnds(_ raw: ChordJSON?, text: String, required: Bool) -> Bool {
+        guard let raw else { return !required }
+        guard raw.array != nil, let ends = try? decode([Int].self, raw),
+              CFLReplySegments.valid(text, ends: ends) else { return false }
+        return true
+    }
+    private func validStreamingReplyWire(_ raw: ChordJSON?) -> Bool {
+        guard let raw else { return true }
+        guard let fields = raw.object, Set(fields.keys).isSubset(of: Set(["id", "turnId", "createdAt", "text", "ends"])),
+              let id = fields["id"]?.string, !id.isEmpty, id.utf16.count <= 300,
+              fields["turnId"] == .null || fields["turnId"]?.string != nil,
+              let text = fields["text"]?.string else { return false }
+        return validReplyEnds(fields["ends"], text: text, required: true)
+    }
+    // A view can temporarily omit an interior or trailing item. Keep its last
+    // position until a later view or history establishes the structure.
+    private func mergeWindow(_ incoming: [CFLMessage], before: String?) -> (older: [CFLMessage], latest: [CFLMessage], ambiguous: Bool) {
+        let previous = olderMessages + latestMessages
+        guard !previous.isEmpty else { return ([], incoming, false) }
+        guard !incoming.isEmpty else { return (olderMessages, latestMessages, !latestMessages.isEmpty) }
+        let oldIDs = Set(previous.map(\.id)), newIDs = Set(incoming.map(\.id))
+        guard let firstShared = previous.firstIndex(where: { newIDs.contains($0.id) }) else { return (previous, incoming, true) }
+        let priorShared = previous.filter { newIDs.contains($0.id) }.map(\.id)
+        let incomingShared = incoming.filter { oldIDs.contains($0.id) }.map(\.id)
+        let lastShared = incoming.lastIndex(where: { oldIDs.contains($0.id) })!
+        let newTail = incoming.dropFirst(lastShared + 1).contains { !oldIDs.contains($0.id) }
+        let prefixAdvanced = before != latestBefore || newTail
+        let split = prefixAdvanced ? firstShared : min(firstShared, olderMessages.count)
+        let prefix = Array(previous.prefix(split)), suffix = Array(previous.dropFirst(split))
+        var beforeItems: [String: [CFLMessage]] = [:], afterItems: [String: [CFLMessage]] = [:]
+        var missing: [CFLMessage] = [], lastAnchor: String?
+        for old in suffix {
+            if newIDs.contains(old.id) {
+                beforeItems[old.id, default: []].append(contentsOf: missing)
+                missing.removeAll(keepingCapacity: true); lastAnchor = old.id
+            } else { missing.append(old) }
+        }
+        if let lastAnchor { afterItems[lastAnchor, default: []].append(contentsOf: missing) }
+        var merged: [CFLMessage] = []
+        for message in incoming {
+            merged.append(contentsOf: beforeItems[message.id] ?? []); merged.append(message)
+            merged.append(contentsOf: afterItems[message.id] ?? [])
+        }
+        return (prefix, merged, priorShared != incomingShared || suffix.contains { !newIDs.contains($0.id) })
     }
     private func applyView() throws {
         guard let value = chord.value, let fields = value.object,
@@ -359,6 +542,8 @@ public actor CFLChatClient {
         let view = try decode(CFLView.self, value)
         guard view.version == 2, !view.sessionId.isEmpty, view.messages.count <= 30,
               let rawMessages = fields["messages"]?.array, rawMessages.allSatisfy(validMessageWire),
+              validStreamingReplyWire(fields["streamingReply"]),
+              view.streamingReply?.createdAt.isFinite ?? true,
               Set(view.messages.map(\.id)).count == view.messages.count,
               view.messages.allSatisfy(\.valid) else { throw CFLFailure.protocolError }
         var imageLimits: CFLImageLimits?
@@ -369,140 +554,64 @@ public actor CFLChatClient {
         }
         let changedSession = state.sessionId != view.sessionId
         if changedSession {
-            sessionRevision += 1
-            state.sessionRevision = sessionRevision
-            historyTask?.cancel(); historyTask = nil; historyTaskID = nil
+            sessionRevision += 1; state.sessionRevision = sessionRevision
+            historyRevision += 1; historyLoaded = false
             historyLoading = false; historyLoadingID = nil
+            olderMessages = []; latestMessages = []; lastLiveMessages = []; latestBefore = nil
+            gaps = []; state.historyGaps = []; historySources = []; unconfirmedInputs = []
+            state.before = view.before; state.historySyncFailed = false
             deadlineTask?.cancel(); deadlineTask = nil
             checks.removeAll(); finalized.removeAll()
-            historyDirty = false; historyPatches.removeAll(); historyPatchBytes = 0; state.historySyncFailed = false; historyErrorRevision = nil
             state.localDrafts.removeAll(); state.localPreviews.removeAll()
         }
-        let latest = Set(view.messages.map(\.id))
-        // Preserve a same-session window while paging back to prove continuity.
-        let hasHistory = historyLoaded || !olderMessages.isEmpty || !latestMessages.isEmpty
-        let overlaps = (olderMessages + latestMessages).contains { latest.contains($0.id) }
-        // An empty projection has no IDs to establish continuity. Compare the
-        // server's anchor, not the independently advanced history cursor.
-        let emptyAnchorChanged = latestMessages.isEmpty && view.messages.isEmpty && latestBefore != view.before
-        let lostContinuity = (hasHistory && !overlaps && (!view.messages.isEmpty || !latestMessages.isEmpty)) || emptyAnchorChanged
-        if changedSession || (lostContinuity && !historyLoaded && olderMessages.isEmpty && latestMessages.isEmpty) {
-            historyRevision += 1
-            historyLoaded = false
-            olderMessages = []; latestMessages = []; state.before = view.before
-        } else if lostContinuity {
-            historyRevision += 1
-            historyDirty = true
+        let incoming = view.messages
+        if !changedSession {
+            // An empty live projection does not erase the last retained window.
+            let previousLive = lastLiveMessages.isEmpty ? latestMessages : lastLiveMessages
+            let oldIDs = Set(previousLive.map(\.id)), newIDs = Set(incoming.map(\.id))
+            let localPending = Set(entries.filter { $0.target == target && $0.sessionId == view.sessionId }.map(\.operationId))
+            func eligible(_ message: CFLMessage) -> Bool {
+                guard let operation = message.operationId else { return true }
+                return !localPending.contains(operation) && !unconfirmedInputs.contains(operation)
+            }
+            let oldWindow = previousLive.filter(eligible), newWindow = incoming.filter(eligible)
+            let overlap: Bool
+            if let first = newWindow.first, let index = oldWindow.firstIndex(where: { $0.id == first.id }) {
+                let suffix = oldWindow[index...].map(\.id)
+                overlap = suffix.count <= newWindow.count && suffix.elementsEqual(newWindow.prefix(suffix.count).map(\.id))
+            } else { overlap = false }
+            let oldTail = previousLive.last(where: { !newIDs.contains($0.id) && eligible($0) })
+                ?? (olderMessages + latestMessages).last(where: { !newIDs.contains($0.id) && eligible($0) })
+            let newHead = incoming.first(where: { !oldIDs.contains($0.id) && eligible($0) })
+            if !overlap, let oldTail, let newHead {
+                let gap = CFLHistoryGap(id: UUID(), afterId: oldTail.id, beforeId: newHead.id,
+                                        status: view.before == nil ? .unavailable : .pending)
+                gaps.append(HistoryGapWork(gap: gap, cursor: view.before, visited: Set(view.before.map { [$0] } ?? [])))
+                state.historyGaps = gaps.map(\.gap)
+            }
+            if historyLoading && olderMessages.isEmpty && !historyLoaded && latestBefore != view.before {
+                historyRevision += 1
+            }
         }
-        var seen = Set<String>()
-        olderMessages = (olderMessages + latestMessages.filter { !latest.contains($0.id) }).filter { !latest.contains($0.id) && seen.insert($0.id).inserted }
-        latestMessages = view.messages
+        lastLiveMessages = incoming
+        let window = mergeWindow(incoming, before: view.before)
+        olderMessages = window.older; latestMessages = window.latest
         latestBefore = view.before
-        if olderMessages.isEmpty && !historyLoaded { state.before = view.before }
-        state.messages = olderMessages + view.messages
+        if olderMessages.isEmpty && !historyLoaded && (!incoming.isEmpty || latestMessages.isEmpty) { state.before = view.before }
+        state.messages = olderMessages + latestMessages
         state.sessionId = view.sessionId; state.name = view.name; state.activeTurnId = view.activeTurnId; state.streamingReply = view.streamingReply; state.replyCompletedTurnId = view.replyCompletedTurnId
         state.imageLimits = imageLimits
         showPending(); publish(); requestRetirement()
-        if historyDirty { requestHistorySync() }
     }
-    private func applyTimeline(_ value: ChordJSON) throws {
-        guard let frame = value.object, Set(frame.keys) == Set(["type", "sessionId", "change"]),
-              frame["type"]?.string == "timeline", let session = frame["sessionId"]?.string, !session.isEmpty,
-              let change = frame["change"]?.object, let type = change["type"]?.string else { throw CFLFailure.protocolError }
-        guard session == state.sessionId else { return }
-        if type == "structure" {
-            guard Set(change.keys) == Set(["type"]) else { throw CFLFailure.protocolError }
-            // The next history scan supersedes older deltas; retain later items.
-            historyPatches.removeAll(); historyPatchBytes = 0
-            requestHistorySync(); return
-        }
-        guard type == "item", Set(change.keys) == Set(["type", "message"]), let raw = change["message"] else { throw CFLFailure.protocolError }
-        let message = try decode(CFLMessage.self, raw)
-        guard validMessageWire(raw), message.valid else { throw CFLFailure.protocolError }
-        if historyTask != nil || historyLoading {
-            let size = try JSONEncoder().encode(raw).count
-            if historyPatches.count >= 100 || historyPatchBytes + size > 1_048_576 {
-                historyPatches.removeAll(); historyPatchBytes = 0; historyDirty = true
-            } else { historyPatches[message.id] = message; historyPatchBytes += size }
-        }
-        var changed = false
-        if let index = olderMessages.firstIndex(where: { $0.id == message.id }) { olderMessages[index] = message; changed = true }
-        if let index = latestMessages.firstIndex(where: { $0.id == message.id }) { latestMessages[index] = message; changed = true }
-        if changed { state.messages = olderMessages + latestMessages; publish() }
-    }
-    private func requestHistorySync() {
-        guard historyLoaded || !olderMessages.isEmpty || historyLoading else { return }
-        historyDirty = true
-        guard active, !disconnecting, state.connection == .online, !historyLoading, historyTask == nil,
-              !state.historySyncFailed, let session = state.sessionId else { return }
-        let id = UUID(), current = generation, revision = sessionRevision
-        historyTaskID = id
-        historyTask = Task { [weak self] in await self?.syncHistory(id: id, generation: current, sessionRevision: revision, session: session) }
-    }
-    private func syncHistory(id: UUID, generation current: Int, sessionRevision version: Int, session: String) async {
-        defer {
-            if historyTaskID == id {
-                historyTask = nil; historyTaskID = nil
-                if historyDirty && !state.historySyncFailed { requestHistorySync() }
-            }
-        }
-        while historyDirty && active && !disconnecting && generation == current && sessionRevision == version && state.sessionId == session {
-            historyDirty = false
-            let revision = historyRevision, boundary = olderMessages.first?.id, throughEnd = state.before == nil
-            let startCursor = latestBefore, liveIDs = latestMessages.map(\.id)
-            let knownCursor = state.before
-            var cursor = startCursor, nextBefore = cursor
-            var found = boundary == nil && knownCursor == startCursor
-            var visited = Set<String>(), collected: [CFLMessage] = []
-            do {
-                while let currentCursor = cursor, throughEnd || !found {
-                    guard visited.insert(currentCursor).inserted else { throw CFLFailure.protocolError }
-                    let raw = try await call(method: "history", args: [.string(currentCursor)])
-                    guard raw.object?["before"] != nil else { throw CFLFailure.protocolError }
-                    let page = try decode(CFLPage.self, raw)
-                    guard page.messages.count <= 30, raw.object?["messages"]?.array?.allSatisfy(validMessageWire) == true, page.messages.allSatisfy(\.valid),
-                          Set(page.messages.map(\.id)).count == page.messages.count else { throw CFLFailure.protocolError }
-                    guard active, !disconnecting, generation == current, sessionRevision == version, state.sessionId == session else { return }
-                    if historyRevision != revision { historyDirty = true; break }
-                    collected = page.messages + collected; nextBefore = page.before
-                    if let boundary, page.messages.contains(where: { $0.id == boundary }) { found = true }
-                    if boundary == nil && page.before == knownCursor { found = true }
-                    cursor = page.before
-                    if !throughEnd && found { break }
-                }
-                guard active, !disconnecting, generation == current, sessionRevision == version, state.sessionId == session else { return }
-                if historyRevision != revision || latestBefore != startCursor || latestMessages.map(\.id) != liveIDs { historyDirty = true }
-                if historyDirty { continue }
-                if !found && !(boundary.map { id in latestMessages.contains(where: { $0.id == id }) } ?? false) { throw CFLFailure.protocolError }
-                let latest = Set(latestMessages.map(\.id)); var seen = Set<String>()
-                olderMessages = collected.compactMap { message in
-                    guard !latest.contains(message.id), seen.insert(message.id).inserted else { return nil }
-                    return historyPatches[message.id] ?? message
-                }
-                historyPatches.removeAll(); historyPatchBytes = 0
-                state.before = nextBefore; state.messages = olderMessages + latestMessages
-                state.historySyncFailed = false; publish(); requestRetirement()
-            } catch {
-                guard active, !disconnecting, generation == current, sessionRevision == version, state.sessionId == session else { return }
-                historyDirty = true; state.historySyncFailed = true; setError(.requestFailed); historyErrorRevision = errorRevision; publish(); return
-            }
-        }
-    }
-    public func retryHistory() {
+    /// Retry the top-of-history page after an explicit user action.
+    public func retryHistory() async {
         state.historySyncFailed = false
-        if let revision = historyErrorRevision { clearError(since: revision, only: .requestFailed) }
-        historyErrorRevision = nil
-        requestHistorySync(); publish()
+        publish()
+        try? await loadEarlier()
     }
     public func loadEarlier() async throws {
         guard state.connection == .online, let session = state.sessionId else { throw CFLFailure.offline }
         let current = generation, sessionVersion = sessionRevision
-        while let task = historyTask {
-            await task.value
-            try Task.checkCancellation()
-            guard generation == current, sessionRevision == sessionVersion, state.sessionId == session else { throw CFLFailure.sessionChanged }
-        }
-        if state.historySyncFailed { throw CFLFailure.requestFailed }
         guard !historyLoading, let before = state.before else { return }
         let revision = historyRevision
         let loadingID = UUID()
@@ -510,20 +619,95 @@ public actor CFLChatClient {
         defer {
             if historyLoadingID == loadingID {
                 historyLoading = false; historyLoadingID = nil
-                if historyDirty { requestHistorySync() }
             }
         }
-        let raw = try await call(method: "history", args: [.string(before)])
-        try Task.checkCancellation()
-        guard raw.object?["before"] != nil else { throw CFLFailure.protocolError }
-        let page: CFLPage = try decode(CFLPage.self, raw)
-        guard state.sessionId == session, generation == current, sessionRevision == sessionVersion,
-              historyRevision == revision else { throw CFLFailure.sessionChanged }
-        guard page.messages.count <= 30, raw.object?["messages"]?.array?.allSatisfy(validMessageWire) == true, page.messages.allSatisfy(\.valid), Set(page.messages.map(\.id)).count == page.messages.count else { throw CFLFailure.protocolError }
-        let ids = Set(state.messages.map(\.id)); let added = page.messages.filter { !ids.contains($0.id) }.map { historyPatches[$0.id] ?? $0 }
-        historyPatches.removeAll(); historyPatchBytes = 0
-        olderMessages = added + olderMessages; state.messages = added + state.messages
-        historyLoaded = true; state.before = page.before; publish(); requestRetirement()
+        do {
+            let raw = try await call(method: "history", args: [.string(before)])
+            try Task.checkCancellation()
+            guard raw.object?["before"] != nil else { throw CFLFailure.protocolError }
+            let page: CFLPage = try decode(CFLPage.self, raw)
+            guard state.sessionId == session, generation == current, sessionRevision == sessionVersion,
+                  historyRevision == revision else { throw CFLFailure.sessionChanged }
+            guard page.messages.count <= 30, raw.object?["messages"]?.array?.allSatisfy(validMessageWire) == true, page.messages.allSatisfy(\.valid), Set(page.messages.map(\.id)).count == page.messages.count else { throw CFLFailure.protocolError }
+            let ids = Set(state.messages.map(\.id)); let added = page.messages.filter { !ids.contains($0.id) }
+            olderMessages = added + olderMessages; state.messages = added + state.messages
+            noteHistory(page.messages)
+            historyLoaded = true; state.before = page.before; state.historySyncFailed = false; publish(); requestRetirement()
+        } catch {
+            if !(error is CancellationError), state.sessionId == session, generation == current,
+               sessionRevision == sessionVersion, historyRevision == revision {
+                state.historySyncFailed = true; publish()
+            }
+            throw error
+        }
+    }
+    private func noteHistory(_ messages: [CFLMessage]) {
+        for message in messages {
+            historySources.insert(message.id)
+            if let operation = message.operationId { unconfirmedInputs.remove(operation) }
+        }
+    }
+    private func publishGaps() {
+        state.historyGaps = gaps.map(\.gap)
+        publish()
+    }
+    /// Read at most one page for a visible gap. Errors stay on that gap for explicit retry.
+    public func fillGap(id: UUID) async {
+        guard active, !disconnecting, state.connection == .online, let session = state.sessionId,
+              let index = gaps.firstIndex(where: { $0.gap.id == id }),
+              gaps[index].gap.status != .loading, gaps[index].gap.status != .unavailable,
+              let cursor = gaps[index].cursor else { return }
+        guard gaps.filter({ $0.gap.status == .loading }).count < 8 else {
+            gaps[index].gap.status = .error; publishGaps(); return
+        }
+        let current = generation, version = sessionRevision
+        gaps[index].gap.status = .loading; publishGaps()
+        do {
+            let raw = try await call(method: "history", args: [.string(cursor)])
+            try Task.checkCancellation()
+            guard active, !disconnecting, generation == current, sessionRevision == version, state.sessionId == session,
+                  let index = gaps.firstIndex(where: { $0.gap.id == id && $0.cursor == cursor && $0.gap.status == .loading }) else { return }
+            guard raw.object?["before"] != nil else { throw CFLFailure.protocolError }
+            let page = try decode(CFLPage.self, raw)
+            guard page.messages.count <= 30, raw.object?["messages"]?.array?.allSatisfy(validMessageWire) == true,
+                  page.messages.allSatisfy(\.valid), Set(page.messages.map(\.id)).count == page.messages.count else { throw CFLFailure.protocolError }
+            let all = olderMessages + latestMessages
+            guard let anchor = all.firstIndex(where: { $0.id == gaps[index].gap.afterId }) else { throw CFLFailure.protocolError }
+            let boundary = page.messages.firstIndex(where: { $0.id == gaps[index].gap.afterId })
+            let candidates = boundary.map { Array(page.messages.dropFirst($0 + 1)) } ?? page.messages
+            let known = Dictionary(uniqueKeysWithValues: all.enumerated().map { ($0.element.id, $0.offset) })
+            var fresh: [CFLMessage] = [], sawKnown = false, lastKnown = anchor
+            for message in candidates {
+                if let position = known[message.id] {
+                    guard position > lastKnown else { throw CFLFailure.protocolError }
+                    sawKnown = true; lastKnown = position
+                } else {
+                    guard !sawKnown else { throw CFLFailure.protocolError }
+                    fresh.append(message)
+                }
+            }
+            var merged = all
+            merged.insert(contentsOf: fresh, at: anchor + 1)
+            let split = latestMessages.first.flatMap { first in merged.firstIndex(where: { $0.id == first.id }) } ?? merged.count
+            olderMessages = Array(merged.prefix(split)); latestMessages = Array(merged.dropFirst(split))
+            state.messages = merged
+            noteHistory(page.messages)
+            if boundary != nil {
+                gaps.remove(at: index)
+            } else {
+                if let first = fresh.first { gaps[index].gap.beforeId = first.id }
+                if let next = page.before, !gaps[index].visited.contains(next) {
+                    gaps[index].cursor = next; gaps[index].visited.insert(next); gaps[index].gap.status = .pending
+                } else {
+                    gaps[index].gap.status = .unavailable
+                }
+            }
+            publishGaps(); requestRetirement()
+        } catch {
+            guard active, !disconnecting, generation == current, sessionRevision == version, state.sessionId == session,
+                  let index = gaps.firstIndex(where: { $0.gap.id == id && $0.cursor == cursor && $0.gap.status == .loading }) else { return }
+            gaps[index].gap.status = .error; publishGaps()
+        }
     }
     /// Validate a complete proposed draft against the latest advertised limits.
     public func validateImages(_ images: [CFLPreparedImage]) throws {
@@ -566,6 +750,482 @@ public actor CFLChatClient {
         guard (200...299).contains(http.statusCode) || (allowNotFound && http.statusCode == 404) else { throw http.statusCode == 401 || http.statusCode == 403 ? CFLFailure.accessDenied : CFLFailure.requestFailed }
         return (data, http)
     }
+    // Every catalog operation is bound to the caller's current session and revision.
+    private func stickerContext(_ session: String, _ revision: Int) throws -> Int {
+        guard active, !disconnecting, state.connection == .online else { throw CFLFailure.offline }
+        guard state.sessionId == session, sessionRevision == revision else { throw CFLFailure.sessionChanged }
+        try Task.checkCancellation()
+        return generation
+    }
+    private func checkStickerContext(_ session: String, _ revision: Int, _ current: Int) throws {
+        guard !Task.isCancelled, active, !disconnecting, generation == current,
+              state.connection == .online, state.sessionId == session, sessionRevision == revision else { throw CFLFailure.sessionChanged }
+    }
+    private func stickerRequest(path: String, session: String, cursor: String?, limit: Int, query: String?) throws -> URLRequest {
+        guard (1...30).contains(limit), query.map({ $0.utf16.count <= 100 }) ?? true,
+              cursor.map(Self.validStickerCursor) ?? true else { throw CFLFailure.invalidInput }
+        var request = try request(path: "/api/stickers/" + path, method: "GET")
+        guard var url = request.url.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { throw CFLFailure.invalidInput }
+        url.queryItems = [URLQueryItem(name: "sessionId", value: session), URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor { url.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
+        if let query { url.queryItems?.append(URLQueryItem(name: "query", value: query)) }
+        guard let final = url.url else { throw CFLFailure.invalidInput }
+        request.url = final
+        return request
+    }
+    private static func validStickerCursor(_ cursor: String) -> Bool {
+        !cursor.isEmpty && cursor.utf8.count <= 300 && cursor.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+        }
+    }
+    private func stickerJSON<T: Decodable>(_ type: T.Type, request: URLRequest, session: String, revision: Int) async throws -> (T, ChordJSON) {
+        let current = try stickerContext(session, revision)
+        let (data, _) = try await imageResponse(request)
+        try checkStickerContext(session, revision, current)
+        guard data.count <= 1_000_000, let wire = try? JSONDecoder().decode(ChordJSON.self, from: data),
+              let result = try? JSONDecoder().decode(type, from: data) else { throw CFLFailure.protocolError }
+        return (result, wire)
+    }
+    private func validStickerWire(_ wire: ChordJSON) -> Bool {
+        guard let value = wire.object else { return false }
+        return Set(value.keys) == Set(["id", "version", "name", "tags", "mediaType", "available"])
+    }
+    private func stickerPage(_ path: String, session: String, revision: Int, cursor: String?, limit: Int, query: String?) async throws -> CFLStickerPage {
+        let request = try stickerRequest(path: path, session: session, cursor: cursor, limit: limit, query: query)
+        let current = try stickerContext(session, revision)
+        let scope = try await thumbnailAuthority()
+        try checkStickerContext(session, revision, current)
+        let favoriteRequestEpoch = path == "favorites" ? favoriteEpoch : 0
+        let key = cacheKey("catalog", session: session, parts: [request.url!.absoluteString])
+        let flight: CatalogFlight<CFLStickerPage>
+        if var existing = stickerPageFlights[key], existing.generation == current, existing.revision == revision,
+           existing.scope == scope, existing.favoriteEpoch == favoriteRequestEpoch {
+            existing.waiters += 1; stickerPageFlights[key] = existing; flight = existing
+        } else {
+            let token = UUID()
+            let task = Task { try await self.loadStickerPage(path, request: request, session: session, revision: revision,
+                current: current, scope: scope, favoriteRequestEpoch: favoriteRequestEpoch,
+                key: key, version: token, limit: limit) }
+            flight = CatalogFlight(token: token, generation: current, revision: revision, scope: scope,
+                                   favoriteEpoch: favoriteRequestEpoch, task: task, waiters: 1)
+            stickerPageFlights[key] = flight
+        }
+        defer {
+            if var running = stickerPageFlights[key], running.token == flight.token {
+                running.waiters -= 1
+                if running.waiters == 0 { stickerPageFlights.removeValue(forKey: key) } else { stickerPageFlights[key] = running }
+            }
+        }
+        let page = try await flight.task.value
+        try checkStickerContext(session, revision, current)
+        guard try await thumbnailAuthority() == scope else { throw CFLFailure.sessionChanged }
+        try checkStickerContext(session, revision, current)
+        guard stickerPageFlights[key]?.token == flight.token,
+              path != "favorites" || favoriteEpoch == favoriteRequestEpoch else { throw CFLFailure.sessionChanged }
+        return page
+    }
+    private func loadStickerPage(_ path: String, request: URLRequest, session: String, revision: Int, current: Int,
+                                 scope: UUID?, favoriteRequestEpoch: Int, key: String,
+                                 version: UUID, limit: Int) async throws -> CFLStickerPage {
+        guard stickerPageFlights[key]?.token == version else { throw CFLFailure.sessionChanged }
+        cacheVersions[key] = version
+        defer { if cacheVersions[key] == version { cacheVersions.removeValue(forKey: key) } }
+        let (page, wire) = try await stickerJSON(CFLStickerPage.self, request: request, session: session, revision: revision)
+        guard let fields = wire.object, Set(fields.keys) == Set(["stickers", "nextCursor"]),
+              let items = fields["stickers"]?.array, items.allSatisfy(validStickerWire),
+              page.stickers.count <= limit, page.stickers.allSatisfy(\.valid),
+              page.nextCursor.map(Self.validStickerCursor) ?? true else { throw CFLFailure.protocolError }
+        guard try await thumbnailAuthority() == scope else { throw CFLFailure.sessionChanged }
+        try checkStickerContext(session, revision, current)
+        if path == "favorites", favoriteRequestEpoch != favoriteEpoch { throw CFLFailure.sessionChanged }
+        guard cacheVersions[key] == version else { throw CFLFailure.sessionChanged }
+        if path == "favorites", favoriteRequestEpoch == favoriteEpoch {
+            await saveFavoritePage(page, request: request, session: session, revision: revision, current: current, epoch: favoriteRequestEpoch)
+        } else if path != "favorites", let data = try? JSONEncoder().encode(page), data.count <= 1_000_000 {
+            await cacheWrite(data, key: key, session: session, revision: revision, current: current, version: version, withoutExpiry: true)
+        }
+        try checkStickerContext(session, revision, current)
+        guard try await thumbnailAuthority() == scope else { throw CFLFailure.sessionChanged }
+        try checkStickerContext(session, revision, current)
+        guard cacheVersions[key] == version else { throw CFLFailure.sessionChanged }
+        if path == "favorites", favoriteRequestEpoch != favoriteEpoch { throw CFLFailure.sessionChanged }
+        return page
+    }
+    public func stickerPacks(session: String, revision: Int, cursor: String? = nil, limit: Int = 30, query: String? = nil) async throws -> CFLStickerPackPage {
+        let request = try stickerRequest(path: "packs", session: session, cursor: cursor, limit: limit, query: query)
+        let current = try stickerContext(session, revision)
+        let scope = try await thumbnailAuthority()
+        try checkStickerContext(session, revision, current)
+        let key = cacheKey("catalog", session: session, parts: [request.url!.absoluteString])
+        let flight: CatalogFlight<CFLStickerPackPage>
+        if var existing = stickerPackFlights[key], existing.generation == current, existing.revision == revision,
+           existing.scope == scope {
+            existing.waiters += 1; stickerPackFlights[key] = existing; flight = existing
+        } else {
+            let token = UUID()
+            let task = Task { try await self.loadStickerPacks(request, session: session, revision: revision, current: current,
+                scope: scope, key: key, version: token, limit: limit) }
+            flight = CatalogFlight(token: token, generation: current, revision: revision, scope: scope,
+                                   favoriteEpoch: 0, task: task, waiters: 1)
+            stickerPackFlights[key] = flight
+        }
+        defer {
+            if var running = stickerPackFlights[key], running.token == flight.token {
+                running.waiters -= 1
+                if running.waiters == 0 { stickerPackFlights.removeValue(forKey: key) } else { stickerPackFlights[key] = running }
+            }
+        }
+        let page = try await flight.task.value
+        try checkStickerContext(session, revision, current)
+        guard try await thumbnailAuthority() == scope else { throw CFLFailure.sessionChanged }
+        try checkStickerContext(session, revision, current)
+        guard stickerPackFlights[key]?.token == flight.token else { throw CFLFailure.sessionChanged }
+        return page
+    }
+    private func loadStickerPacks(_ request: URLRequest, session: String, revision: Int, current: Int, scope: UUID?,
+                                  key: String, version: UUID, limit: Int) async throws -> CFLStickerPackPage {
+        guard stickerPackFlights[key]?.token == version else { throw CFLFailure.sessionChanged }
+        cacheVersions[key] = version
+        defer { if cacheVersions[key] == version { cacheVersions.removeValue(forKey: key) } }
+        let (page, wire) = try await stickerJSON(CFLStickerPackPage.self, request: request, session: session, revision: revision)
+        guard let fields = wire.object, Set(fields.keys) == Set(["packs", "nextCursor"]), let items = fields["packs"]?.array,
+              items.allSatisfy({ item in
+                  guard let value = item.object, Set(value.keys) == Set(["id", "name", "description", "cover"]), let cover = value["cover"] else { return false }
+                  return validStickerWire(cover)
+              }), page.packs.count <= limit, page.packs.allSatisfy(\.valid),
+              page.nextCursor.map(Self.validStickerCursor) ?? true else { throw CFLFailure.protocolError }
+        guard try await thumbnailAuthority() == scope else { throw CFLFailure.sessionChanged }
+        try checkStickerContext(session, revision, current)
+        guard cacheVersions[key] == version else { throw CFLFailure.sessionChanged }
+        if let data = try? JSONEncoder().encode(page), data.count <= 1_000_000 {
+            await cacheWrite(data, key: key, session: session, revision: revision, current: current, version: version, withoutExpiry: true)
+        }
+        try checkStickerContext(session, revision, current)
+        guard try await thumbnailAuthority() == scope else { throw CFLFailure.sessionChanged }
+        try checkStickerContext(session, revision, current)
+        guard cacheVersions[key] == version else { throw CFLFailure.sessionChanged }
+        return page
+    }
+    /// A snapshot is exactly one previously fetched page. Its cursor is retained;
+    /// absence from a partial page never proves that an item is absent globally.
+    public func cachedStickerPacks(session: String, revision: Int, cursor: String? = nil, limit: Int = 30, query: String? = nil) async throws -> CFLStickerPackPage? {
+        let current = generation
+        try thumbnailContext(session, revision, generation: current)
+        let req = try stickerRequest(path: "packs", session: session, cursor: cursor, limit: limit, query: query)
+        let key = cacheKey("catalog", session: session, parts: [req.url!.absoluteString])
+        guard let data = try await cacheRead(key, session: session, revision: revision, current: current), data.count <= 1_000_000,
+              let page = try? JSONDecoder().decode(CFLStickerPackPage.self, from: data),
+              page.packs.count <= limit, page.packs.allSatisfy(\.valid),
+              page.nextCursor.map(Self.validStickerCursor) ?? true else { return nil }
+        return page
+    }
+    private func cachedStickerPage(_ path: String, session: String, revision: Int, cursor: String?, limit: Int, query: String?) async throws -> CFLStickerPage? {
+        let current = generation
+        try thumbnailContext(session, revision, generation: current)
+        let req = try stickerRequest(path: path, session: session, cursor: cursor, limit: limit, query: query)
+        let key = cacheKey("catalog", session: session, parts: [req.url!.absoluteString])
+        guard let data = try await cacheRead(key, session: session, revision: revision, current: current), data.count <= 1_000_000,
+              let page = try? JSONDecoder().decode(CFLStickerPage.self, from: data),
+              page.stickers.count <= limit, page.stickers.allSatisfy(\.valid),
+              page.nextCursor.map(Self.validStickerCursor) ?? true else { return nil }
+        return page
+    }
+    public func cachedStickerPackMembers(_ packId: String, session: String, revision: Int, cursor: String? = nil, limit: Int = 30) async throws -> CFLStickerPage? {
+        guard CFLStickerIdentity(id: packId, version: String(repeating: "0", count: 64)).valid else { throw CFLFailure.invalidInput }
+        return try await cachedStickerPage("packs/" + packId, session: session, revision: revision, cursor: cursor, limit: limit, query: nil)
+    }
+    public func cachedSearchStickers(_ query: String, session: String, revision: Int, cursor: String? = nil, limit: Int = 30) async throws -> CFLStickerPage? {
+        try await cachedStickerPage("search", session: session, revision: revision, cursor: cursor, limit: limit, query: query)
+    }
+    public func cachedFavoriteStickers(session: String, revision: Int, cursor: String? = nil, limit: Int = 30, query: String? = nil) async throws -> CFLStickerPage? {
+        try await cachedFavoriteSnapshot(session: session, revision: revision, cursor: cursor, limit: limit, query: query)?.page
+    }
+    public func cachedFavoriteSnapshot(session: String, revision: Int, cursor: String? = nil, limit: Int = 30, query: String? = nil) async throws -> CFLFavoriteSnapshot? {
+        let current = generation
+        try thumbnailContext(session, revision, generation: current)
+        let req = try stickerRequest(path: "favorites", session: session, cursor: cursor, limit: limit, query: query)
+        let key = cacheKey("favorite-pages", session: session, parts: [])
+        guard let data = try await cacheRead(key, session: session, revision: revision, current: current), data.count <= 1_000_000,
+              let archive = try? JSONDecoder().decode(FavoriteArchive.self, from: data),
+              let snapshot = archive.pages[req.url!.absoluteString]?.snapshot,
+              snapshot.page.stickers.count <= limit, snapshot.page.stickers.allSatisfy(\.valid),
+              snapshot.page.nextCursor.map(Self.validStickerCursor) ?? true else { return nil }
+        return snapshot
+    }
+    private func saveFavoritePage(_ page: CFLStickerPage, request: URLRequest, session: String, revision: Int, current: Int, epoch: Int) async {
+        await acquireFavoriteSnapshot()
+        defer { releaseFavoriteSnapshot() }
+        guard let cache = mediaCache, await cacheAuthority() != nil, favoriteEpoch == epoch,
+              (try? thumbnailContext(session, revision, generation: current)) != nil,
+              let pageKey = request.url?.absoluteString else { return }
+        let key = cacheKey("favorite-pages", session: session, parts: [])
+        cacheReads.removeValue(forKey: key)
+        try? await cache.update(key: key, withoutExpiry: true) { data in
+            var archive = data.flatMap { try? JSONDecoder().decode(FavoriteArchive.self, from: $0) } ?? FavoriteArchive()
+            archive.pages[pageKey] = FavoriteArchive.Entry(snapshot: CFLFavoriteSnapshot(page: page, needsRevalidation: false), stored: Date())
+            while archive.pages.count > 32, let oldest = archive.pages.min(by: { $0.value.stored < $1.value.stored })?.key {
+                archive.pages.removeValue(forKey: oldest)
+            }
+            guard let encoded = try? JSONEncoder().encode(archive), encoded.count <= 1_000_000 else { return nil }
+            return encoded
+        }
+        _ = await cacheAuthority()
+    }
+    private func updateFavoritePages(_ result: CFLStickerFavoriteResult, session: String, revision: Int, current: Int) async {
+        favoriteEpoch += 1
+        await acquireFavoriteSnapshot()
+        defer { releaseFavoriteSnapshot() }
+        guard let cache = mediaCache, await cacheAuthority() != nil,
+              (try? thumbnailContext(session, revision, generation: current)) != nil else { return }
+        let key = cacheKey("favorite-pages", session: session, parts: [])
+        cacheReads.removeValue(forKey: key)
+        try? await cache.update(key: key, withoutExpiry: true) { data in
+            guard let data, var archive = try? JSONDecoder().decode(FavoriteArchive.self, from: data) else { return nil }
+            for (pageKey, entry) in archive.pages {
+                let items = result.favorite ? entry.snapshot.page.stickers : entry.snapshot.page.stickers.filter { $0.id != result.sticker.id }
+                let page = CFLStickerPage(stickers: items, nextCursor: entry.snapshot.page.nextCursor)
+                archive.pages[pageKey] = FavoriteArchive.Entry(snapshot: CFLFavoriteSnapshot(page: page, needsRevalidation: true), stored: entry.stored)
+            }
+            guard let encoded = try? JSONEncoder().encode(archive), encoded.count <= 1_000_000 else { return nil }
+            return encoded
+        }
+        _ = await cacheAuthority()
+    }
+    public func stickerPackMembers(_ packId: String, session: String, revision: Int, cursor: String? = nil, limit: Int = 30) async throws -> CFLStickerPage {
+        guard CFLStickerIdentity(id: packId, version: String(repeating: "0", count: 64)).valid else { throw CFLFailure.invalidInput }
+        return try await stickerPage("packs/" + packId, session: session, revision: revision, cursor: cursor, limit: limit, query: nil)
+    }
+    public func searchStickers(_ query: String, session: String, revision: Int, cursor: String? = nil, limit: Int = 30) async throws -> CFLStickerPage {
+        try await stickerPage("search", session: session, revision: revision, cursor: cursor, limit: limit, query: query)
+    }
+    public func favoriteStickers(session: String, revision: Int, cursor: String? = nil, limit: Int = 30, query: String? = nil) async throws -> CFLStickerPage {
+        try await stickerPage("favorites", session: session, revision: revision, cursor: cursor, limit: limit, query: query)
+    }
+    private func stickerPost<T: Decodable>(_ type: T.Type, path: String, body: [String: Any], session: String, revision: Int) async throws -> (T, ChordJSON) {
+        var req = try request(path: "/api/stickers/" + path, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await stickerJSON(type, request: req, session: session, revision: revision)
+    }
+    private func favoriteResult(path: String, body: [String: Any], session: String, revision: Int, expectedId: String?, favorite: Bool) async throws -> CFLStickerFavoriteResult {
+        let current = try stickerContext(session, revision)
+        let (result, wire) = try await stickerPost(CFLStickerFavoriteResult.self, path: path, body: body, session: session, revision: revision)
+        guard let fields = wire.object, Set(fields.keys) == Set(["sticker", "favorite"]), let sticker = fields["sticker"],
+              validStickerWire(sticker), result.sticker.valid, result.favorite == favorite,
+              expectedId.map({ $0 == result.sticker.id }) ?? true else { throw CFLFailure.protocolError }
+        await updateFavoritePages(result, session: session, revision: revision, current: current)
+        try checkStickerContext(session, revision, current)
+        return result
+    }
+    public func setStickerFavorite(_ id: String, favorite: Bool, session: String, revision: Int) async throws -> CFLStickerFavoriteResult {
+        guard CFLStickerIdentity(id: id, version: String(repeating: "0", count: 64)).valid else { throw CFLFailure.invalidInput }
+        return try await favoriteResult(path: "favorites", body: ["sessionId": session, "stickerId": id, "favorite": favorite], session: session, revision: revision, expectedId: id, favorite: favorite)
+    }
+    /// Existing sticker identities never fall back to creating a new catalog item.
+    public func favoriteChatImage(_ image: CFLImageRef, session: String, revision: Int) async throws -> CFLStickerFavoriteResult {
+        guard image.valid, image.availability == "available" else { throw CFLFailure.invalidInput }
+        if let sticker = image.sticker {
+            return try await setStickerFavorite(sticker.id, favorite: true, session: session, revision: revision)
+        }
+        var label = image.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        while label.utf16.count > 160 { label.removeLast() }
+        return try await favoriteResult(path: "favorites/image", body: ["sessionId": session, "imageId": image.attachmentId,
+            "name": label.isEmpty ? "聊天图片" : label, "tags": [String]()], session: session, revision: revision, expectedId: nil, favorite: true)
+    }
+    private func thumbnailContext(_ session: String, _ revision: Int, generation current: Int) throws {
+        guard !Task.isCancelled, active, !disconnecting, generation == current,
+              state.connection != .accessDenied, state.sessionId == session, sessionRevision == revision else { throw CFLFailure.sessionChanged }
+    }
+    private func thumbnailAuthority() async throws -> UUID? {
+        guard let authority = imageHTTP as? any CFLStickerCacheAuthority else { return nil }
+        do { return try await authority.stickerThumbnailScope() }
+        catch CFLFailure.accessDenied { clearThumbnails(); throw CFLFailure.accessDenied }
+    }
+    private func adoptThumbnailScope(_ scope: UUID) {
+        if thumbnailScope != scope { clearThumbnails(); thumbnailScope = scope }
+    }
+    private func retainThumbnail(_ data: Data, etag: String?, for key: ThumbnailKey) {
+        thumbnailClock &+= 1
+        thumbnails[key] = ThumbnailEntry(data: data, etag: etag, used: thumbnailClock)
+        while thumbnails.count > thumbnailCountLimit || thumbnails.values.reduce(0, { $0 + $1.data.count }) > thumbnailByteLimit {
+            guard let oldest = thumbnails.min(by: { $0.value.used < $1.value.used })?.key else { break }
+            thumbnails.removeValue(forKey: oldest)
+        }
+    }
+    /// Returns a bounded in-memory or persistent copy for this session;
+    /// render it immediately and separately call stickerMedia to revalidate it.
+    /// A nil result also means the transport cannot establish an identity scope.
+    public func cachedStickerThumbnail(_ sticker: CFLSticker, session: String, revision: Int) async throws -> Data? {
+        guard sticker.valid else { throw CFLFailure.invalidInput }
+        let current = generation
+        try thumbnailContext(session, revision, generation: current)
+        if !sticker.available {
+            cancelThumbnailFlight(ThumbnailKey(session: session, id: sticker.id, version: sticker.version))
+            throw CFLStickerThumbnailFailure.removed
+        }
+        guard let scope = try await thumbnailAuthority() else { return nil }
+        try thumbnailContext(session, revision, generation: current)
+        adoptThumbnailScope(scope)
+        let key = ThumbnailKey(session: session, id: sticker.id, version: sticker.version)
+        if thumbnails[key] == nil {
+            let diskKey = cacheKey("sticker-thumbnail", session: session, parts: [sticker.id, sticker.version])
+            if let data = try await cacheRead(diskKey, session: session, revision: revision, current: current) {
+                let bytes = [UInt8](data.prefix(12))
+                if data.count <= 160_000, bytes.count == 12,
+                   bytes.starts(with: Array("RIFF".utf8)), Array(bytes[8..<12]) == Array("WEBP".utf8) {
+                    retainThumbnail(data, etag: nil, for: key)
+                } else { await cacheRemove(diskKey) }
+            }
+        }
+        guard var entry = thumbnails[key] else { return nil }
+        thumbnailClock &+= 1; entry.used = thumbnailClock; thumbnails[key] = entry
+        return entry.data
+    }
+    /// Revalidates thumbnails; a 304 reuses an identity-bound cached value.
+    /// HTTP errors retain existing copies; a later successful response refreshes them.
+    /// Originals are fetched independently and cached on demand.
+    public func stickerMedia(_ sticker: CFLSticker, original: Bool = false, session: String, revision: Int, revalidate: Bool = false) async throws -> Data {
+        guard sticker.valid else { throw CFLFailure.invalidInput }
+        let current = generation
+        if original && !revalidate {
+            try thumbnailContext(session, revision, generation: current)
+        } else {
+            _ = try stickerContext(session, revision)
+        }
+        if !sticker.available {
+            cancelThumbnailFlight(ThumbnailKey(session: session, id: sticker.id, version: sticker.version))
+            throw CFLStickerThumbnailFailure.removed
+        }
+        if original {
+            let diskKey = cacheKey("sticker-original", session: session, parts: [sticker.id, sticker.version])
+            if !revalidate, let cached = try await cacheRead(diskKey, session: session, revision: revision, current: current) {
+                if cached.count <= 5 * 1024 * 1024, Self.supportedImageBytes(cached) {
+                    if state.connection == .online {
+                        Task { [weak self] in _ = try? await self?.stickerMedia(sticker, original: true, session: session, revision: revision, revalidate: true) }
+                    }
+                    return cached
+                }
+                await cacheRemove(diskKey)
+            }
+            let onlineGeneration = try stickerContext(session, revision)
+            guard onlineGeneration == current else { throw CFLFailure.sessionChanged }
+            let version = UUID(); cacheVersions[diskKey] = version
+            defer { if cacheVersions[diskKey] == version { cacheVersions.removeValue(forKey: diskKey) } }
+            let scope = try await thumbnailAuthority()
+            try checkStickerContext(session, revision, current)
+            let req = try request(path: "/api/stickers/media/\(sticker.version)/original", method: "GET")
+            let (data, response): (Data, HTTPURLResponse)
+            do { (data, response) = try await imageResponse(req) }
+            catch {
+                try checkStickerContext(session, revision, current)
+                if (error as? CFLFailure) == .accessDenied {
+                    if scope != nil { _ = try? await thumbnailAuthority() }
+                    else { clearThumbnails() }
+                }
+                throw error
+            }
+            try checkStickerContext(session, revision, current)
+            if let scope {
+                let after = try await thumbnailAuthority()
+                try checkStickerContext(session, revision, current)
+                guard after == scope else { throw CFLFailure.sessionChanged }
+            }
+            let type = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init)?.lowercased()
+            guard !data.isEmpty, data.count <= 5 * 1024 * 1024, type == sticker.mediaType else { throw CFLFailure.protocolError }
+            await cacheWrite(data, key: diskKey, session: session, revision: revision, current: current, version: version)
+            try checkStickerContext(session, revision, current)
+            if let scope, try await thumbnailAuthority() != scope { throw CFLFailure.sessionChanged }
+            return data
+        }
+        let scope = try await thumbnailAuthority()
+        try checkStickerContext(session, revision, current)
+        if let scope { adoptThumbnailScope(scope) }
+        let key = ThumbnailKey(session: session, id: sticker.id, version: sticker.version)
+        let flight: ThumbnailFlight
+        if var existing = thumbnailFlights[key], existing.generation == current,
+           existing.revision == revision, existing.scope == scope {
+            existing.waiters += 1
+            thumbnailFlights[key] = existing
+            flight = existing
+        } else {
+            thumbnailFlights.removeValue(forKey: key)?.task.cancel()
+            let token = UUID()
+            let task = Task { try await self.loadStickerThumbnail(key, scope: scope, generation: current, revision: revision, token: token) }
+            flight = ThumbnailFlight(token: token, generation: current, revision: revision, scope: scope, task: task, waiters: 1)
+            thumbnailFlights[key] = flight
+        }
+        defer { finishThumbnailWaiter(key, token: flight.token) }
+        let data = try await flight.task.value
+        try checkStickerContext(session, revision, current)
+        if let scope {
+            let after = try await thumbnailAuthority()
+            try checkStickerContext(session, revision, current)
+            guard after == scope else { throw CFLFailure.sessionChanged }
+        }
+        guard thumbnailFlights[key]?.token == flight.token else { throw CFLFailure.sessionChanged }
+        return data
+    }
+    /// One task owns validation/cache mutation; all current waiters share its result.
+    private func loadStickerThumbnail(_ key: ThumbnailKey, scope: UUID?, generation current: Int, revision: Int, token: UUID) async throws -> Data {
+        let session = key.session
+        let diskKey = cacheKey("sticker-thumbnail", session: session, parts: [key.id, key.version])
+        cacheVersions[diskKey] = token
+        defer { if cacheVersions[diskKey] == token { cacheVersions.removeValue(forKey: diskKey) } }
+        var req = try request(path: "/api/stickers/media/\(key.version)/thumbnail", method: "GET")
+        let cached = scope == nil ? nil : thumbnails[key]
+        if let etag = cached?.etag { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        let result: (Data, URLResponse)
+        do { result = try await imageHTTP.data(for: req) }
+        catch {
+            try checkStickerContext(session, revision, current)
+            if let scope {
+                let after = try await thumbnailAuthority()
+                try checkStickerContext(session, revision, current)
+                guard after == scope, thumbnailFlights[key]?.token == token else { throw CFLFailure.sessionChanged }
+            } else if thumbnailFlights[key]?.token != token { throw CFLFailure.sessionChanged }
+            if (error as? CFLFailure) == .accessDenied { clearThumbnails() }
+            throw error
+        }
+        try checkStickerContext(session, revision, current)
+        if let scope {
+            let after = try await thumbnailAuthority()
+            try checkStickerContext(session, revision, current)
+            guard after == scope, thumbnailFlights[key]?.token == token else { throw CFLFailure.sessionChanged }
+        } else if thumbnailFlights[key]?.token != token { throw CFLFailure.sessionChanged }
+        guard let response = result.1 as? HTTPURLResponse, response.url == req.url else { throw CFLFailure.protocolError }
+        if response.statusCode == 403 || response.statusCode == 404 { throw CFLFailure.requestFailed }
+        if response.statusCode == 401 { clearThumbnails(); throw CFLFailure.accessDenied }
+        if response.statusCode == 304 {
+            guard let cached, let etag = cached.etag,
+                  response.value(forHTTPHeaderField: "ETag") == etag,
+                  thumbnails[key]?.etag == etag else { throw CFLFailure.protocolError }
+            retainThumbnail(cached.data, etag: etag, for: key)
+            return cached.data
+        }
+        guard (200...299).contains(response.statusCode) else { throw CFLFailure.requestFailed }
+        let data = result.0
+        let type = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init)?.lowercased()
+        let bytes = [UInt8](data.prefix(12))
+        guard type == "image/webp", !data.isEmpty, data.count <= 160_000,
+              bytes.count == 12, bytes.starts(with: Array("RIFF".utf8)), Array(bytes[8..<12]) == Array("WEBP".utf8) else { throw CFLFailure.protocolError }
+        let rawETag = response.value(forHTTPHeaderField: "ETag")
+        let etag = rawETag.flatMap { value in
+            !value.isEmpty && value.utf8.count <= 256 && value.rangeOfCharacter(from: .controlCharacters) == nil ? value : nil
+        }
+        if scope != nil { retainThumbnail(data, etag: etag, for: key) }
+        await cacheWrite(data, key: diskKey, session: session, revision: revision, current: current, version: token, withoutExpiry: true)
+        return data
+    }
+    private func stageSticker(_ sticker: CFLSticker, session: String, operation: String) async throws -> CFLImageRef {
+        struct Result: Decodable { let sessionId: String; let operationId: String; let image: CFLImageRef }
+        let (result, wire) = try await stickerPost(Result.self, path: "stage", body: ["sessionId": session, "operationId": operation,
+            "sticker": ["id": sticker.id, "version": sticker.version]], session: session, revision: sessionRevision)
+        guard let fields = wire.object, Set(fields.keys) == Set(["sessionId", "operationId", "image"]), let image = fields["image"],
+              validImageWire(image), result.sessionId == session, result.operationId == operation,
+              result.image.valid, result.image.availability == "available", result.image.sticker == sticker.identity,
+              result.image.mediaType == sticker.mediaType else { throw CFLFailure.protocolError }
+        return result.image
+    }
     /// Loads a voice from this connection's origin. Cancel on disappearance and
     /// discard results if the owning client changes.
     public func voice(_ ref: CFLVoiceRef, expectedSessionId: String, expectedSessionRevision: Int) async throws -> Data {
@@ -584,8 +1244,8 @@ public actor CFLChatClient {
     }
     /// Read an original Markdown destination using this connection's authorized HTTP transport.
     /// The UI must cancel on disappearance and discard results if its owning client/target changes.
-    public func markdownImage(_ source: String, expectedSessionId: String, expectedSessionRevision: Int) async throws -> Data {
-        guard active, !disconnecting, state.connection == .online, let session = state.sessionId else { throw CFLFailure.offline }
+    public func markdownImage(_ source: String, expectedSessionId: String, expectedSessionRevision: Int, revalidate: Bool = false) async throws -> Data {
+        guard active, !disconnecting, let session = state.sessionId else { throw CFLFailure.offline }
         guard session == expectedSessionId, sessionRevision == expectedSessionRevision else { throw CFLFailure.sessionChanged }
         try Task.checkCancellation()
         let current = generation, revision = sessionRevision
@@ -606,11 +1266,68 @@ public actor CFLChatClient {
             path = raw
         case .external, .invalid: throw CFLFailure.invalidInput
         }
+        let key = cacheKey("markdown", session: session, parts: [path])
+        if !revalidate, let data = try await cacheRead(key, session: session, revision: revision, current: current) {
+            if !data.isEmpty && data.count <= 32 * 1024 * 1024 {
+                if state.connection == .online {
+                    Task { [weak self] in _ = try? await self?.markdownImage(source, expectedSessionId: session, expectedSessionRevision: revision, revalidate: true) }
+                }
+                return data
+            }
+            await cacheRemove(key)
+        }
+        guard state.connection == .online else { throw CFLFailure.offline }
+        let version = UUID(); cacheVersions[key] = version
+        defer { if cacheVersions[key] == version { cacheVersions.removeValue(forKey: key) } }
+        let scope = await cacheAuthority()
         let request = try request(path: path, method: "GET")
-        let (data, _) = try await imageResponse(request)
+        let (data, response) = try await imageResponse(request, allowNotFound: true)
         guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
               state.sessionId == session, state.connection == .online else { throw CFLFailure.sessionChanged }
+        if let scope, await cacheAuthority() != scope { throw CFLFailure.sessionChanged }
+        if response.statusCode == 404 { await cacheRemove(key); throw CFLFailure.requestFailed }
+        if !data.isEmpty, data.count <= 32 * 1024 * 1024 {
+            await cacheWrite(data, key: key, session: session, revision: revision, current: current, version: version)
+        }
+        try checkStickerContext(session, revision, current)
+        if let scope, await cacheAuthority() != scope { throw CFLFailure.sessionChanged }
         return data
+    }
+    /// External HTTPS is fetched without CFL credentials. Explicit storage
+    /// prohibitions are honored for the final response and every redirect.
+    public func externalImage(_ source: String, expectedSessionId: String, expectedSessionRevision: Int) async throws -> Data {
+        guard case .external = CFLMarkdownImage.resolve(source) else { throw CFLFailure.invalidInput }
+        let current = generation, session = expectedSessionId, revision = expectedSessionRevision
+        try thumbnailContext(session, revision, generation: current)
+        let bytesKey = cacheKey("external-image", session: session, parts: [source])
+        let dateKey = cacheKey("external-expiration", session: session, parts: [source])
+        if let dateData = try await cacheRead(dateKey, session: session, revision: revision, current: current),
+           let record = (try? JSONDecoder().decode(ExternalImageCacheRecord.self, from: dateData)) ??
+               (try? JSONDecoder().decode(Date.self, from: dateData)).map({ ExternalImageCacheRecord(freshUntil: $0) }),
+           record.freshUntil.map({ $0 > Date() }) ?? true,
+           let data = try await cacheRead(bytesKey, session: session, revision: revision, current: current),
+           !data.isEmpty, data.count <= 32 * 1024 * 1024 { return data }
+        let version = UUID(); cacheVersions[bytesKey] = version; cacheVersions[dateKey] = version
+        defer {
+            if cacheVersions[bytesKey] == version { cacheVersions.removeValue(forKey: bytesKey) }
+            if cacheVersions[dateKey] == version { cacheVersions.removeValue(forKey: dateKey) }
+        }
+        let result = try await externalImageLoader.response(for: source)
+        try thumbnailContext(session, revision, generation: current)
+        let record: ExternalImageCacheRecord?
+        switch result.policy {
+        case .prohibited: record = nil
+        case .lastAccess: record = ExternalImageCacheRecord(freshUntil: nil)
+        case .until(let date): record = ExternalImageCacheRecord(freshUntil: date)
+        }
+        if let record, !result.data.isEmpty, result.data.count <= 32 * 1024 * 1024,
+           let dateData = try? JSONEncoder().encode(record) {
+            if await cacheWrite(result.data, key: bytesKey, session: session, revision: revision, current: current, version: version) {
+                await cacheWrite(dateData, key: dateKey, session: session, revision: revision, current: current, version: version)
+            }
+        }
+        try thumbnailContext(session, revision, generation: current)
+        return result.data
     }
     private func upload(_ images: [CFLPreparedImage], session: String, operation: String) async throws -> [CFLImageRef] {
         let items: [[String: Any]] = images.enumerated().map { index, image in
@@ -645,30 +1362,49 @@ public actor CFLChatClient {
     /// If a preview is absent, falls back to the bounded original; an absent
     /// original remains a failure. Discard results when the page disappears.
     public func media(_ ref: CFLImageRef, original: Bool = false,
-                      expectedSessionId: String? = nil, expectedSessionRevision: Int? = nil) async throws -> Data {
+                      expectedSessionId: String? = nil, expectedSessionRevision: Int? = nil, revalidate: Bool = false) async throws -> Data {
         guard ref.valid, ref.availability == "available" else { throw CFLFailure.invalidInput }
-        guard active, state.connection == .online, let session = state.sessionId else { throw CFLFailure.offline }
+        guard active, !disconnecting, let session = state.sessionId else { throw CFLFailure.offline }
         guard expectedSessionId.map({ $0 == session }) ?? true,
               expectedSessionRevision.map({ $0 == sessionRevision }) ?? true else { throw CFLFailure.sessionChanged }
         try Task.checkCancellation()
         let current = generation, revision = sessionRevision
+        let key = cacheKey("chat-media", session: session, parts: [ref.attachmentId, original ? "original" : "preview"])
+        if !revalidate, let cached = try await cacheRead(key, session: session, revision: revision, current: current) {
+            if cached.count <= 32 * 1024 * 1024, Self.supportedImageBytes(cached) {
+                if state.connection == .online {
+                    Task { [weak self] in _ = try? await self?.media(ref, original: original, expectedSessionId: session, expectedSessionRevision: revision, revalidate: true) }
+                }
+                return cached
+            }
+            await cacheRemove(key)
+        }
+        guard state.connection == .online else { throw CFLFailure.offline }
+        let version = UUID(); cacheVersions[key] = version
+        defer { if cacheVersions[key] == version { cacheVersions.removeValue(forKey: key) } }
+        let scope = await cacheAuthority()
         func checkCurrent() throws {
             guard !Task.isCancelled, active, generation == current, sessionRevision == revision, state.sessionId == session,
                   state.connection == .online else { throw CFLFailure.sessionChanged }
         }
         let request = try request(path: "/api/chat/media/\(ref.attachmentId)/\(original ? "original" : "preview")", method: "GET")
-        var (data, response) = try await imageResponse(request, allowNotFound: !original)
+        var (data, response) = try await imageResponse(request, allowNotFound: true)
         try checkCurrent()
         var readOriginal = original
-        if response.statusCode == 404 {
+        if response.statusCode == 404 && !original {
             let fallback = try self.request(path: "/api/chat/media/\(ref.attachmentId)/original", method: "GET")
-            (data, response) = try await imageResponse(fallback)
+            (data, response) = try await imageResponse(fallback, allowNotFound: true)
             readOriginal = true
             try checkCurrent()
         }
+        if response.statusCode == 404 { await cacheRemove(key); throw CFLFailure.requestFailed }
         let type = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init)?.lowercased()
         guard data.count <= (readOriginal ? 32 * 1024 * 1024 : 160_000), !data.isEmpty,
               let type, CFLImageLimits.types.contains(type), readOriginal || type == "image/jpeg" else { throw CFLFailure.protocolError }
+        if let scope, await cacheAuthority() != scope { throw CFLFailure.sessionChanged }
+        await cacheWrite(data, key: key, session: session, revision: revision, current: current, version: version)
+        try checkCurrent()
+        if let scope, await cacheAuthority() != scope { throw CFLFailure.sessionChanged }
         return data
     }
     /// Returns the locally durable operation ID, not an admission or reply receipt.
@@ -677,6 +1413,27 @@ public actor CFLChatClient {
     /// could not be verified; preserve it until the store can be read again.
     @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [],
                                         expectedSessionId: String? = nil, expectedSessionRevision: Int? = nil) async throws -> String {
+        let result = try await sendCore(text, images: images, sticker: nil, operation: UUID().uuidString.lowercased(), expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
+        return result.operationId
+    }
+    /// Supply a freshly generated UUID for one local operation and never reuse it.
+    /// Throws before submit on validation/upload failure, or CFLPendingStorageUncertain
+    /// when the first save cannot be read back. Retain the original input in either case.
+    @discardableResult public func send(_ text: String, images: [CFLPreparedImage] = [], operationId: String,
+                                        expectedSessionId: String, expectedSessionRevision: Int) async throws -> CFLSendOutcome {
+        let result = try await sendCore(text, images: images, sticker: nil, operation: operationId, expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
+        return result.outcome
+    }
+    /// Sends a sticker independently of the composer's text and image drafts.
+    @discardableResult public func sendSticker(_ sticker: CFLSticker, expectedSessionId: String, expectedSessionRevision: Int) async throws -> String {
+        guard sticker.valid, sticker.available else { throw CFLFailure.invalidInput }
+        let result = try await sendCore("", images: [], sticker: sticker, operation: UUID().uuidString.lowercased(), expectedSessionId: expectedSessionId, expectedSessionRevision: expectedSessionRevision)
+        return result.operationId
+    }
+    private func sendCore(_ text: String, images: [CFLPreparedImage], sticker: CFLSticker?,
+                          operation: String, expectedSessionId: String?, expectedSessionRevision: Int?) async throws -> (operationId: String, outcome: CFLSendOutcome) {
+        guard let operationUUID = UUID(uuidString: operation) else { throw CFLFailure.invalidInput }
+        guard !usedSendOperations.contains(operationUUID) else { throw CFLSendFailure.duplicateOperationId }
         guard !sending else { throw CFLFailure.requestFailed }
         sending = true
         defer { sending = false }
@@ -688,8 +1445,12 @@ public actor CFLChatClient {
               expectedSessionRevision.map({ $0 == revision }) ?? true else { throw CFLFailure.sessionChanged }
         try Task.checkCancellation()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!trimmed.isEmpty || !images.isEmpty), trimmed != "/compact", text.utf16.count <= 16000 else { throw CFLFailure.invalidInput }
-        let operation = UUID().uuidString.lowercased()
+        guard (!trimmed.isEmpty || !images.isEmpty || sticker != nil), trimmed != "/compact", text.utf16.count <= 16000 else { throw CFLFailure.invalidInput }
+        guard !entries.contains(where: { UUID(uuidString: $0.operationId) == operationUUID || $0.retrySource.flatMap { UUID(uuidString: $0) } == operationUUID }),
+              !state.messages.contains(where: { $0.operationId.flatMap { UUID(uuidString: $0) } == operationUUID }) else {
+            throw CFLSendFailure.duplicateOperationId
+        }
+        usedSendOperations.insert(operationUUID)
         defer {
             if state.localDrafts.contains(where: { $0.operationId == operation && $0.sessionId == session }) {
                 state.localDrafts.removeAll { $0.operationId == operation && $0.sessionId == session }; publish()
@@ -710,22 +1471,28 @@ public actor CFLChatClient {
                 CFLLocalImagePreview(sessionId: session, operationId: operation, originOperationId: preview.originOperationId, draftId: preview.draftId, order: preview.order, attachmentId: ref.attachmentId, data: preview.data)
             })
         }
+        if let sticker {
+            refs = [try await stageSticker(sticker, session: session, operation: operation)]
+            guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision,
+                  state.connection == .online, state.sessionId == session else { throw CFLFailure.sessionChanged }
+        }
         var entry = CFLPending(target: target, sessionId: session, operationId: operation, text: text, createdAt: Date(), dispatched: false, status: .unknown, images: refs)
         do { try await persist(entries + [entry]) }
         catch {
             guard loaded else { throw CFLPendingStorageUncertain(pending: entry) }
             if entries.contains(where: { $0.target == target && $0.sessionId == session && $0.operationId == entry.operationId }) {
-                return entry.operationId
+                return (entry.operationId, .notDispatched)
             }
             throw error
         }
         if !images.isEmpty { state.localDrafts.removeAll { $0.operationId == operation && $0.sessionId == session }; publish() }
         guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision, state.connection == .online, state.sessionId == session else {
-            setError(.sessionChanged); publish(); return entry.operationId
+            if active && !disconnecting && generation == current && sessionRevision == revision && state.sessionId == session { setError(.sessionChanged); publish() }
+            return (entry.operationId, .notDispatched)
         }
         entry.dispatched = true
         guard let index = entries.firstIndex(where: { $0.target == target && $0.sessionId == session && $0.operationId == entry.operationId }) else {
-            setError(.storage); publish(); return entry.operationId
+            setError(.storage); publish(); return (entry.operationId, .notDispatched)
         }
         var next = entries; next[index] = entry
         do { try await persist(next) }
@@ -735,26 +1502,36 @@ public actor CFLChatClient {
                 // until the store can be read again.
                 entries[index].dispatched = true; showPending(); publish()
             }
-            return entry.operationId
+            return (entry.operationId, .notDispatched)
         }
         guard !Task.isCancelled, active, !disconnecting, generation == current, sessionRevision == revision, state.connection == .online, state.sessionId == session else {
-            setError(.sessionChanged); publish(); return entry.operationId
+            if active && !disconnecting && generation == current && sessionRevision == revision && state.sessionId == session { setError(.sessionChanged); publish() }
+            return (entry.operationId, .notDispatched)
         }
         submitting.insert(entry.operationId)
         scheduleDeadline()
         let previousError = errorRevision
+        var outcome: CFLSendOutcome = .unknown
         do {
             let value = try await call(method: "submit", args: [submission(entry)])
             guard value != .null else { throw CFLFailure.protocolError }
-            guard active, !disconnecting, generation == current else { throw CFLFailure.offline }
+            guard active, !disconnecting, generation == current, sessionRevision == revision, state.sessionId == session else { throw CFLFailure.sessionChanged }
             try await accept(value, entry: entry)
+            if let latest = entries.first(where: { $0.target == target && $0.sessionId == session && $0.operationId == operation }) {
+                if latest.status == .submitted { outcome = .submitted }
+                else if latest.status == .failed { outcome = .failed }
+            } else if state.sessionId == session && state.messages.contains(where: { $0.role == "user" && $0.operationId == operation }) {
+                outcome = .submitted
+            }
             clearError(since: previousError)
         } catch {
-            setError((error as? CFLFailure) ?? .requestFailed); publish()
+            if active && !disconnecting && generation == current && sessionRevision == revision && state.sessionId == session {
+                setError((error as? CFLFailure) ?? .requestFailed); publish()
+            }
         }
         submitting.remove(entry.operationId)
         requestReconcile()
-        return entry.operationId
+        return (entry.operationId, outcome)
     }
     private func submission(_ pending: CFLPending) -> ChordJSON {
         var fields: [String: ChordJSON] = ["operationId": .string(pending.operationId), "text": .string(pending.text)]
@@ -788,9 +1565,11 @@ public actor CFLChatClient {
               sessionRevision == expectedSessionRevision else { throw CFLFailure.sessionChanged }
         let revision = sessionRevision
         try Task.checkCancellation()
-        guard UUID(uuidString: operationId) != nil else { throw CFLFailure.invalidInput }
+        guard let sourceUUID = UUID(uuidString: operationId) else { throw CFLFailure.invalidInput }
         guard let index = entries.firstIndex(where: { $0.target == target && $0.sessionId == sessionId && $0.operationId == operationId && $0.status == .failed && $0.dispatched }) else { throw CFLFailure.invalidInput }
         let original = entries[index], attempt = UUID().uuidString.lowercased()
+        usedSendOperations.insert(sourceUUID)
+        usedSendOperations.insert(UUID(uuidString: attempt)!)
         var entry = CFLPending(target: target, sessionId: sessionId, operationId: attempt, text: original.text, createdAt: Date(), dispatched: false, status: .unknown, images: original.images, retrySource: operationId)
         var next = entries; next[index] = entry
         do { try await persist(next) }
