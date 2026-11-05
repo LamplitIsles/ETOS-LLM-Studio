@@ -154,6 +154,9 @@ private struct CFLNativeMessageBubble: View {
 
     var body: some View {
         VStack(alignment: item.outgoing ? .trailing : .leading, spacing: 4) {
+            if let ui = item.ui {
+                CFLA2UIMessage(item: item, payload: ui, model: model)
+            }
             if let voice = item.voice {
                 CFLVoiceMessage(item: item, voice: voice, model: model, player: voicePlayer)
             }

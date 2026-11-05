@@ -8634,3 +8634,4 @@
 "无法添加文件，请检查文件大小和连接。" = "Could not add the file. Check its size and your connection.";
 "无法选择文件，请重试。" = "Could not select the file. Please try again.";
 "附件未恢复，请重新选择。" = "Attachments were not restored. Please select them again.";
+"界面暂时无法显示" = "Unable to display this interface";

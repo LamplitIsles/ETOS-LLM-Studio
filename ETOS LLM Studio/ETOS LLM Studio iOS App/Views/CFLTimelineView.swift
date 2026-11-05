@@ -53,7 +53,7 @@ enum CFLTimelineRow: Sendable {
                                        String($0.order), String($0.data.count)])
             }
             signature = [text, String(item.markdown), String(item.sessionRevision), item.clientID.uuidString,
-                         String(item.markdownSourcesRevision), String(item.isReminder), item.voice?.id ?? "",
+                         String(item.markdownSourcesRevision), String(item.isReminder), item.voice?.id ?? "", item.ui.map(Self.encoded) ?? "",
                          item.imageState?.rawValue ?? "", item.historyGap?.status.rawValue ?? "", item.pending.flatMap {
                              CFLPendingPresentation.needsAction($0, busy: item.sendingLocally) ? Self.encoded($0) : nil
                          } ?? ""] + imageInfo + previews + item.files.map { "file:" + Self.key([$0.name, String($0.size), $0.ref.map(Self.encoded) ?? ""]) }

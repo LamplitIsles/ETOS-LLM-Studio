@@ -32,6 +32,7 @@ struct CFLDisplayMessage: Identifiable, Sendable {
     var markdownSourcesRevision = 0
     var isReminder = false
     var voice: CFLVoiceRef? = nil
+    var ui: CFLJSONValue? = nil
     var imageState: CFLImageState? = nil
     var previews: [CFLLocalImagePreview] = []
     var pending: CFLPending? = nil
@@ -126,6 +127,9 @@ nonisolated enum CFLTimelineProjection {
         }
         func messageRows(_ message: CFLMessage) -> [CFLDisplayMessage] {
             let operation = message.operationId
+            if let ui = message.ui {
+                return [CFLDisplayMessage(id: .init(target: input.target, session: input.session, message: message.id, offset: -1), text: "", outgoing: false, markdown: false, images: [], sessionRevision: input.revision, clientID: input.clientID, ui: ui)]
+            }
             if let operation, let source = input.pending.first(where: { $0.sessionId == input.session && $0.operationId == operation })?.retrySource,
                (input.pending.first(where: { $0.operationId == operation && $0.sessionId == input.session })?.files?.isEmpty == false ||
                 (input.previews.contains(where: { $0.sessionId == input.session && $0.operationId == source }) &&

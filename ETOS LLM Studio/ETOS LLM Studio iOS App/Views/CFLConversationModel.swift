@@ -657,6 +657,21 @@ final class CFLConversationModel: ObservableObject {
         }
     }
 
+    func rendererMedia(_ path: String, range: String?, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> CFLRendererMediaResponse {
+        guard imagePageActive, let context = imageContext,
+              isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),
+              let client else { throw CFLFailure.sessionChanged }
+        let pageRevision = imagePageRevision
+        do {
+            let response = try await client.rendererMedia(path, range: range, expectedSessionId: context.session, expectedSessionRevision: context.revision)
+            guard !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context else { throw CFLFailure.sessionChanged }
+            return response
+        } catch {
+            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }
+            throw error
+        }
+    }
+
     func markdownImage(_ source: String, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> Data {
         guard imagePageActive, let context = imageContext,
               isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),

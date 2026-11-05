@@ -34,6 +34,44 @@ struct CFLTimelineRowsTests {
                           sessionRevision: 1, clientID: UUID())
     }
 
+    @Test("Interface messages retain timeline position and update their own row")
+    func interfaceRowPresentation() throws {
+        func message(_ id: String, _ ui: String) throws -> CFLMessage {
+            let wire = """
+            {"id":"\(id)","role":"agent","text":"","createdAt":1,"operationId":null,"turnId":"turn","ui":\(ui)}
+            """
+            return try JSONDecoder().decode(CFLMessage.self, from: Data(wire.utf8))
+        }
+        let first = try message("first", "null")
+        let second = try message("second", "{}")
+        let input = CFLTimelineProjection.ProjectionInput(target: "fixture", session: "session", revision: 1, clientID: UUID(),
+            messages: [first, second], reply: nil, historyGaps: [], drafts: [], previews: [], pending: [],
+            otherTargetPending: [], anchors: [:], locals: [], origins: [:])
+        let rows = CFLTimelineProjection.project(input, cache: [:]).messages
+        #expect(rows.map(\.id.message) == ["first", "second"])
+        #expect(rows[0].ui == .null && rows[1].ui == .object([:]))
+        let bubble = CFLBubbleState(rows[1])
+        var changes = 0
+        let observer = bubble.objectWillChange.sink { _ in changes += 1 }
+        var updated = rows[1]
+        updated.ui = .object(["changed": .bool(true)])
+        bubble.update(updated)
+        #expect(changes == 1 && bubble.item.ui == updated.ui)
+        #expect(CFLTimelineRow.message(rows[1]).message.id == CFLTimelineRow.message(updated).message.id)
+        withExtendedLifetime(observer) {}
+    }
+
+    @Test("The renderer bridge accepts only its dedicated scheme and authority")
+    func interfaceMediaBridgeURL() throws {
+        let valid = try #require(URL(string: "cfl-media://load/%2Fapi%2Fchat%2Fmedia%2Fphoto%2Fpreview"))
+        #expect(CFLA2UIBridgePolicy.mediaPath(valid) == "/api/chat/media/photo/preview")
+        for value in ["https://load/%2Fapi%2Faudio%2Fx.mp3", "cfl-media://other/%2Fapi%2Faudio%2Fx.mp3",
+                      "cfl-media://user@load/%2Fapi%2Faudio%2Fx.mp3", "cfl-media://load/%2Fapi%2Faudio%2Fx.mp3?x=1"] {
+            let url = try #require(URL(string: value))
+            #expect(CFLA2UIBridgePolicy.mediaPath(url) == nil)
+        }
+    }
+
     @Test("File rows retain their identity and show attachment metadata")
     func fileRowPresentation() {
         let client = UUID()
