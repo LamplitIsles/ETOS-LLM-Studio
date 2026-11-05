@@ -172,6 +172,14 @@ struct CFLHistoryGapVisits {
     }
 }
 
+enum CFLTimelineViewport {
+    static func visibleFrame(_ frame: CGRect, navigationHeight: CGFloat, composerHeight: CGFloat) -> CGRect {
+        guard !frame.isNull else { return .null }
+        return CGRect(x: frame.minX, y: frame.minY + navigationHeight, width: frame.width,
+                      height: max(0, frame.height - navigationHeight - composerHeight))
+    }
+}
+
 struct CFLTimelineView<RowContent: View, Composer: View>: View {
     @ObservedObject var model: CFLConversationModel
     @StateObject private var adapter = CFLTimelineAdapter()
@@ -211,6 +219,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
                         }
                     } else {
                         rowContent(row)
+                            .environment(\.cflA2UIViewportHeight, visibleTimelineFrame.isNull ? 0 : visibleTimelineFrame.height)
                     }
                 }
                     .padding(.horizontal, 8)
@@ -305,10 +314,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
     }
 
     private var visibleTimelineFrame: CGRect {
-        guard !timelineFrame.isNull else { return .null }
-        return CGRect(x: timelineFrame.minX, y: timelineFrame.minY + navigationOverlayHeight,
-                      width: timelineFrame.width,
-                      height: max(0, timelineFrame.height - navigationOverlayHeight - composerHeight))
+        CFLTimelineViewport.visibleFrame(timelineFrame, navigationHeight: navigationOverlayHeight, composerHeight: composerHeight)
     }
 
     private func gapVisibilityChanged(_ gap: CFLHistoryGap, visible: Bool) {

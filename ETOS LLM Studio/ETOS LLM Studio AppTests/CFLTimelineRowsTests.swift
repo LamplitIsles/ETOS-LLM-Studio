@@ -80,6 +80,10 @@ struct CFLTimelineRowsTests {
         #expect(tall.height == 600 && tall.scroll)
         #expect(CFLA2UIBridgePolicy.displayHeight(.infinity, viewport: 600)?.height == nil)
         #expect(CFLA2UIBridgePolicy.displayHeight(10_001, viewport: 600)?.height == nil)
+        let viewport = CFLTimelineViewport.visibleFrame(CGRect(x: 0, y: 10, width: 390, height: 800), navigationHeight: 64, composerHeight: 280)
+        #expect(viewport.height == 456)
+        let resized = try #require(CFLA2UIBridgePolicy.displayHeight(700, viewport: Double(viewport.height)))
+        #expect(resized.height == 456 && resized.scroll)
     }
 
     @Test("File rows retain their identity and show attachment metadata")

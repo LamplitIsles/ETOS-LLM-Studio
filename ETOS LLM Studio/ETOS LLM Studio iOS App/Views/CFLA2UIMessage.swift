@@ -6,6 +6,16 @@ import UIKit
 import WebKit
 import ETOSCore
 
+private struct CFLA2UIViewportHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+extension EnvironmentValues {
+    var cflA2UIViewportHeight: CGFloat {
+        get { self[CFLA2UIViewportHeightKey.self] }
+        set { self[CFLA2UIViewportHeightKey.self] = newValue }
+    }
+}
+
 enum CFLA2UIBridgePolicy {
     static func displayHeight(_ value: Double, viewport: Double) -> (height: CGFloat, scroll: Bool)? {
         guard value.isFinite, value > 0, value <= 10_000, viewport.isFinite, viewport > 0 else { return nil }
@@ -29,6 +39,7 @@ struct CFLA2UIMessage: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
+    @Environment(\.cflA2UIViewportHeight) private var viewportHeight
     @State private var height: CGFloat = 44
     @State private var failed = false
     @State private var ready = false
@@ -38,11 +49,13 @@ struct CFLA2UIMessage: View {
             if failed {
                 Text(NSLocalizedString("界面暂时无法显示", comment: "Chat interface unavailable"))
                     .font(.footnote).foregroundStyle(.secondary).padding(12)
-            } else {
+            } else if viewportHeight > 0 {
                 CFLA2UIWebView(item: item, payload: payload, model: model, dark: colorScheme == .dark,
                                locale: locale.language.languageCode?.identifier == "zh" ? "zh" : "en",
-                               fontScale: fontScale, height: $height, failed: $failed, ready: $ready)
+                               fontScale: fontScale, viewportHeight: viewportHeight, height: $height, failed: $failed, ready: $ready)
                     .frame(height: height)
+            } else {
+                Color.clear.frame(height: height)
             }
             Spacer(minLength: 40)
         }
@@ -73,6 +86,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
     let dark: Bool
     let locale: String
     let fontScale: Double
+    let viewportHeight: CGFloat
     @Binding var height: CGFloat
     @Binding var failed: Bool
     @Binding var ready: Bool
@@ -103,7 +117,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             coordinator.fail(); return
         }
         coordinator.update(page: page, payload: payload, dark: dark, locale: locale,
-                           fontScale: fontScale, viewportHeight: webView.window?.bounds.height ?? UIScreen.main.bounds.height)
+                           fontScale: fontScale, viewportHeight: viewportHeight)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -124,6 +138,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
         private var payload: CFLJSONValue?
         private var options: [String: Any] = [:]
         private var viewportHeight: Double = 0
+        private var reportedHeight: Double?
         private var ready = false
         private var stopped = false
 
@@ -138,6 +153,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
                 || (options["viewportHeight"] as? Double) != Double(viewportHeight)
             self.payload = payload
             self.viewportHeight = Double(viewportHeight)
+            if let reportedHeight { applyHeight(reportedHeight) }
             options = ["dark": dark, "locale": locale, "fontScale": fontScale, "viewportHeight": Double(viewportHeight)]
             if pageChanged {
                 self.page = page; ready = false
@@ -161,10 +177,19 @@ private struct CFLA2UIWebView: UIViewRepresentable {
                 ready = true; readyState = true; render()
             } else if message.name == "a2uiHeight", let number = message.body as? NSNumber,
                       CFGetTypeID(number) != CFBooleanGetTypeID() {
-                let value = number.doubleValue
-                guard let size = CFLA2UIBridgePolicy.displayHeight(value, viewport: viewportHeight) else { fail(); return }
-                webView.scrollView.isScrollEnabled = size.scroll
-                if abs(height - size.height) > 0.5 { height = size.height }
+                reportedHeight = number.doubleValue
+                applyHeight(number.doubleValue)
+            }
+        }
+
+        private func applyHeight(_ value: Double) {
+            guard let size = CFLA2UIBridgePolicy.displayHeight(value, viewport: viewportHeight) else { fail(); return }
+            webView?.scrollView.isScrollEnabled = size.scroll
+            if abs(height - size.height) > 0.5 {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.stopped else { return }
+                    self.height = size.height
+                }
             }
         }
 
