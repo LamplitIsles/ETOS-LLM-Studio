@@ -63,6 +63,13 @@ public enum CFLHTTPSOrigin {
     }
 }
 
+/// An authenticated, bounded response for the embedded renderer's scheme handler.
+public struct CFLRendererMediaResponse: Sendable {
+    public let data: Data
+    public let statusCode: Int
+    public let headers: [String: String]
+}
+
 public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let role: String
@@ -79,6 +86,29 @@ public struct CFLMessage: Codable, Equatable, Sendable, Identifiable {
     public let textState: CFLTextState?
     public let voice: CFLVoiceRef?
     public let source: CFLMessageSource?
+    /// Present even when the wire value is JSON null. The renderer validates semantics.
+    public let ui: CFLJSONValue?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, role, text, ends, createdAt, operationId, turnId, images, files, imageState, textState, voice, source, ui
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        role = try c.decode(String.self, forKey: .role)
+        text = try c.decode(String.self, forKey: .text)
+        ends = try c.decodeIfPresent([Int].self, forKey: .ends)
+        createdAt = try c.decode(Double.self, forKey: .createdAt)
+        operationId = try c.decodeIfPresent(String.self, forKey: .operationId)
+        turnId = try c.decodeIfPresent(String.self, forKey: .turnId)
+        images = try c.decodeIfPresent([CFLImageRef].self, forKey: .images)
+        files = try c.decodeIfPresent([CFLFileRef].self, forKey: .files)
+        imageState = try c.decodeIfPresent(CFLImageState.self, forKey: .imageState)
+        textState = try c.decodeIfPresent(CFLTextState.self, forKey: .textState)
+        voice = try c.decodeIfPresent(CFLVoiceRef.self, forKey: .voice)
+        source = try c.decodeIfPresent(CFLMessageSource.self, forKey: .source)
+        ui = c.contains(.ui) ? try c.decode(CFLJSONValue.self, forKey: .ui) : nil
+    }
     public var isReminder: Bool { source?.kind == "reminder" }
     var valid: Bool {
         guard !id.isEmpty, ["user", "agent", "notice"].contains(role), createdAt.isFinite,

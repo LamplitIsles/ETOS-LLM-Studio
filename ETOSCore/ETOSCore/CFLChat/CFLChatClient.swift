@@ -489,14 +489,45 @@ public actor CFLChatClient {
         if let files = fields["files"] { guard let values = files.array, values.count <= 6, values.allSatisfy(validFileWire) else { return false } }
         return true
     }
+    // Bound only a copy: future Chord patches must still apply to the original tree.
+    private func boundedUIProjection(_ value: ChordJSON) -> ChordJSON {
+        guard var fields = value.object, let messages = fields["messages"]?.array else { return value }
+        fields["messages"] = .array(messages.map { message in
+            guard var item = message.object, let payload = item["ui"] else { return message }
+            var count = 0
+            func withinBounds(_ value: ChordJSON, _ depth: Int) -> Bool {
+                count += 1
+                guard count <= 16_384, depth <= 32 else { return false }
+                switch value {
+                case .number(let n): return n.isFinite
+                case .string(let s): return s.utf16.count <= 16_384
+                case .array(let values): return values.count <= 16_384 && values.allSatisfy { withinBounds($0, depth + 1) }
+                case .object(let values):
+                    return values.count <= 16_384 && values.allSatisfy { $0.key.utf16.count <= 16_384 && withinBounds($0.value, depth + 1) }
+                default: return true
+                }
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .withoutEscapingSlashes
+            if !withinBounds(payload, 0) || (try? encoder.encode(payload).count).map({ $0 <= 16_384 }) != true {
+                item["ui"] = .object([:])
+            }
+            return .object(item)
+        })
+        return .object(fields)
+    }
     private func validMessageWire(_ raw: ChordJSON) -> Bool {
         guard let fields = raw.object,
-              Set(fields.keys).isSubset(of: Set(["id", "role", "text", "ends", "createdAt", "operationId", "turnId", "images", "files", "imageState", "textState", "voice", "source", "thinking"])),
+              Set(fields.keys).isSubset(of: Set(["id", "role", "text", "ends", "createdAt", "operationId", "turnId", "images", "files", "imageState", "textState", "voice", "source", "thinking", "ui"])),
               let id = fields["id"]?.string, !id.isEmpty, id.utf16.count <= 300,
               let role = fields["role"]?.string, let text = fields["text"]?.string,
               fields["operationId"] == .null || fields["operationId"]?.string != nil,
               fields["turnId"] == .null || fields["turnId"]?.string != nil else { return false }
-        let isReply = role == "agent" && fields["source"] == nil && fields["imageState"] == nil && fields["voice"] == nil
+        if fields["ui"] != nil {
+            guard role == "agent", text.isEmpty,
+                  ["source", "voice", "images", "files", "imageState", "textState", "ends"].allSatisfy({ fields[$0] == nil }) else { return false }
+        }
+        let isReply = role == "agent" && fields["source"] == nil && fields["imageState"] == nil && fields["voice"] == nil && fields["ui"] == nil
         guard validReplyEnds(fields["ends"], text: text, required: isReply) else { return false }
         if let images = fields["images"] { guard let items = images.array, items.allSatisfy(validImageWire) else { return false } }
         if let files = fields["files"] { guard let items = files.array, items.allSatisfy(validFileWire) else { return false } }
@@ -557,7 +588,7 @@ public actor CFLChatClient {
               let capabilities = fields["capabilities"]?.object,
               capabilities["text"] == .bool(true), capabilities["stop"] == .bool(true),
               fields["contextUsage"] != nil, fields["compaction"] != nil, let rawRecovery = fields["recovery"]?.array, rawRecovery.allSatisfy(validRecoveryWire) else { throw CFLFailure.protocolError }
-        let view = try decode(CFLView.self, value)
+        let view = try decode(CFLView.self, boundedUIProjection(value))
         guard view.version == 2, !view.sessionId.isEmpty, view.messages.count <= 30,
               let rawMessages = fields["messages"]?.array, rawMessages.allSatisfy(validMessageWire),
               validStreamingReplyWire(fields["streamingReply"]),
@@ -651,7 +682,7 @@ public actor CFLChatClient {
             let raw = try await call(method: "history", args: [.string(before)])
             try Task.checkCancellation()
             guard raw.object?["before"] != nil else { throw CFLFailure.protocolError }
-            let page: CFLPage = try decode(CFLPage.self, raw)
+            let page: CFLPage = try decode(CFLPage.self, boundedUIProjection(raw))
             guard state.sessionId == session, generation == current, sessionRevision == sessionVersion,
                   historyRevision == revision else { throw CFLFailure.sessionChanged }
             guard page.messages.count <= 30, raw.object?["messages"]?.array?.allSatisfy(validMessageWire) == true, page.messages.allSatisfy(\.valid), Set(page.messages.map(\.id)).count == page.messages.count else { throw CFLFailure.protocolError }
@@ -694,7 +725,7 @@ public actor CFLChatClient {
             guard active, !disconnecting, generation == current, sessionRevision == version, state.sessionId == session,
                   let index = gaps.firstIndex(where: { $0.gap.id == id && $0.cursor == cursor && $0.gap.status == .loading }) else { return }
             guard raw.object?["before"] != nil else { throw CFLFailure.protocolError }
-            let page = try decode(CFLPage.self, raw)
+            let page = try decode(CFLPage.self, boundedUIProjection(raw))
             guard page.messages.count <= 30, raw.object?["messages"]?.array?.allSatisfy(validMessageWire) == true,
                   page.messages.allSatisfy(\.valid), Set(page.messages.map(\.id)).count == page.messages.count else { throw CFLFailure.protocolError }
             let all = olderMessages + latestMessages
@@ -1264,6 +1295,68 @@ public actor CFLChatClient {
               result.image.valid, result.image.availability == "available", result.image.sticker == sticker.identity,
               result.image.mediaType == sticker.mediaType else { throw CFLFailure.protocolError }
         return result.image
+    }
+    /// Read a contract-approved relative media path with the current authenticated
+    /// transport. Cancel the caller's Task when the scheme task stops. Audio Range
+    /// requests are served by slicing a bounded full response, never by forwarding
+    /// arbitrary request headers. Images do not accept Range.
+    public func rendererMedia(_ path: String, range: String? = nil, expectedSessionId: String,
+                              expectedSessionRevision: Int) async throws -> CFLRendererMediaResponse {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        let isAudio: Bool
+        let variant: String
+        if components.count == 6, components[0].isEmpty, components[1] == "api", components[2] == "chat", components[3] == "media" {
+            let id = components[4]
+            guard !id.isEmpty, id.utf8.count <= 100, id.utf8.allSatisfy({
+                (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+            }), ["original", "preview", "model"].contains(String(components[5])), range == nil else { throw CFLFailure.invalidInput }
+            isAudio = false; variant = String(components[5])
+        } else if components.count == 4, components[0].isEmpty, components[1] == "api", components[2] == "audio",
+                  components[3].hasSuffix(".mp3"), CFLVoiceRef(id: String(components[3].dropLast(4))).valid {
+            isAudio = true; variant = "audio"
+        } else { throw CFLFailure.invalidInput }
+        // Parse before issuing any authenticated request; multiple ranges are unsupported.
+        var bounds: (Int?, Int?)?
+        if let range {
+            guard isAudio, range.hasPrefix("bytes="), !range.contains(",") else { throw CFLFailure.invalidInput }
+            let parts = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
+            guard parts.count == 2, !(parts[0].isEmpty && parts[1].isEmpty),
+                  parts.allSatisfy({ $0.isEmpty || $0.utf8.allSatisfy { (48...57).contains($0) } }),
+                  (parts[0].isEmpty || Int(parts[0]) != nil), (parts[1].isEmpty || Int(parts[1]) != nil) else { throw CFLFailure.invalidInput }
+            bounds = (Int(parts[0]), Int(parts[1]))
+        }
+        let current = try stickerContext(expectedSessionId, expectedSessionRevision)
+        let req = try request(path: path, method: "GET")
+        let limit = variant == "preview" ? 160_000 : (variant == "model" ? 320_000 : 32 * 1024 * 1024)
+        let (data, raw) = try await imageHTTP.boundedData(for: req, maximumBytes: limit)
+        try Task.checkCancellation()
+        try checkStickerContext(expectedSessionId, expectedSessionRevision, current)
+        guard let response = raw as? HTTPURLResponse, response.url == req.url else { throw CFLFailure.protocolError }
+        guard response.statusCode == 200 else {
+            throw response.statusCode == 401 || response.statusCode == 403 ? CFLFailure.accessDenied : CFLFailure.requestFailed
+        }
+        let type = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init)?.lowercased()
+        guard !data.isEmpty, data.count <= limit, let type,
+              (isAudio ? type == "audio/mpeg" : (CFLImageLimits.types.contains(type) && (variant == "original" || type == "image/jpeg"))) else { throw CFLFailure.protocolError }
+        var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": "no-store"]
+        guard isAudio else { return CFLRendererMediaResponse(data: data, statusCode: 200, headers: headers) }
+        headers["Accept-Ranges"] = "bytes"
+        guard let bounds else { return CFLRendererMediaResponse(data: data, statusCode: 200, headers: headers) }
+        let start: Int, end: Int
+        if let first = bounds.0 {
+            start = first; end = min(bounds.1 ?? (data.count - 1), data.count - 1)
+        } else {
+            let suffix = bounds.1 ?? 0
+            start = max(0, data.count - min(suffix, data.count)); end = data.count - 1
+        }
+        guard start < data.count, start <= end else {
+            headers["Content-Range"] = "bytes */\(data.count)"; headers["Content-Length"] = "0"
+            return CFLRendererMediaResponse(data: Data(), statusCode: 416, headers: headers)
+        }
+        let partial = data.subdata(in: start..<(end + 1))
+        headers["Content-Range"] = "bytes \(start)-\(end)/\(data.count)"
+        headers["Content-Length"] = String(partial.count)
+        return CFLRendererMediaResponse(data: partial, statusCode: 206, headers: headers)
     }
     /// Loads a voice from this connection's origin. Cancel on disappearance and
     /// discard results if the owning client changes.

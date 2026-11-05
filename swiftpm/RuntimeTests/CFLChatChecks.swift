@@ -676,6 +676,156 @@ actor FakeVoiceHTTP: CFLImageHTTP {
     func allRequests() -> [URLRequest] { requests }
 }
 
+actor FakeRendererMediaHTTP: CFLImageHTTP {
+    var requests: [URLRequest] = []
+    var redirect = false
+    var status = 200
+    var overrideType: String?
+    var hold = false
+    var waiter: CheckedContinuation<Void, Never>?
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) { throw CFLFailure.requestFailed }
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        if hold { await withCheckedContinuation { waiter = $0 }; hold = false }
+        let audio = request.url!.path.hasPrefix("/api/audio/")
+        let data = Data((audio ? "ID3abc" : "image").utf8)
+        precondition(data.count <= maximumBytes)
+        let url = redirect ? URL(string: "https://elsewhere.test/file")! : request.url!
+        let type = overrideType ?? (audio ? "audio/mpeg" : (request.url!.path.hasSuffix("/original") ? "image/png" : "image/jpeg"))
+        return (data, HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": type])!)
+    }
+    func setStatus(_ value: Int) { status = value }
+    func setType(_ value: String?) { overrideType = value }
+    func setRedirect(_ value: Bool) { redirect = value }
+    func setHold() { hold = true }
+    func isHeld() -> Bool { waiter != nil }
+    func release() { waiter?.resume(); waiter = nil }
+    func allRequests() -> [URLRequest] { requests }
+}
+
+func checkRendererMessagesAndMedia() async throws {
+    func uiMessage(_ id: String, _ value: ChordJSON) -> ChordJSON {
+        .object(["id": .string(id), "role": .string("agent"), "text": .string(""), "createdAt": .number(1),
+                 "operationId": .null, "turnId": .string("turn"), "ui": value])
+    }
+    let huge = uiMessage("large", .object(["payload": .string(String(repeating: "x", count: 17_000))]))
+    let old = FakeSocket(snapshot: historySnapshot(0..<0, before: "older", session: "A", messages: [historyMessage(1), huge]))
+    let fresh = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, session: "A", messages: [historyMessage(1), huge]))
+    await old.setHistory(["older": .object(["before": .null, "messages": .array([uiMessage("null", .null), historyMessage(0)])])])
+    let sockets = SocketSequence([old, fresh])
+    let http = FakeRendererMediaHTTP(), auth = CFLAuthorization(store: ImageTestCredentials(), http: http)
+    try await auth.select(origin: "https://example.com")
+    let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: CFLAuthorizedHTTP(authorization: auth, http: http), transport: { try await sockets.next() })
+    await client.connect(); try await client.loadEarlier()
+    var state = await client.currentState()
+    precondition(state.messages.map(\.id) == ["null", "server-0", "server-1", "large"])
+    precondition(state.messages[0].ui == .null && state.messages[1].ui == nil && state.messages.last?.ui == .object([:]))
+    // Apply a nested patch to the original oversized payload; a bounded mutation of
+    // Chord state would have removed this key and made the patch fail.
+    let patch: ChordJSON = .object(["type": .string("update"), "subscriptionId": .string("view"), "update": .object([
+        "type": .string("state"), "member": .string("view"), "sequence": .number(1),
+        "ops": .array([.array([.string("s"), .array([.string("messages"), .number(1), .string("ui"), .string("payload")]), .string("small")])])])])
+    try await old.emit(patch)
+    for _ in 0..<200 {
+        state = await client.currentState()
+        if state.messages.last?.ui == .object(["payload": .string("small")]) { break }
+        try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    precondition(state.messages.last?.ui == .object(["payload": .string("small")]))
+    await client.disconnect(); await client.connect()
+    state = await client.currentState()
+    precondition(state.messages.map(\.id) == ["null", "server-0", "server-1", "large"] && state.messages.last?.ui == .object([:]))
+    let rev = state.sessionRevision, audio = "/api/audio/" + String(repeating: "a", count: 64) + ".mp3"
+    let full = try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: rev)
+    precondition(full.statusCode == 200 && full.headers["Accept-Ranges"] == "bytes" && full.data == Data("ID3abc".utf8))
+    let part = try await client.rendererMedia(audio, range: "bytes=1-3", expectedSessionId: "A", expectedSessionRevision: rev)
+    precondition(part.statusCode == 206 && part.headers["Content-Range"] == "bytes 1-3/6" && part.data == Data("D3a".utf8))
+    let suffix = try await client.rendererMedia(audio, range: "bytes=-2", expectedSessionId: "A", expectedSessionRevision: rev)
+    precondition(suffix.data == Data("bc".utf8))
+    let unsatisfied = try await client.rendererMedia(audio, range: "bytes=99-", expectedSessionId: "A", expectedSessionRevision: rev)
+    precondition(unsatisfied.statusCode == 416 && unsatisfied.headers["Content-Range"] == "bytes */6")
+    for variant in ["original", "preview", "model"] {
+        let image = try await client.rendererMedia("/api/chat/media/image-1/" + variant, expectedSessionId: "A", expectedSessionRevision: rev)
+        precondition(image.statusCode == 200 && image.data == Data("image".utf8))
+    }
+    let requests = await http.allRequests()
+    precondition(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token" && $0.value(forHTTPHeaderField: "Range") == nil })
+    for path in ["https://elsewhere.test/a", "//elsewhere.test/api/audio/a", "/api/chat/media/../original", "/api/chat/media/x/original?x=1", "/api/chat/media/%2e/original", "/api/audio/" + String(repeating: "A", count: 64) + ".mp3"] {
+        do { _ = try await client.rendererMedia(path, expectedSessionId: "A", expectedSessionRevision: rev); preconditionFailure() } catch CFLFailure.invalidInput { }
+    }
+    do { _ = try await client.rendererMedia(audio, range: "bytes=0-1,2-3", expectedSessionId: "A", expectedSessionRevision: rev); preconditionFailure() } catch CFLFailure.invalidInput { }
+    await http.setRedirect(true)
+    do { _ = try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: rev); preconditionFailure() } catch CFLFailure.protocolError { }
+    await http.setRedirect(false); await http.setType("text/html")
+    do { _ = try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: rev); preconditionFailure() } catch CFLFailure.protocolError { }
+    await http.setType(nil); await http.setStatus(404)
+    do { _ = try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: rev); preconditionFailure() } catch CFLFailure.requestFailed { }
+    await http.setStatus(200); await http.setHold()
+    let cancelled = Task { try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: rev) }
+    while !(await http.isHeld()) { await Task.yield() }
+    cancelled.cancel(); await http.release()
+    do { _ = try await cancelled.value; preconditionFailure() } catch { }
+    await http.setHold()
+    let stale = Task { try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: rev) }
+    while !(await http.isHeld()) { await Task.yield() }
+    try await fresh.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await client.currentState().sessionId != "B" { await Task.yield() }
+    await http.release()
+    do { _ = try await stale.value; preconditionFailure() } catch CFLFailure.sessionChanged { }
+    await client.disconnect()
+
+    // Reconnect gap pagination uses the same bounded projection as initial/history.
+    let gapOld = FakeSocket(snapshot: historySnapshot(0..<30, before: nil))
+    let gapNew = FakeSocket(snapshot: historySnapshot(70..<100, before: "gap"))
+    await gapNew.setHistory(["gap": .object(["before": .null, "messages": .array([historyMessage(29), uiMessage("gap-ui", .null), historyMessage(70)])])])
+    let gapSockets = SocketSequence([gapOld, gapNew])
+    let gapClient = CFLChatClient(target: "history", store: MemoryStore(), transport: { try await gapSockets.next() })
+    await gapClient.connect(); await gapClient.disconnect(); await gapClient.connect()
+    let gapState = await gapClient.currentState(); precondition(gapState.historyGaps.count == 1)
+    await gapClient.fillGap(id: gapState.historyGaps[0].id)
+    let filled = await gapClient.currentState()
+    precondition(filled.historyGaps.isEmpty && filled.messages[30].id == "gap-ui" && filled.messages[30].ui == .null)
+    await gapClient.disconnect()
+
+    // The bound is UTF-8 JSON bytes, including quotes, not character count.
+    let surface: ChordJSON = .object(["version": .string("1.0"), "createSurface": .object([
+        "surfaceId": .string("s"), "catalogId": .string("https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"),
+        "components": .array([.object(["id": .string("root"), "component": .string("Text"), "text": .string("hello")])])])])
+    let byteSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: [
+        uiMessage("within", .string(String(repeating: "é", count: 8191))),
+        uiMessage("over", .string(String(repeating: "é", count: 8192))),
+        uiMessage("slashes", .string(String(repeating: "/", count: 16_382))), uiMessage("valid", surface)
+    ]))
+    let byteClient = CFLChatClient(target: "history", store: MemoryStore(), transport: { byteSocket })
+    await byteClient.connect(); let byteState = await byteClient.currentState()
+    precondition(byteState.messages[0].ui == .string(String(repeating: "é", count: 8191)))
+    precondition(byteState.messages[1].ui == .object([:]))
+    precondition(byteState.messages[2].ui == .string(String(repeating: "/", count: 16_382)))
+    precondition(byteState.messages[3].ui == surface)
+    await byteClient.disconnect()
+    var tooDeep: ChordJSON = .null
+    for _ in 0..<33 { tooDeep = .array([tooDeep]) }
+    let depthSocket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: [uiMessage("depth", tooDeep), historyMessage(0)]))
+    let depthClient = CFLChatClient(target: "history", store: MemoryStore(), transport: { depthSocket })
+    await depthClient.connect(); let depthState = await depthClient.currentState()
+    precondition(depthState.messages.first?.ui == .object([:]) && depthState.messages.count == 2)
+    await depthClient.disconnect()
+    for field in ["source", "voice", "images", "files", "imageState", "textState", "ends", "extra"] {
+        var bad = uiMessage("bad", .null).object!; bad[field] = .null
+        let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: [.object(bad)]))
+        let badClient = CFLChatClient(target: "history", store: MemoryStore(), transport: { socket })
+        await badClient.connect(); let badState = await badClient.currentState()
+        precondition(badState.connection == .protocolError); await badClient.disconnect()
+    }
+    for (key, value) in [("role", "user"), ("text", "mixed")] {
+        var bad = uiMessage("bad", .null).object!; bad[key] = .string(value)
+        let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, messages: [.object(bad)]))
+        let badClient = CFLChatClient(target: "history", store: MemoryStore(), transport: { socket })
+        await badClient.connect(); let badState = await badClient.currentState()
+        precondition(badState.connection == .protocolError); await badClient.disconnect()
+    }
+}
+
 func checkVoiceMessages() async throws {
     let id = String(repeating: "a", count: 64)
     func message(_ messageId: String, _ audioId: String) -> ChordJSON {
@@ -2921,6 +3071,7 @@ struct CFLChatChecks {
         if CommandLine.arguments.dropFirst().elementsEqual(["--ordered-only"]) { try await checkOrderedTimeline(); print("CFL ordered timeline checks passed"); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--view-window-only"]) { try await checkViewItemAndWindowContinuity(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--retry-only"]) { try await checkRetryImages(); print("CFL retry image checks passed"); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--renderer-only"]) { try await checkRendererMessagesAndMedia(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--voice-only"]) { try await checkVoiceMessages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--external-images-only"]) { try await checkExternalMarkdownImages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--markdown-images-only"]) { try await checkMarkdownImages(); return }
@@ -2932,6 +3083,7 @@ struct CFLChatChecks {
         try await checkFileCopyCancellation()
         try await checkFiles()
         #endif
+        try await checkRendererMessagesAndMedia()
         try await checkReplySourceContract()
         try await checkCallerSendIdentity()
         try await checkStickers()
