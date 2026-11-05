@@ -141,7 +141,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             guard ready, !stopped, let webView, let payload,
                   let data = try? JSONEncoder().encode(payload),
                   let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return }
-            webView.callAsyncJavaScript("window.a2uiHost.show(payload, options)", arguments: ["payload": value, "options": options], in: nil, in: .page) { [weak self] result in
+            webView.callAsyncJavaScript("window.a2uiHost.show(payload, options); return true;", arguments: ["payload": value, "options": options], in: nil, in: .page) { [weak self] result in
                 if case .failure = result { self?.fail() }
             }
         }
