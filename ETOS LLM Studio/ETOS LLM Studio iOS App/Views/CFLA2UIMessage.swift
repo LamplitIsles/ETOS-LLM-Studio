@@ -6,16 +6,6 @@ import UIKit
 import WebKit
 import ETOSCore
 
-private struct CFLA2UIViewportHeightKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 0
-}
-extension EnvironmentValues {
-    var cflA2UIViewportHeight: CGFloat {
-        get { self[CFLA2UIViewportHeightKey.self] }
-        set { self[CFLA2UIViewportHeightKey.self] = newValue }
-    }
-}
-
 enum CFLA2UIBridgePolicy {
     static func displayHeight(_ value: Double, viewport: Double) -> (height: CGFloat, scroll: Bool)? {
         guard value.isFinite, value > 0, value <= 10_000, viewport.isFinite, viewport > 0 else { return nil }
@@ -79,10 +69,12 @@ struct CFLA2UIMessage: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
-    @Environment(\.cflA2UIViewportHeight) private var viewportHeight
+    @EnvironmentObject private var viewport: CFLA2UIViewport
     @State private var height: CGFloat = 44
     @State private var failed = false
     @State private var ready = false
+
+    private var viewportHeight: CGFloat { viewport.height }
 
     var body: some View {
         HStack {

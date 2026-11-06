@@ -183,6 +183,7 @@ enum CFLTimelineViewport {
 struct CFLTimelineView<RowContent: View, Composer: View>: View {
     @ObservedObject var model: CFLConversationModel
     @StateObject private var adapter = CFLTimelineAdapter()
+    @StateObject private var a2uiViewport = CFLA2UIViewport()
     @State private var timelineFrame: CGRect = .null
     @State private var gapVisits = CFLHistoryGapVisits()
     @Binding var timelineScroll: ScrollToParams?
@@ -197,6 +198,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
     let composer: Composer
 
     var body: some View {
+        let viewport = a2uiViewport
         let rows = adapter.rows
         let firstVisibleID = rows.first?.message.id
         let hasHistoryHeader = model.state.before != nil || model.state.historySyncFailed
@@ -219,7 +221,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
                         }
                     } else {
                         rowContent(row)
-                            .environment(\.cflA2UIViewportHeight, visibleTimelineFrame.isNull ? 0 : visibleTimelineFrame.height)
+                            .environmentObject(viewport)
                     }
                 }
                     .padding(.horizontal, 8)
@@ -245,6 +247,10 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
         }
         .chatTheme(colors: .init(mainBG: .clear))
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { timelineFrame = $0 }
+        .onChange(of: visibleTimelineFrame, initial: true) { _, frame in
+            let height = frame.isNull ? 0 : frame.height
+            viewport.update(height: height)
+        }
         .mask {
             GeometryReader { geometry in
                 let edge = min(timelineEdgeFade / max(geometry.size.height, 1), 0.5)

@@ -8,6 +8,23 @@ import Testing
 @MainActor
 @Suite("CFL timeline row presentation")
 struct CFLTimelineRowsTests {
+    @Test("Viewport updates reach existing message subscribers")
+    func interfaceViewportUpdates() {
+        let viewport = CFLA2UIViewport()
+        let retainedBuilder = { viewport }
+        var heights: [CGFloat] = []
+        let observation = retainedBuilder().$height.sink { heights.append($0) }
+        #expect(retainedBuilder().height == 0)
+        viewport.update(height: 600)
+        #expect(retainedBuilder() === viewport)
+        #expect(retainedBuilder().height == 600)
+        viewport.update(height: 600)
+        viewport.update(height: 320)
+        #expect(retainedBuilder().height == 320)
+        #expect(heights == [0, 600, 320])
+        withExtendedLifetime(observation) {}
+    }
+
     @Test("A gap loads once per viewport visit and errors require explicit retry")
     func gapVisibilityVisits() {
         var visits = CFLHistoryGapVisits()
