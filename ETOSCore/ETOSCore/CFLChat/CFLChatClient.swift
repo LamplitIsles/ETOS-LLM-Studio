@@ -1518,10 +1518,14 @@ public actor CFLChatClient {
     /// Callbacks are serial and awaited on the caller's task; no executor is
     /// prescribed. The scheme handler must marshal to its own executor, cancel
     /// on stop, and check its stopped state before every WebKit callback.
-    /// A version mismatch, 412, cancellation, or session change terminates the
-    /// stream; the handler must fail an already-started scheme task on errors.
+    /// The host must atomically admit the opaque version per resource and
+    /// session before any response (including 416) or body is delivered. It must
+    /// cancel/retire that registry with its owning session or presentation and
+    /// never expose the version to the page. A rejection, 412, cancellation, or
+    /// session change terminates the stream; fail an already-started scheme task.
     public func rendererWorkspaceMediaStream(_ path: String, range: String? = nil,
         expectedSessionId: String, expectedSessionRevision: Int,
+        admitVersion: @Sendable (String) async throws -> Void,
         onResponse: @Sendable (CFLRendererMediaResponse) async throws -> Void,
         onChunk: @Sendable (Data) async throws -> Void) async throws {
         guard let resource = CFLWorkspaceRendererResource.parse(path), resource.kind != .image else { throw CFLFailure.invalidInput }
@@ -1540,6 +1544,11 @@ public actor CFLChatClient {
               let header = probe.response.headers["Content-Range"],
               let slash = header.lastIndex(of: "/"), let total = Int(header[header.index(after: slash)...]),
               total > 0, total <= CFLWorkspaceRange.maximumTotal else { throw CFLFailure.protocolError }
+        try Task.checkCancellation()
+        try checkStickerContext(expectedSessionId, expectedSessionRevision, current)
+        try await admitVersion(version)
+        try Task.checkCancellation()
+        try checkStickerContext(expectedSessionId, expectedSessionRevision, current)
         let bounds: (Int, Int)
         if let requested {
             guard let result = requested.requested(total: total) else {

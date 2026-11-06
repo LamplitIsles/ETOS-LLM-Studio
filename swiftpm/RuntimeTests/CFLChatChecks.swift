@@ -765,6 +765,132 @@ actor WorkspaceStreamCapture {
     func snapshot() -> ([CFLRendererMediaResponse], [Int]) { (responses, sizes) }
 }
 
+// A separate fake models two independently opened scheme requests against live
+// workspace files. Version admission models the host's per-session registry.
+actor CrossTaskWorkspaceHTTP: CFLImageHTTP {
+    private var versions: [String: String] = [:]
+    private let size = 2 * 1024 * 1024 + 9
+    func setVersion(_ version: String, resource: String) { versions[resource] = version }
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) { throw CFLFailure.requestFailed }
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        let url = request.url!
+        guard let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value,
+              let range = request.value(forHTTPHeaderField: "Range"), range.hasPrefix("bytes=") else { throw CFLFailure.protocolError }
+        let version = versions[name] ?? "v1"
+        if let condition = request.value(forHTTPHeaderField: "If-CFL-Media-Version"), condition != version {
+            return (Data(), HTTPURLResponse(url: url, statusCode: 412, httpVersion: nil, headerFields: nil)!)
+        }
+        let bounds = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 2, let start = Int(bounds[0]), let requestedEnd = Int(bounds[1]), start < size else { throw CFLFailure.protocolError }
+        let end = min(requestedEnd, size - 1), length = end - start + 1
+        guard length > 0, length <= maximumBytes else { throw CFLFailure.protocolError }
+        let data = Data(repeating: version == "v1" ? 0x31 : 0x32, count: length)
+        let headers = ["Content-Type": "video/mp4", "Content-Length": String(length), "Accept-Ranges": "bytes",
+                       "Content-Range": "bytes \(start)-\(end)/\(size)", "X-CFL-Media-Version": version]
+        return (data, HTTPURLResponse(url: url, statusCode: 206, httpVersion: nil, headerFields: headers)!)
+    }
+}
+actor WorkspaceVersionRegistry {
+    private var versions: [String: String] = [:]
+    func admit(resource: String, version: String) throws {
+        try Task.checkCancellation()
+        if let previous = versions[resource], previous != version { throw CFLFailure.protocolError }
+        versions[resource] = version
+    }
+}
+actor WorkspaceTestGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    func isWaiting() -> Bool { continuation != nil }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+func checkWorkspaceVersionAdmission() async throws {
+    let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, session: "A"))
+    let http = CrossTaskWorkspaceHTTP(), auth = CFLAuthorization(store: ImageTestCredentials(), http: http)
+    try await auth.select(origin: "https://example.com")
+    let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: CFLAuthorizedHTTP(authorization: auth, http: http), transport: { socket })
+    await client.connect(); let revision = await client.currentState().sessionRevision
+    let path = "/api/chat/workspace-media?kind=video&path=movie.mp4"
+    let otherPath = "/api/chat/workspace-media?kind=video&path=other.mp4"
+    let registry = WorkspaceVersionRegistry(), gate = WorkspaceTestGate(), firstCapture = WorkspaceStreamCapture()
+    let first = Task {
+        try await client.rendererWorkspaceMediaStream(path, expectedSessionId: "A", expectedSessionRevision: revision,
+            admitVersion: { try await registry.admit(resource: path, version: $0) },
+            onResponse: { await firstCapture.response($0) }, onChunk: { data in
+                await firstCapture.chunk(data); await gate.wait()
+            })
+    }
+    while !(await gate.isWaiting()) { await Task.yield() }
+    // Two distinct, overlapping requests for the same unchanged resource share
+    // the admitted version, and an unsatisfiable range still runs admission.
+    let sibling = WorkspaceStreamCapture()
+    try await client.rendererWorkspaceMediaStream(path, range: "bytes=1-2", expectedSessionId: "A", expectedSessionRevision: revision,
+        admitVersion: { try await registry.admit(resource: path, version: $0) },
+        onResponse: { await sibling.response($0) }, onChunk: { await sibling.chunk($0) })
+    let (siblingResponses, siblingChunks) = await sibling.snapshot()
+    precondition(siblingResponses.first?.statusCode == 206 && siblingChunks == [2])
+    let allowed416 = WorkspaceStreamCapture()
+    try await client.rendererWorkspaceMediaStream(path, range: "bytes=99999999-", expectedSessionId: "A", expectedSessionRevision: revision,
+        admitVersion: { try await registry.admit(resource: path, version: $0) },
+        onResponse: { await allowed416.response($0) }, onChunk: { await allowed416.chunk($0) })
+    let (allowedResponses, allowedChunks) = await allowed416.snapshot()
+    precondition(allowedResponses.first?.statusCode == 416 && allowedChunks.isEmpty)
+
+    // Replace the file while the first stream is suspended. A separate scheme
+    // task must reject the new probe before sending either headers or bytes.
+    await http.setVersion("v2", resource: "movie.mp4")
+    for range in ["bytes=0-1", "bytes=99999999-"] {
+        let rejected = WorkspaceStreamCapture()
+        do {
+            try await client.rendererWorkspaceMediaStream(path, range: range, expectedSessionId: "A", expectedSessionRevision: revision,
+                admitVersion: { try await registry.admit(resource: path, version: $0) },
+                onResponse: { await rejected.response($0) }, onChunk: { await rejected.chunk($0) })
+            preconditionFailure("changed version accepted")
+        } catch CFLFailure.protocolError { }
+        let (responses, chunks) = await rejected.snapshot()
+        precondition(responses.isEmpty && chunks.isEmpty)
+    }
+    // An unrelated resource has its own admission key, even with a new token.
+    await http.setVersion("v2", resource: "other.mp4")
+    let other = WorkspaceStreamCapture()
+    try await client.rendererWorkspaceMediaStream(otherPath, range: "bytes=0-1", expectedSessionId: "A", expectedSessionRevision: revision,
+        admitVersion: { try await registry.admit(resource: otherPath, version: $0) },
+        onResponse: { await other.response($0) }, onChunk: { await other.chunk($0) })
+    let (otherResponses, otherChunks) = await other.snapshot()
+    precondition(otherResponses.first?.statusCode == 206 && otherChunks == [2] && otherResponses.first?.headers["X-CFL-Media-Version"] == nil)
+    await gate.release()
+    do { try await first.value; preconditionFailure("changed file continued") } catch CFLFailure.requestFailed { }
+    let (firstResponses, firstChunks) = await firstCapture.snapshot()
+    precondition(firstResponses.count == 1 && firstChunks == [2 * 1024 * 1024])
+
+    // A fresh host presentation/session owns a fresh registry and can read the
+    // new live version. Never carry a registry across session identity changes.
+    let freshRegistry = WorkspaceVersionRegistry(), fresh = WorkspaceStreamCapture()
+    try await client.rendererWorkspaceMediaStream(path, range: "bytes=0-1", expectedSessionId: "A", expectedSessionRevision: revision,
+        admitVersion: { try await freshRegistry.admit(resource: path, version: $0) },
+        onResponse: { await fresh.response($0) }, onChunk: { await fresh.chunk($0) })
+    let (freshResponses, freshChunks) = await fresh.snapshot()
+    precondition(freshResponses.first?.statusCode == 206 && freshChunks == [2])
+
+    // Even if the host admission returns after cancellation, Core checks again
+    // before delivering a 200/206/416 response or any bytes.
+    for range in ["bytes=0-1", "bytes=99999999-"] {
+        let admissionGate = WorkspaceTestGate(), cancelledCapture = WorkspaceStreamCapture()
+        let cancelled = Task {
+            try await client.rendererWorkspaceMediaStream(path, range: range, expectedSessionId: "A", expectedSessionRevision: revision,
+                admitVersion: { _ in await admissionGate.wait() },
+                onResponse: { await cancelledCapture.response($0) }, onChunk: { await cancelledCapture.chunk($0) })
+        }
+        while !(await admissionGate.isWaiting()) { await Task.yield() }
+        cancelled.cancel(); await admissionGate.release()
+        do { try await cancelled.value; preconditionFailure("cancelled admission delivered") } catch { }
+        let (responses, chunks) = await cancelledCapture.snapshot()
+        precondition(responses.isEmpty && chunks.isEmpty)
+    }
+    await client.disconnect()
+}
+
 func checkWorkspaceRendererMedia() async throws {
     let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, session: "A"))
     let http = FakeWorkspaceRendererHTTP(), auth = CFLAuthorization(store: ImageTestCredentials(), http: http)
@@ -809,7 +935,7 @@ func checkWorkspaceRendererMedia() async throws {
         await http.configure(mode); let capture = WorkspaceStreamCapture()
         do {
             try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
-                onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
+                admitVersion: { _ in }, onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
             precondition(mode == "normal")
         } catch { precondition(mode != "normal") }
         let (responses, sizes) = await capture.snapshot(), requests = await http.allRequests()
@@ -836,7 +962,7 @@ func checkWorkspaceRendererMedia() async throws {
     ] {
         await http.configure("normal"); let capture = WorkspaceStreamCapture()
         try await client.rendererWorkspaceMediaStream(video, range: range, expectedSessionId: "A", expectedSessionRevision: revision,
-            onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
+            admitVersion: { _ in }, onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
         let (responses, sizes) = await capture.snapshot()
         precondition(responses.count == 1 && responses[0].statusCode == expectedStatus && responses[0].headers["Content-Range"] == expectedRange)
         precondition(sizes == expectedSizes && responses[0].headers["Content-Length"] == String(expectedSizes.reduce(0, +)))
@@ -851,14 +977,14 @@ func checkWorkspaceRendererMedia() async throws {
     }
     await http.configure("large"); let largeCapture = WorkspaceStreamCapture()
     try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
-        onResponse: { await largeCapture.response($0) }, onChunk: { await largeCapture.chunk($0) })
+        admitVersion: { _ in }, onResponse: { await largeCapture.response($0) }, onChunk: { await largeCapture.chunk($0) })
     let (largeResponses, largeSizes) = await largeCapture.snapshot()
     precondition(largeResponses.first?.headers["Content-Length"] == String(33 * 1024 * 1024 + 9))
     precondition(largeSizes.reduce(0, +) == 33 * 1024 * 1024 + 9 && largeSizes.allSatisfy { $0 <= 2 * 1024 * 1024 })
     await http.configure("hold-second"); let capture = WorkspaceStreamCapture()
     let task = Task {
         try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
-            onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
+            admitVersion: { _ in }, onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
     }
     while !(await http.isHeld()) { await Task.yield() }
     task.cancel(); await http.release()
@@ -867,7 +993,7 @@ func checkWorkspaceRendererMedia() async throws {
     await http.configure("hold-second"); let staleCapture = WorkspaceStreamCapture()
     let stale = Task {
         try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
-            onResponse: { await staleCapture.response($0) }, onChunk: { await staleCapture.chunk($0) })
+            admitVersion: { _ in }, onResponse: { await staleCapture.response($0) }, onChunk: { await staleCapture.chunk($0) })
     }
     while !(await http.isHeld()) { await Task.yield() }
     try await socket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
@@ -3246,7 +3372,7 @@ struct CFLChatChecks {
         if CommandLine.arguments.dropFirst().elementsEqual(["--ordered-only"]) { try await checkOrderedTimeline(); print("CFL ordered timeline checks passed"); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--view-window-only"]) { try await checkViewItemAndWindowContinuity(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--retry-only"]) { try await checkRetryImages(); print("CFL retry image checks passed"); return }
-        if CommandLine.arguments.dropFirst().elementsEqual(["--workspace-renderer-only"]) { try await checkWorkspaceRendererMedia(); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--workspace-renderer-only"]) { try await checkWorkspaceRendererMedia(); try await checkWorkspaceVersionAdmission(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--renderer-only"]) { try await checkRendererMessagesAndMedia(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--voice-only"]) { try await checkVoiceMessages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--external-images-only"]) { try await checkExternalMarkdownImages(); return }
@@ -3260,6 +3386,7 @@ struct CFLChatChecks {
         try await checkFiles()
         #endif
         try await checkWorkspaceRendererMedia()
+        try await checkWorkspaceVersionAdmission()
         try await checkRendererMessagesAndMedia()
         try await checkReplySourceContract()
         try await checkCallerSendIdentity()
