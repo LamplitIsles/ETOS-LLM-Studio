@@ -694,6 +694,8 @@ final class CFLConversationModel: ObservableObject {
                         try onChunk(data)
                     }
                 })
+            guard !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context,
+                  isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { throw CFLFailure.sessionChanged }
         } catch {
             if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }
             throw error

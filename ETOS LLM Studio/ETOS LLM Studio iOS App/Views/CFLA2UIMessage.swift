@@ -220,11 +220,24 @@ private struct CFLA2UIWebView: UIViewRepresentable {
         if self.item?.id != item.id || self.item?.clientID != item.clientID || self.item?.sessionRevision != item.sessionRevision { cancelAll() }
         self.model = model; self.item = item
     }
-    func cancelAll() { for task in tasks.values { task.operation?.cancel() }; tasks.removeAll() }
+    func cancelAll() {
+        for (key, entry) in Array(tasks) {
+            guard tasks[key]?.token == entry.token else { continue }
+            tasks.removeValue(forKey: key)
+            entry.operation?.cancel()
+            entry.schemeTask.didFailWithError(CancellationError())
+        }
+    }
 
     private func activeTask(_ key: ObjectIdentifier, token: UUID) throws -> any WKURLSchemeTask {
         guard !Task.isCancelled, let entry = tasks[key], entry.token == token else { throw CancellationError() }
         return entry.schemeTask
+    }
+
+    private func takeTask(_ key: ObjectIdentifier, token: UUID) throws -> any WKURLSchemeTask {
+        let task = try activeTask(key, token: token)
+        tasks.removeValue(forKey: key)
+        return task
     }
 
     private func receive(_ result: CFLRendererMediaResponse, url: URL, key: ObjectIdentifier, token: UUID) throws {
@@ -265,9 +278,9 @@ private struct CFLA2UIWebView: UIViewRepresentable {
                     try self.activeTask(key, token: token).didReceive(result.data)
                 }
                 guard let self else { return }
-                try self.activeTask(key, token: token).didFinish()
+                try self.takeTask(key, token: token).didFinish()
             } catch {
-                if let task = try? self?.activeTask(key, token: token) { task.didFailWithError(error) }
+                if let task = try? self?.takeTask(key, token: token) { task.didFailWithError(error) }
             }
         }
     }
