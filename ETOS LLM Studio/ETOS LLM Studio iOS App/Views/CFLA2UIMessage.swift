@@ -29,6 +29,10 @@ enum CFLA2UIBridgePolicy {
               parts.port == nil, parts.query == nil, parts.fragment == nil, parts.percentEncodedPath.hasPrefix("/") else { return nil }
         return String(parts.percentEncodedPath.dropFirst()).removingPercentEncoding
     }
+
+    static func mediaPayloadChanged(_ previous: CFLJSONValue?, _ next: CFLJSONValue) -> Bool {
+        previous != next
+    }
 }
 
 /// A displayed resource keeps one file version across WebKit's range tasks.
@@ -131,7 +135,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         let coordinator = context.coordinator
-        coordinator.media.update(model: model, item: item)
+        coordinator.media.update(model: model, item: item, payload: payload)
         guard let target = item.id.target, let normalized = CFLHTTPSOrigin.normalized(target),
               !normalized.isEmpty, let page = URL(string: normalized + "/a2ui.html") else {
             coordinator.fail(); return
@@ -234,14 +238,16 @@ private struct CFLA2UIWebView: UIViewRepresentable {
     }
     private weak var model: CFLConversationModel?
     private var item: CFLDisplayMessage?
+    private var payload: CFLJSONValue?
     private var tasks: [ObjectIdentifier: Entry] = [:]
     private var versions = CFLA2UIMediaVersions()
     private var lifecycle = CFLA2UIMediaLifecycle()
 
-    func update(model: CFLConversationModel, item: CFLDisplayMessage) {
+    func update(model: CFLConversationModel, item: CFLDisplayMessage, payload: CFLJSONValue) {
         guard !lifecycle.stopped else { return }
         let changed = self.item?.id != item.id || self.item?.clientID != item.clientID || self.item?.sessionRevision != item.sessionRevision
-        self.model = model; self.item = item
+            || CFLA2UIBridgePolicy.mediaPayloadChanged(self.payload, payload)
+        self.model = model; self.item = item; self.payload = payload
         if changed {
             lifecycle.beginInvalidation()
             defer { lifecycle.endInvalidation() }
@@ -251,7 +257,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
     func stop() {
         lifecycle.stop()
         cancelAll()
-        model = nil; item = nil
+        model = nil; item = nil; payload = nil
     }
     private func cancelAll() {
         for (key, entry) in Array(tasks) {

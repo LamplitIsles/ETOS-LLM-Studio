@@ -102,6 +102,16 @@ struct CFLTimelineRowsTests {
         #expect(!lifecycle.acceptsStarts)
     }
 
+    @Test("A changed interface payload starts a new media presentation")
+    func interfaceMediaPayloadChange() {
+        let first: CFLJSONValue = .object(["title": .string("old"), "url": .string("workspace:clip.mp4")])
+        let same: CFLJSONValue = .object(["url": .string("workspace:clip.mp4"), "title": .string("old")])
+        let changed: CFLJSONValue = .object(["title": .string("new"), "url": .string("workspace:clip.mp4")])
+        #expect(CFLA2UIBridgePolicy.mediaPayloadChanged(nil, first))
+        #expect(!CFLA2UIBridgePolicy.mediaPayloadChanged(first, same))
+        #expect(CFLA2UIBridgePolicy.mediaPayloadChanged(first, changed))
+    }
+
     @Test("Embedded interface height is bounded by the native viewport")
     func interfaceHeight() throws {
         let short = try #require(CFLA2UIBridgePolicy.displayHeight(150.2, viewport: 600))
