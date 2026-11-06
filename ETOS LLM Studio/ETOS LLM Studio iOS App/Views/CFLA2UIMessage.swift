@@ -66,6 +66,9 @@ struct CFLA2UIMessage: View {
     let item: CFLDisplayMessage
     let payload: CFLJSONValue
     let model: CFLConversationModel
+    @ObservedObject private var config = AppConfigStore.shared
+    @ObservedObject private var background = ChatBackgroundModel.shared
+    @ObservedObject private var appearance = ChatAppearanceProfileManager.shared
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
@@ -77,20 +80,35 @@ struct CFLA2UIMessage: View {
     private var viewportHeight: CGFloat { viewport.height }
 
     var body: some View {
-        HStack {
-            if failed {
-                Text(NSLocalizedString("界面暂时无法显示", comment: "Chat interface unavailable"))
-                    .font(.footnote).foregroundStyle(.secondary).padding(12)
-            } else if viewportHeight > 0 {
-                CFLA2UIWebView(item: item, payload: payload, model: model, dark: colorScheme == .dark,
-                               locale: locale.language.languageCode?.identifier == "zh" ? "zh" : "en",
-                               fontScale: fontScale, viewportHeight: viewportHeight, height: $height, failed: $failed, ready: $ready)
-                    .frame(height: height)
-            } else {
-                Color.clear.frame(height: height)
+        HStack(spacing: 0) {
+            Group {
+                if failed {
+                    Text(NSLocalizedString("界面暂时无法显示", comment: "Chat interface unavailable"))
+                        .font(.footnote).foregroundStyle(.secondary).padding(12)
+                } else if viewportHeight > 0 {
+                    CFLA2UIWebView(item: item, payload: payload, model: model, dark: colorScheme == .dark,
+                                   locale: locale.language.languageCode?.identifier == "zh" ? "zh" : "en",
+                                   fontScale: fontScale, viewportHeight: viewportHeight, height: $height, failed: $failed, ready: $ready)
+                        .frame(height: height)
+                } else {
+                    Color.clear.frame(height: height)
+                }
             }
-            Spacer(minLength: 40)
+            .background {
+                if !config.enableNoBubbleUI {
+                    ChatBubbleBackground(
+                        shape: RoundedRectangle(cornerRadius: CGFloat(config.chatBubbleCornerRadius), style: .continuous),
+                        fill: AnyShapeStyle(ChatAssistantBubbleAppearance.fill(profile: appearance.activeProfile, enableBackground: background.enableBackground)),
+                        enableLiquidGlass: config.enableLiquidGlass
+                    )
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: CGFloat(config.chatBubbleCornerRadius), style: .continuous))
+            Spacer(minLength: 20)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, config.enableNoBubbleUI ? 9 : 3)
         .task(id: item.id) {
             try? await Task.sleep(for: .seconds(15))
             if !Task.isCancelled && !ready { failed = true }
