@@ -65,6 +65,8 @@ struct CFLTimelineRowsTests {
     func interfaceMediaBridgeURL() throws {
         let valid = try #require(URL(string: "cfl-media://load/%2Fapi%2Fchat%2Fmedia%2Fphoto%2Fpreview"))
         #expect(CFLA2UIBridgePolicy.mediaPath(valid) == "/api/chat/media/photo/preview")
+        let workspace = try #require(URL(string: "cfl-media://load/%2Fapi%2Fchat%2Fworkspace-media%3Fkind%3Daudio%26path%3Dmusic%252F%252520.wav"))
+        #expect(CFLA2UIBridgePolicy.mediaPath(workspace) == "/api/chat/workspace-media?kind=audio&path=music%2F%2520.wav")
         for value in ["https://load/%2Fapi%2Faudio%2Fx.mp3", "cfl-media://other/%2Fapi%2Faudio%2Fx.mp3",
                       "cfl-media://user@load/%2Fapi%2Faudio%2Fx.mp3", "cfl-media://load/%2Fapi%2Faudio%2Fx.mp3?x=1"] {
             let url = try #require(URL(string: value))

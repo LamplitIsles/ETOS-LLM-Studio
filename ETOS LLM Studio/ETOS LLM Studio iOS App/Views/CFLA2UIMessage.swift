@@ -205,38 +205,74 @@ private struct CFLA2UIWebView: UIViewRepresentable {
 }
 
 /// Only approved CFL media paths use this bridge; WebKit never receives credentials.
-private final class CFLA2UIMediaHandler: NSObject, WKURLSchemeHandler {
+@MainActor private final class CFLA2UIMediaHandler: NSObject, WKURLSchemeHandler {
+    private final class Entry {
+        let token = UUID()
+        let schemeTask: any WKURLSchemeTask
+        var operation: Task<Void, Never>?
+        init(_ schemeTask: any WKURLSchemeTask) { self.schemeTask = schemeTask }
+    }
     private weak var model: CFLConversationModel?
     private var item: CFLDisplayMessage?
-    private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var tasks: [ObjectIdentifier: Entry] = [:]
 
     func update(model: CFLConversationModel, item: CFLDisplayMessage) {
         if self.item?.id != item.id || self.item?.clientID != item.clientID || self.item?.sessionRevision != item.sessionRevision { cancelAll() }
         self.model = model; self.item = item
     }
-    func cancelAll() { for task in tasks.values { task.cancel() }; tasks.removeAll() }
+    func cancelAll() { for task in tasks.values { task.operation?.cancel() }; tasks.removeAll() }
+
+    private func activeTask(_ key: ObjectIdentifier, token: UUID) throws -> any WKURLSchemeTask {
+        guard !Task.isCancelled, let entry = tasks[key], entry.token == token else { throw CancellationError() }
+        return entry.schemeTask
+    }
+
+    private func receive(_ result: CFLRendererMediaResponse, url: URL, key: ObjectIdentifier, token: UUID) throws {
+        let task = try activeTask(key, token: token)
+        var headers = result.headers
+        headers["Access-Control-Allow-Origin"] = "*"
+        guard let response = HTTPURLResponse(url: url, statusCode: result.statusCode, httpVersion: "HTTP/1.1", headerFields: headers) else { throw CFLFailure.protocolError }
+        task.didReceive(response)
+    }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         let key = ObjectIdentifier(task as AnyObject)
-        guard let item, let model, let url = task.request.url, let path = CFLA2UIBridgePolicy.mediaPath(url) else {
+        guard task.request.httpMethod == nil || task.request.httpMethod == "GET",
+              let item, let model, let url = task.request.url, let path = CFLA2UIBridgePolicy.mediaPath(url) else {
             task.didFailWithError(CFLFailure.invalidInput); return
         }
         let range = task.request.value(forHTTPHeaderField: "Range")
-        tasks[key] = Task { @MainActor [weak self] in
-            defer { self?.tasks.removeValue(forKey: key) }
+        let entry = Entry(task)
+        let token = entry.token
+        tasks[key] = entry
+        entry.operation = Task { @MainActor [weak self] in
+            defer { if self?.tasks[key]?.token == token { self?.tasks.removeValue(forKey: key) } }
             do {
-                let result = try await model.rendererMedia(path, range: range, target: item.id.target, session: item.id.session,
-                                                           revision: item.sessionRevision, clientID: item.clientID)
-                guard !Task.isCancelled else { return }
-                var headers = result.headers
-                headers["Access-Control-Allow-Origin"] = "*"
-                guard let response = HTTPURLResponse(url: url, statusCode: result.statusCode, httpVersion: "HTTP/1.1", headerFields: headers) else { throw CFLFailure.protocolError }
-                task.didReceive(response); task.didReceive(result.data); task.didFinish()
-            } catch { if !Task.isCancelled { task.didFailWithError(error) } }
+                if path.hasPrefix("/api/chat/workspace-media?") {
+                    try await model.rendererWorkspaceMediaStream(path, range: range, target: item.id.target, session: item.id.session,
+                        revision: item.sessionRevision, clientID: item.clientID, onResponse: { [weak self] result in
+                            guard let self else { throw CancellationError() }
+                            try self.receive(result, url: url, key: key, token: token)
+                        }, onChunk: { [weak self] data in
+                            guard let self else { throw CancellationError() }
+                            try self.activeTask(key, token: token).didReceive(data)
+                        })
+                } else {
+                    let result = try await model.rendererMedia(path, range: range, target: item.id.target, session: item.id.session,
+                                                               revision: item.sessionRevision, clientID: item.clientID)
+                    guard let self else { return }
+                    try self.receive(result, url: url, key: key, token: token)
+                    try self.activeTask(key, token: token).didReceive(result.data)
+                }
+                guard let self else { return }
+                try self.activeTask(key, token: token).didFinish()
+            } catch {
+                if let task = try? self?.activeTask(key, token: token) { task.didFailWithError(error) }
+            }
         }
     }
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
-        tasks.removeValue(forKey: ObjectIdentifier(task as AnyObject))?.cancel()
+        tasks.removeValue(forKey: ObjectIdentifier(task as AnyObject))?.operation?.cancel()
     }
 }
 #endif

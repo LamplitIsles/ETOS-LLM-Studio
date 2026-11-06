@@ -672,6 +672,34 @@ final class CFLConversationModel: ObservableObject {
         }
     }
 
+    func rendererWorkspaceMediaStream(_ path: String, range: String?, target: String?, session: String?, revision: Int, clientID: UUID,
+        onResponse: @escaping @MainActor @Sendable (CFLRendererMediaResponse) throws -> Void,
+        onChunk: @escaping @MainActor @Sendable (Data) throws -> Void) async throws {
+        guard imagePageActive, let context = imageContext,
+              isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),
+              let client else { throw CFLFailure.sessionChanged }
+        let pageRevision = imagePageRevision
+        do {
+            try await client.rendererWorkspaceMediaStream(path, range: range, expectedSessionId: context.session,
+                expectedSessionRevision: context.revision, onResponse: { [weak self] response in
+                    try await MainActor.run {
+                        guard let self, !Task.isCancelled, self.imagePageActive, self.imagePageRevision == pageRevision,
+                              self.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { throw CFLFailure.sessionChanged }
+                        try onResponse(response)
+                    }
+                }, onChunk: { [weak self] data in
+                    try await MainActor.run {
+                        guard let self, !Task.isCancelled, self.imagePageActive, self.imagePageRevision == pageRevision,
+                              self.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { throw CFLFailure.sessionChanged }
+                        try onChunk(data)
+                    }
+                })
+        } catch {
+            if !Task.isCancelled, imagePageActive, imagePageRevision == pageRevision, imageContext == context { recordAuthorizationFailure(error) }
+            throw error
+        }
+    }
+
     func markdownImage(_ source: String, target: String?, session: String?, revision: Int, clientID: UUID) async throws -> Data {
         guard imagePageActive, let context = imageContext,
               isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID),
