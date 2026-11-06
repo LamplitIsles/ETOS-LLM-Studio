@@ -703,6 +703,181 @@ actor FakeRendererMediaHTTP: CFLImageHTTP {
     func allRequests() -> [URLRequest] { requests }
 }
 
+actor FakeWorkspaceRendererHTTP: CFLImageHTTP {
+    var requests: [URLRequest] = []
+    var mode = "normal"
+    var held = false
+    var waiter: CheckedContinuation<Void, Never>?
+    let total = 2 * 1024 * 1024 + 9
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) { throw CFLFailure.requestFailed }
+    func boundedData(for request: URLRequest, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        let count = requests.count
+        if mode == "hold-second" && count == 3 {
+            held = true; await withCheckedContinuation { waiter = $0 }; held = false
+        }
+        let target = mode == "redirect" ? URL(string: "https://elsewhere.test/steal")! : request.url!
+        if mode == "precondition" && count == 3 {
+            return (Data(), HTTPURLResponse(url: target, statusCode: 412, httpVersion: nil, headerFields: nil)!)
+        }
+        if mode == "interrupted" && count == 3 { throw URLError(.networkConnectionLost) }
+        let range = request.value(forHTTPHeaderField: "Range")
+        let image = request.url!.path.hasSuffix("workspace-image")
+        let audio = request.url!.query?.contains("kind=audio") == true
+        let mp3 = request.url!.query?.lowercased().contains(".mp3") == true
+        let type = image ? "image/png" : (audio ? (mp3 ? "audio/mpeg" : "audio/wav") : "video/mp4")
+        let total = mode == "large" ? 33 * 1024 * 1024 + 9 : self.total
+        var headers = ["Content-Type": mode == "bad-mime" ? "text/html" : type]
+        if !image && mode != "missing-accept-ranges" { headers["Accept-Ranges"] = "bytes" }
+        if !image && mode != "missing-token" && !(mode == "missing-second-token" && count == 3) {
+            headers["X-CFL-Media-Version"] = mode == "changed-token" && count == 3 ? "v2" : "v1"
+        }
+        guard let range else {
+            let data = Data("full".utf8); headers["Content-Length"] = String(data.count)
+            return (data, HTTPURLResponse(url: target, statusCode: 200, httpVersion: nil, headerFields: headers)!)
+        }
+        let parts = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
+        let first: Int, last: Int
+        if parts[0].isEmpty {
+            let length = min(Int(parts[1])!, total); first = total - length; last = total - 1
+        } else { first = Int(parts[0])!; last = min(Int(parts[1])!, total - 1) }
+        if first >= total || first > last {
+            headers["Content-Range"] = "bytes */\(total)"
+            return (Data(), HTTPURLResponse(url: target, statusCode: 416, httpVersion: nil, headerFields: headers)!)
+        }
+        let bytes = Data(repeating: count == 1 ? 0x41 : 0x42, count: last - first + 1)
+        guard bytes.count <= maximumBytes else { throw CFLFailure.protocolError }
+        headers["Content-Length"] = String(bytes.count + (mode == "truncated" ? 1 : 0))
+        if mode == "missing-length" { headers.removeValue(forKey: "Content-Length") }
+        headers["Content-Range"] = mode == "bad-range" ? "bytes 0-0/1" : (mode == "oversize-total" ? "bytes \(first)-\(last)/268435457" : "bytes \(first)-\(last)/\(total)")
+        return (bytes, HTTPURLResponse(url: target, statusCode: mode == "wrong-status" ? 200 : 206, httpVersion: nil, headerFields: headers)!)
+    }
+    func configure(_ value: String) { mode = value; requests.removeAll() }
+    func allRequests() -> [URLRequest] { requests }
+    func isHeld() -> Bool { held }
+    func release() { waiter?.resume(); waiter = nil }
+}
+actor WorkspaceStreamCapture {
+    var responses: [CFLRendererMediaResponse] = []
+    var sizes: [Int] = []
+    func response(_ value: CFLRendererMediaResponse) { responses.append(value) }
+    func chunk(_ value: Data) { sizes.append(value.count) }
+    func snapshot() -> ([CFLRendererMediaResponse], [Int]) { (responses, sizes) }
+}
+
+func checkWorkspaceRendererMedia() async throws {
+    let socket = FakeSocket(snapshot: historySnapshot(0..<0, before: nil, session: "A"))
+    let http = FakeWorkspaceRendererHTTP(), auth = CFLAuthorization(store: ImageTestCredentials(), http: http)
+    try await auth.select(origin: "https://example.com")
+    let client = CFLChatClient(target: "https://example.com", store: MemoryStore(), imageHTTP: CFLAuthorizedHTTP(authorization: auth, http: http), transport: { socket })
+    await client.connect(); let revision = await client.currentState().sessionRevision
+    let image = "/api/chat/workspace-image?path=dir%2F%E5%9B%BE%2520.png"
+    let audio = "/api/chat/workspace-media?kind=audio&path=dir%2Fmusic.wav"
+    let video = "/api/chat/workspace-media?kind=video&path=movie.mp4"
+    let imageResponse = try await client.rendererMedia(image, expectedSessionId: "A", expectedSessionRevision: revision)
+    precondition(imageResponse.statusCode == 200 && imageResponse.headers["Content-Type"] == "image/png")
+    let recordedImage = await http.allRequests().last!
+    precondition(URLComponents(url: recordedImage.url!, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == "dir/图%20.png")
+    let full = try await client.rendererMedia(audio, expectedSessionId: "A", expectedSessionRevision: revision)
+    precondition(full.statusCode == 200 && full.headers["Content-Type"] == "audio/wav" && full.headers["X-CFL-Media-Version"] == nil)
+    let mp3 = try await client.rendererMedia("/api/chat/workspace-media?kind=audio&path=song.MP3", expectedSessionId: "A", expectedSessionRevision: revision)
+    precondition(mp3.headers["Content-Type"] == "audio/mpeg")
+    let partial = try await client.rendererMedia(video, range: "bytes=0-", expectedSessionId: "A", expectedSessionRevision: revision)
+    precondition(partial.statusCode == 206 && partial.data.count == 2 * 1024 * 1024 && partial.headers["Content-Range"] == "bytes 0-2097151/2097161")
+    let suffix = try await client.rendererMedia(video, range: "bytes=-3", expectedSessionId: "A", expectedSessionRevision: revision)
+    precondition(suffix.data.count == 3 && suffix.headers["Content-Range"] == "bytes 2097158-2097160/2097161")
+    let missing = try await client.rendererMedia(video, range: "bytes=2097161-", expectedSessionId: "A", expectedSessionRevision: revision)
+    precondition(missing.statusCode == 416 && missing.headers["Content-Range"] == "bytes */2097161")
+    let before = await http.allRequests().count
+    for invalid in [
+        "/api/chat/workspace-image?path=dir%2fimage.png", "/api/chat/workspace-image?path=dir%2F..%2Fimage.png",
+        "/api/chat/workspace-image?path=x.png&path=y.png", "/api/chat/workspace-image?path=x.png&extra=1",
+        "/api/chat/workspace-image?path=%2F%2Fevil.png", "/api/chat/workspace-image?path=https%3A%2F%2Fevil.png",
+        "/api/chat/workspace-image?path=x%00.png", "/api/chat/workspace-image?path=x%5Cbad.png", "/api/chat/workspace-image?path=a%2F%2Fb.png",
+        "/api/chat/workspace-media?path=movie.mp4&kind=video", "/api/chat/workspace-media?kind=video&path=movie.mp4#x",
+        "/api/chat/workspace-media?kind=audio&path=movie.mp4", "https://evil.test/api/chat/workspace-image?path=x.png"
+    ] {
+        do { _ = try await client.rendererMedia(invalid, expectedSessionId: "A", expectedSessionRevision: revision); preconditionFailure() } catch CFLFailure.invalidInput { }
+    }
+    do { _ = try await client.rendererMedia(image, range: "bytes=0-1", expectedSessionId: "A", expectedSessionRevision: revision); preconditionFailure() } catch CFLFailure.invalidInput { }
+    let after = await http.allRequests().count; precondition(after == before)
+    for mode in ["bad-mime", "bad-range", "oversize-total", "wrong-status", "missing-token", "missing-length", "missing-accept-ranges", "truncated", "redirect"] {
+        await http.configure(mode)
+        do { _ = try await client.rendererMedia(video, range: "bytes=0-", expectedSessionId: "A", expectedSessionRevision: revision); preconditionFailure() } catch { }
+    }
+    for mode in ["normal", "precondition", "changed-token", "missing-token", "missing-second-token", "interrupted"] {
+        await http.configure(mode); let capture = WorkspaceStreamCapture()
+        do {
+            try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
+                onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
+            precondition(mode == "normal")
+        } catch { precondition(mode != "normal") }
+        let (responses, sizes) = await capture.snapshot(), requests = await http.allRequests()
+        if mode == "normal" {
+            precondition(responses.count == 1 && responses[0].statusCode == 200 && responses[0].headers["Content-Length"] == "2097161")
+            precondition(sizes == [2 * 1024 * 1024, 9] && requests.count == 3)
+        } else if mode == "missing-token" { precondition(responses.isEmpty && sizes.isEmpty) }
+        else { precondition(responses.count == 1 && sizes == [2 * 1024 * 1024]) }
+        if requests.count >= 2 {
+            precondition(requests[0].value(forHTTPHeaderField: "Range") == "bytes=0-0")
+            precondition(requests[0].value(forHTTPHeaderField: "If-CFL-Media-Version") == nil)
+            precondition(requests.dropFirst().allSatisfy { $0.value(forHTTPHeaderField: "If-CFL-Media-Version") == "v1" && $0.value(forHTTPHeaderField: "If-Range") == nil })
+        }
+        precondition(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token" })
+    }
+    for (range, expectedStatus, expectedRange, expectedSizes) in [
+        ("bytes=0-", 206, "bytes 0-2097160/2097161", [2 * 1024 * 1024, 9]),
+        ("bytes=1-2097160", 206, "bytes 1-2097160/2097161", [2 * 1024 * 1024, 8]),
+        ("bytes=-5", 206, "bytes 2097156-2097160/2097161", [5]),
+        ("bytes=-3000000", 206, "bytes 0-2097160/2097161", [2 * 1024 * 1024, 9]),
+        ("bytes=2097161-", 416, "bytes */2097161", []),
+        ("bytes=5-3", 416, "bytes */2097161", []),
+        ("bytes=-0", 416, "bytes */2097161", [])
+    ] {
+        await http.configure("normal"); let capture = WorkspaceStreamCapture()
+        try await client.rendererWorkspaceMediaStream(video, range: range, expectedSessionId: "A", expectedSessionRevision: revision,
+            onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
+        let (responses, sizes) = await capture.snapshot()
+        precondition(responses.count == 1 && responses[0].statusCode == expectedStatus && responses[0].headers["Content-Range"] == expectedRange)
+        precondition(sizes == expectedSizes && responses[0].headers["Content-Length"] == String(expectedSizes.reduce(0, +)))
+        let requests = await http.allRequests()
+        let wireRanges = requests.compactMap { $0.value(forHTTPHeaderField: "Range") }
+        switch range {
+        case "bytes=0-", "bytes=-3000000": precondition(wireRanges == ["bytes=0-0", "bytes=0-2097151", "bytes=2097152-2097160"])
+        case "bytes=1-2097160": precondition(wireRanges == ["bytes=0-0", "bytes=1-2097152", "bytes=2097153-2097160"])
+        case "bytes=-5": precondition(wireRanges == ["bytes=0-0", "bytes=2097156-2097160"])
+        default: precondition(wireRanges == ["bytes=0-0"])
+        }
+    }
+    await http.configure("large"); let largeCapture = WorkspaceStreamCapture()
+    try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
+        onResponse: { await largeCapture.response($0) }, onChunk: { await largeCapture.chunk($0) })
+    let (largeResponses, largeSizes) = await largeCapture.snapshot()
+    precondition(largeResponses.first?.headers["Content-Length"] == String(33 * 1024 * 1024 + 9))
+    precondition(largeSizes.reduce(0, +) == 33 * 1024 * 1024 + 9 && largeSizes.allSatisfy { $0 <= 2 * 1024 * 1024 })
+    await http.configure("hold-second"); let capture = WorkspaceStreamCapture()
+    let task = Task {
+        try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
+            onResponse: { await capture.response($0) }, onChunk: { await capture.chunk($0) })
+    }
+    while !(await http.isHeld()) { await Task.yield() }
+    task.cancel(); await http.release()
+    do { try await task.value; preconditionFailure() } catch { }
+    let (_, sizes) = await capture.snapshot(); precondition(sizes == [2 * 1024 * 1024])
+    await http.configure("hold-second"); let staleCapture = WorkspaceStreamCapture()
+    let stale = Task {
+        try await client.rendererWorkspaceMediaStream(video, expectedSessionId: "A", expectedSessionRevision: revision,
+            onResponse: { await staleCapture.response($0) }, onChunk: { await staleCapture.chunk($0) })
+    }
+    while !(await http.isHeld()) { await Task.yield() }
+    try await socket.emit(update(sequence: 1, field: "sessionId", value: .string("B")))
+    while await client.currentState().sessionId != "B" { await Task.yield() }
+    await http.release()
+    do { try await stale.value; preconditionFailure() } catch CFLFailure.sessionChanged { }
+    let (_, staleSizes) = await staleCapture.snapshot(); precondition(staleSizes == [2 * 1024 * 1024])
+    await client.disconnect()
+}
+
 func checkRendererMessagesAndMedia() async throws {
     func uiMessage(_ id: String, _ value: ChordJSON) -> ChordJSON {
         .object(["id": .string(id), "role": .string("agent"), "text": .string(""), "createdAt": .number(1),
@@ -3071,6 +3246,7 @@ struct CFLChatChecks {
         if CommandLine.arguments.dropFirst().elementsEqual(["--ordered-only"]) { try await checkOrderedTimeline(); print("CFL ordered timeline checks passed"); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--view-window-only"]) { try await checkViewItemAndWindowContinuity(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--retry-only"]) { try await checkRetryImages(); print("CFL retry image checks passed"); return }
+        if CommandLine.arguments.dropFirst().elementsEqual(["--workspace-renderer-only"]) { try await checkWorkspaceRendererMedia(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--renderer-only"]) { try await checkRendererMessagesAndMedia(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--voice-only"]) { try await checkVoiceMessages(); return }
         if CommandLine.arguments.dropFirst().elementsEqual(["--external-images-only"]) { try await checkExternalMarkdownImages(); return }
@@ -3083,6 +3259,7 @@ struct CFLChatChecks {
         try await checkFileCopyCancellation()
         try await checkFiles()
         #endif
+        try await checkWorkspaceRendererMedia()
         try await checkRendererMessagesAndMedia()
         try await checkReplySourceContract()
         try await checkCallerSendIdentity()
