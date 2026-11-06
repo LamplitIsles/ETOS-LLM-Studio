@@ -42,6 +42,15 @@ struct CFLA2UIMediaVersions {
     mutating func reset() { values.removeAll() }
 }
 
+struct CFLA2UIMediaLifecycle {
+    private var invalidations = 0
+    private(set) var stopped = false
+    var acceptsStarts: Bool { !stopped && invalidations == 0 }
+    mutating func beginInvalidation() { invalidations += 1 }
+    mutating func endInvalidation() { invalidations -= 1 }
+    mutating func stop() { stopped = true }
+}
+
 /// The page is the same restricted renderer shipped with the selected CFL web app.
 struct CFLA2UIMessage: View {
     let item: CFLDisplayMessage
@@ -211,7 +220,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail() }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { fail() }
         func fail() { DispatchQueue.main.async { [weak self] in if let self, !self.stopped { self.failed = true } } }
-        func stop() { stopped = true; ready = false; media.cancelAll() }
+        func stop() { stopped = true; ready = false; media.stop() }
     }
 }
 
@@ -227,12 +236,24 @@ private struct CFLA2UIWebView: UIViewRepresentable {
     private var item: CFLDisplayMessage?
     private var tasks: [ObjectIdentifier: Entry] = [:]
     private var versions = CFLA2UIMediaVersions()
+    private var lifecycle = CFLA2UIMediaLifecycle()
 
     func update(model: CFLConversationModel, item: CFLDisplayMessage) {
-        if self.item?.id != item.id || self.item?.clientID != item.clientID || self.item?.sessionRevision != item.sessionRevision { cancelAll() }
+        guard !lifecycle.stopped else { return }
+        let changed = self.item?.id != item.id || self.item?.clientID != item.clientID || self.item?.sessionRevision != item.sessionRevision
         self.model = model; self.item = item
+        if changed {
+            lifecycle.beginInvalidation()
+            defer { lifecycle.endInvalidation() }
+            cancelAll()
+        }
     }
-    func cancelAll() {
+    func stop() {
+        lifecycle.stop()
+        cancelAll()
+        model = nil; item = nil
+    }
+    private func cancelAll() {
         for (key, entry) in Array(tasks) {
             guard tasks[key]?.token == entry.token else { continue }
             tasks.removeValue(forKey: key)
@@ -263,6 +284,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         let key = ObjectIdentifier(task as AnyObject)
+        guard lifecycle.acceptsStarts else { task.didFailWithError(CancellationError()); return }
         guard task.request.httpMethod == nil || task.request.httpMethod == "GET",
               let item, let model, let url = task.request.url, let path = CFLA2UIBridgePolicy.mediaPath(url) else {
             task.didFailWithError(CFLFailure.invalidInput); return

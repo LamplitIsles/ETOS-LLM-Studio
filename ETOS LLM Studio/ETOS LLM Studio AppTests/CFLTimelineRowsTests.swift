@@ -85,6 +85,23 @@ struct CFLTimelineRowsTests {
         #expect(versions.admit("second", for: "/media/a"))
     }
 
+    @Test("Media requests cannot start during nested invalidation or after stop")
+    func interfaceMediaLifecycle() {
+        var lifecycle = CFLA2UIMediaLifecycle()
+        #expect(lifecycle.acceptsStarts)
+        lifecycle.beginInvalidation()
+        lifecycle.beginInvalidation()
+        #expect(!lifecycle.acceptsStarts)
+        lifecycle.endInvalidation()
+        #expect(!lifecycle.acceptsStarts)
+        lifecycle.endInvalidation()
+        #expect(lifecycle.acceptsStarts)
+        lifecycle.beginInvalidation()
+        lifecycle.stop()
+        lifecycle.endInvalidation()
+        #expect(!lifecycle.acceptsStarts)
+    }
+
     @Test("Embedded interface height is bounded by the native viewport")
     func interfaceHeight() throws {
         let short = try #require(CFLA2UIBridgePolicy.displayHeight(150.2, viewport: 600))
