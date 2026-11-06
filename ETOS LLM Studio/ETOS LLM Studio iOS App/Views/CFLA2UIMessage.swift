@@ -55,6 +55,22 @@ struct CFLA2UIMediaLifecycle {
     mutating func stop() { stopped = true }
 }
 
+/// Content and session changes get a separate WebView and media handler.
+struct CFLA2UIPresentationID: Hashable {
+    let message: CFLDisplayMessage.ID
+    let sessionRevision: Int
+    let clientID: UUID
+    let payload: CFLJSONValue
+
+    init(item: CFLDisplayMessage, payload: CFLJSONValue) {
+        message = item.id; sessionRevision = item.sessionRevision; clientID = item.clientID; self.payload = payload
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(message); hasher.combine(sessionRevision); hasher.combine(clientID)
+    }
+}
+
 /// The page is the same restricted renderer shipped with the selected CFL web app.
 struct CFLA2UIMessage: View {
     let item: CFLDisplayMessage

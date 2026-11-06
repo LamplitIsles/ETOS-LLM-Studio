@@ -110,6 +110,14 @@ struct CFLTimelineRowsTests {
         #expect(CFLA2UIBridgePolicy.mediaPayloadChanged(nil, first))
         #expect(!CFLA2UIBridgePolicy.mediaPayloadChanged(first, same))
         #expect(CFLA2UIBridgePolicy.mediaPayloadChanged(first, changed))
+        let item = CFLDisplayMessage(id: .init(target: "target", session: "session", message: "message", offset: -1),
+            text: "", outgoing: false, markdown: false, images: [], sessionRevision: 1, clientID: UUID())
+        let original = CFLA2UIPresentationID(item: item, payload: first)
+        #expect(original == CFLA2UIPresentationID(item: item, payload: same))
+        #expect(original != CFLA2UIPresentationID(item: item, payload: changed))
+        let anotherSession = CFLDisplayMessage(id: item.id, text: "", outgoing: false, markdown: false,
+            images: [], sessionRevision: 2, clientID: item.clientID)
+        #expect(original != CFLA2UIPresentationID(item: anotherSession, payload: first))
     }
 
     @Test("Embedded interface height is bounded by the native viewport")
