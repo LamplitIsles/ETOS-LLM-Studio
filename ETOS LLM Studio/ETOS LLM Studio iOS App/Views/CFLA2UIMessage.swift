@@ -31,6 +31,17 @@ enum CFLA2UIBridgePolicy {
     }
 }
 
+/// A displayed resource keeps one file version across WebKit's range tasks.
+struct CFLA2UIMediaVersions {
+    private var values: [String: String] = [:]
+    mutating func admit(_ version: String, for path: String) -> Bool {
+        if let existing = values[path] { return existing == version }
+        values[path] = version
+        return true
+    }
+    mutating func reset() { values.removeAll() }
+}
+
 /// The page is the same restricted renderer shipped with the selected CFL web app.
 struct CFLA2UIMessage: View {
     let item: CFLDisplayMessage
@@ -215,6 +226,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
     private weak var model: CFLConversationModel?
     private var item: CFLDisplayMessage?
     private var tasks: [ObjectIdentifier: Entry] = [:]
+    private var versions = CFLA2UIMediaVersions()
 
     func update(model: CFLConversationModel, item: CFLDisplayMessage) {
         if self.item?.id != item.id || self.item?.clientID != item.clientID || self.item?.sessionRevision != item.sessionRevision { cancelAll() }
@@ -227,6 +239,7 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             entry.operation?.cancel()
             entry.schemeTask.didFailWithError(CancellationError())
         }
+        versions.reset()
     }
 
     private func activeTask(_ key: ObjectIdentifier, token: UUID) throws -> any WKURLSchemeTask {
@@ -263,7 +276,11 @@ private struct CFLA2UIWebView: UIViewRepresentable {
             do {
                 if path.hasPrefix("/api/chat/workspace-media?") {
                     try await model.rendererWorkspaceMediaStream(path, range: range, target: item.id.target, session: item.id.session,
-                        revision: item.sessionRevision, clientID: item.clientID, onResponse: { [weak self] result in
+                        revision: item.sessionRevision, clientID: item.clientID, admitVersion: { [weak self] version in
+                            guard let self else { throw CancellationError() }
+                            _ = try self.activeTask(key, token: token)
+                            guard self.versions.admit(version, for: path) else { throw CFLFailure.protocolError }
+                        }, onResponse: { [weak self] result in
                             guard let self else { throw CancellationError() }
                             try self.receive(result, url: url, key: key, token: token)
                         }, onChunk: { [weak self] data in

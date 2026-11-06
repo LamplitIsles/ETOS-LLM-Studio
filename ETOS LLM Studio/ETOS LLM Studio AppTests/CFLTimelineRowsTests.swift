@@ -74,6 +74,17 @@ struct CFLTimelineRowsTests {
         }
     }
 
+    @Test("Independent media requests share a version until the presentation ends")
+    func interfaceMediaVersions() {
+        var versions = CFLA2UIMediaVersions()
+        #expect(versions.admit("first", for: "/media/a"))
+        #expect(versions.admit("first", for: "/media/a"))
+        #expect(!versions.admit("second", for: "/media/a"))
+        #expect(versions.admit("second", for: "/media/b"))
+        versions.reset()
+        #expect(versions.admit("second", for: "/media/a"))
+    }
+
     @Test("Embedded interface height is bounded by the native viewport")
     func interfaceHeight() throws {
         let short = try #require(CFLA2UIBridgePolicy.displayHeight(150.2, viewport: 600))

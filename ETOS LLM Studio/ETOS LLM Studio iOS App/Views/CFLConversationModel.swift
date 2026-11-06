@@ -673,6 +673,7 @@ final class CFLConversationModel: ObservableObject {
     }
 
     func rendererWorkspaceMediaStream(_ path: String, range: String?, target: String?, session: String?, revision: Int, clientID: UUID,
+        admitVersion: @escaping @MainActor @Sendable (String) throws -> Void,
         onResponse: @escaping @MainActor @Sendable (CFLRendererMediaResponse) throws -> Void,
         onChunk: @escaping @MainActor @Sendable (Data) throws -> Void) async throws {
         guard imagePageActive, let context = imageContext,
@@ -681,7 +682,13 @@ final class CFLConversationModel: ObservableObject {
         let pageRevision = imagePageRevision
         do {
             try await client.rendererWorkspaceMediaStream(path, range: range, expectedSessionId: context.session,
-                expectedSessionRevision: context.revision, onResponse: { [weak self] response in
+                expectedSessionRevision: context.revision, admitVersion: { [weak self] version in
+                    try await MainActor.run {
+                        guard let self, !Task.isCancelled, self.imagePageActive, self.imagePageRevision == pageRevision,
+                              self.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { throw CFLFailure.sessionChanged }
+                        try admitVersion(version)
+                    }
+                }, onResponse: { [weak self] response in
                     try await MainActor.run {
                         guard let self, !Task.isCancelled, self.imagePageActive, self.imagePageRevision == pageRevision,
                               self.isCurrentMediaContext(target: target, session: session, revision: revision, clientID: clientID) else { throw CFLFailure.sessionChanged }
