@@ -8,6 +8,23 @@ import Testing
 @MainActor
 @Suite("CFL timeline row presentation")
 struct CFLTimelineRowsTests {
+    @Test("Viewport updates reach existing message subscribers")
+    func interfaceViewportUpdates() {
+        let viewport = CFLA2UIViewport()
+        let retainedBuilder = { viewport }
+        var heights: [CGFloat] = []
+        let observation = retainedBuilder().$height.sink { heights.append($0) }
+        #expect(retainedBuilder().height == 0)
+        viewport.update(height: 600)
+        #expect(retainedBuilder() === viewport)
+        #expect(retainedBuilder().height == 600)
+        viewport.update(height: 600)
+        viewport.update(height: 320)
+        #expect(retainedBuilder().height == 320)
+        #expect(heights == [0, 600, 320])
+        withExtendedLifetime(observation) {}
+    }
+
     @Test("A gap loads once per viewport visit and errors require explicit retry")
     func gapVisibilityVisits() {
         var visits = CFLHistoryGapVisits()
@@ -32,6 +49,106 @@ struct CFLTimelineRowsTests {
         CFLDisplayMessage(id: .init(target: "fixture", session: "session", message: id, offset: 0),
                           text: "reply", outgoing: false, markdown: false, images: [],
                           sessionRevision: 1, clientID: UUID())
+    }
+
+    @Test("Interface messages retain timeline position and update their own row")
+    func interfaceRowPresentation() throws {
+        func message(_ id: String, _ ui: String) throws -> CFLMessage {
+            let wire = """
+            {"id":"\(id)","role":"agent","text":"","createdAt":1,"operationId":null,"turnId":"turn","ui":\(ui)}
+            """
+            return try JSONDecoder().decode(CFLMessage.self, from: Data(wire.utf8))
+        }
+        let first = try message("first", "null")
+        let second = try message("second", "{}")
+        let input = CFLTimelineProjection.ProjectionInput(target: "fixture", session: "session", revision: 1, clientID: UUID(),
+            messages: [first, second], reply: nil, historyGaps: [], drafts: [], previews: [], pending: [],
+            otherTargetPending: [], anchors: [:], locals: [], origins: [:])
+        let rows = CFLTimelineProjection.project(input, cache: [:]).messages
+        #expect(rows.map(\.id.message) == ["first", "second"])
+        #expect(rows[0].ui == .null && rows[1].ui == .object([:]))
+        let bubble = CFLBubbleState(rows[1])
+        var changes = 0
+        let observer = bubble.objectWillChange.sink { _ in changes += 1 }
+        var updated = rows[1]
+        updated.ui = .object(["changed": .bool(true)])
+        bubble.update(updated)
+        #expect(changes == 1 && bubble.item.ui == updated.ui)
+        #expect(CFLTimelineRow.message(rows[1]).message.id == CFLTimelineRow.message(updated).message.id)
+        withExtendedLifetime(observer) {}
+    }
+
+    @Test("The renderer bridge accepts only its dedicated scheme and authority")
+    func interfaceMediaBridgeURL() throws {
+        let valid = try #require(URL(string: "cfl-media://load/%2Fapi%2Fchat%2Fmedia%2Fphoto%2Fpreview"))
+        #expect(CFLA2UIBridgePolicy.mediaPath(valid) == "/api/chat/media/photo/preview")
+        let workspace = try #require(URL(string: "cfl-media://load/%2Fapi%2Fchat%2Fworkspace-media%3Fkind%3Daudio%26path%3Dmusic%252F%252520.wav"))
+        #expect(CFLA2UIBridgePolicy.mediaPath(workspace) == "/api/chat/workspace-media?kind=audio&path=music%2F%2520.wav")
+        for value in ["https://load/%2Fapi%2Faudio%2Fx.mp3", "cfl-media://other/%2Fapi%2Faudio%2Fx.mp3",
+                      "cfl-media://user@load/%2Fapi%2Faudio%2Fx.mp3", "cfl-media://load/%2Fapi%2Faudio%2Fx.mp3?x=1"] {
+            let url = try #require(URL(string: value))
+            #expect(CFLA2UIBridgePolicy.mediaPath(url) == nil)
+        }
+    }
+
+    @Test("Independent media requests share a version until the presentation ends")
+    func interfaceMediaVersions() {
+        var versions = CFLA2UIMediaVersions()
+        #expect(versions.admit("first", for: "/media/a"))
+        #expect(versions.admit("first", for: "/media/a"))
+        #expect(!versions.admit("second", for: "/media/a"))
+        #expect(versions.admit("second", for: "/media/b"))
+        versions.reset()
+        #expect(versions.admit("second", for: "/media/a"))
+    }
+
+    @Test("Media requests cannot start during nested invalidation or after stop")
+    func interfaceMediaLifecycle() {
+        var lifecycle = CFLA2UIMediaLifecycle()
+        #expect(lifecycle.acceptsStarts)
+        lifecycle.beginInvalidation()
+        lifecycle.beginInvalidation()
+        #expect(!lifecycle.acceptsStarts)
+        lifecycle.endInvalidation()
+        #expect(!lifecycle.acceptsStarts)
+        lifecycle.endInvalidation()
+        #expect(lifecycle.acceptsStarts)
+        lifecycle.beginInvalidation()
+        lifecycle.stop()
+        lifecycle.endInvalidation()
+        #expect(!lifecycle.acceptsStarts)
+    }
+
+    @Test("A changed interface payload starts a new media presentation")
+    func interfaceMediaPayloadChange() {
+        let first: CFLJSONValue = .object(["title": .string("old"), "url": .string("workspace:clip.mp4")])
+        let same: CFLJSONValue = .object(["url": .string("workspace:clip.mp4"), "title": .string("old")])
+        let changed: CFLJSONValue = .object(["title": .string("new"), "url": .string("workspace:clip.mp4")])
+        #expect(CFLA2UIBridgePolicy.mediaPayloadChanged(nil, first))
+        #expect(!CFLA2UIBridgePolicy.mediaPayloadChanged(first, same))
+        #expect(CFLA2UIBridgePolicy.mediaPayloadChanged(first, changed))
+        let item = CFLDisplayMessage(id: .init(target: "target", session: "session", message: "message", offset: -1),
+            text: "", outgoing: false, markdown: false, images: [], sessionRevision: 1, clientID: UUID())
+        let original = CFLA2UIPresentationID(item: item, payload: first)
+        #expect(original == CFLA2UIPresentationID(item: item, payload: same))
+        #expect(original != CFLA2UIPresentationID(item: item, payload: changed))
+        let anotherSession = CFLDisplayMessage(id: item.id, text: "", outgoing: false, markdown: false,
+            images: [], sessionRevision: 2, clientID: item.clientID)
+        #expect(original != CFLA2UIPresentationID(item: anotherSession, payload: first))
+    }
+
+    @Test("Embedded interface height is bounded by the native viewport")
+    func interfaceHeight() throws {
+        let short = try #require(CFLA2UIBridgePolicy.displayHeight(150.2, viewport: 600))
+        #expect(short.height == 151 && !short.scroll)
+        let tall = try #require(CFLA2UIBridgePolicy.displayHeight(900, viewport: 600))
+        #expect(tall.height == 600 && tall.scroll)
+        #expect(CFLA2UIBridgePolicy.displayHeight(.infinity, viewport: 600)?.height == nil)
+        #expect(CFLA2UIBridgePolicy.displayHeight(10_001, viewport: 600)?.height == nil)
+        let viewport = CFLTimelineViewport.visibleFrame(CGRect(x: 0, y: 10, width: 390, height: 800), navigationHeight: 64, composerHeight: 280)
+        #expect(viewport.height == 456)
+        let resized = try #require(CFLA2UIBridgePolicy.displayHeight(700, viewport: Double(viewport.height)))
+        #expect(resized.height == 456 && resized.scroll)
     }
 
     @Test("File rows retain their identity and show attachment metadata")

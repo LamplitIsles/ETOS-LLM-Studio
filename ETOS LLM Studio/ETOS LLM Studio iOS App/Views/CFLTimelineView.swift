@@ -53,7 +53,7 @@ enum CFLTimelineRow: Sendable {
                                        String($0.order), String($0.data.count)])
             }
             signature = [text, String(item.markdown), String(item.sessionRevision), item.clientID.uuidString,
-                         String(item.markdownSourcesRevision), String(item.isReminder), item.voice?.id ?? "",
+                         String(item.markdownSourcesRevision), String(item.isReminder), item.voice?.id ?? "", item.ui.map(Self.encoded) ?? "",
                          item.imageState?.rawValue ?? "", item.historyGap?.status.rawValue ?? "", item.pending.flatMap {
                              CFLPendingPresentation.needsAction($0, busy: item.sendingLocally) ? Self.encoded($0) : nil
                          } ?? ""] + imageInfo + previews + item.files.map { "file:" + Self.key([$0.name, String($0.size), $0.ref.map(Self.encoded) ?? ""]) }
@@ -172,9 +172,18 @@ struct CFLHistoryGapVisits {
     }
 }
 
+enum CFLTimelineViewport {
+    static func visibleFrame(_ frame: CGRect, navigationHeight: CGFloat, composerHeight: CGFloat) -> CGRect {
+        guard !frame.isNull else { return .null }
+        return CGRect(x: frame.minX, y: frame.minY + navigationHeight, width: frame.width,
+                      height: max(0, frame.height - navigationHeight - composerHeight))
+    }
+}
+
 struct CFLTimelineView<RowContent: View, Composer: View>: View {
     @ObservedObject var model: CFLConversationModel
     @StateObject private var adapter = CFLTimelineAdapter()
+    @StateObject private var a2uiViewport = CFLA2UIViewport()
     @State private var timelineFrame: CGRect = .null
     @State private var gapVisits = CFLHistoryGapVisits()
     @Binding var timelineScroll: ScrollToParams?
@@ -189,6 +198,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
     let composer: Composer
 
     var body: some View {
+        let viewport = a2uiViewport
         let rows = adapter.rows
         let firstVisibleID = rows.first?.message.id
         let hasHistoryHeader = model.state.before != nil || model.state.historySyncFailed
@@ -211,6 +221,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
                         }
                     } else {
                         rowContent(row)
+                            .environmentObject(viewport)
                     }
                 }
                     .padding(.horizontal, 8)
@@ -236,6 +247,10 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
         }
         .chatTheme(colors: .init(mainBG: .clear))
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { timelineFrame = $0 }
+        .onChange(of: visibleTimelineFrame, initial: true) { _, frame in
+            let height = frame.isNull ? 0 : frame.height
+            viewport.update(height: height)
+        }
         .mask {
             GeometryReader { geometry in
                 let edge = min(timelineEdgeFade / max(geometry.size.height, 1), 0.5)
@@ -305,10 +320,7 @@ struct CFLTimelineView<RowContent: View, Composer: View>: View {
     }
 
     private var visibleTimelineFrame: CGRect {
-        guard !timelineFrame.isNull else { return .null }
-        return CGRect(x: timelineFrame.minX, y: timelineFrame.minY + navigationOverlayHeight,
-                      width: timelineFrame.width,
-                      height: max(0, timelineFrame.height - navigationOverlayHeight - composerHeight))
+        CFLTimelineViewport.visibleFrame(timelineFrame, navigationHeight: navigationOverlayHeight, composerHeight: composerHeight)
     }
 
     private func gapVisibilityChanged(_ gap: CFLHistoryGap, visible: Bool) {

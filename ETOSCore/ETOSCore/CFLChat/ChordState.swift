@@ -1,10 +1,10 @@
 import Foundation
 
 // The Lamplit singleton view is a JSON value carried by Chord's state codec.
-enum ChordJSON: Codable, Equatable, Sendable {
-    case null, bool(Bool), number(Double), string(String), array([ChordJSON]), object([String: ChordJSON])
+public enum CFLJSONValue: Codable, Equatable, Sendable {
+    case null, bool(Bool), number(Double), string(String), array([CFLJSONValue]), object([String: CFLJSONValue])
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if c.decodeNil() { self = .null }
         else if let v = try? c.decode(Bool.self) { self = .bool(v) }
@@ -13,7 +13,7 @@ enum ChordJSON: Codable, Equatable, Sendable {
         else if let v = try? c.decode([ChordJSON].self) { self = .array(v) }
         else { self = .object(try c.decode([String: ChordJSON].self)) }
     }
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         switch self {
         case .null: try c.encodeNil()
@@ -32,6 +32,8 @@ enum ChordJSON: Codable, Equatable, Sendable {
         return Int(n)
     }
 }
+
+typealias ChordJSON = CFLJSONValue
 
 enum ChordError: Error { case invalid }
 
