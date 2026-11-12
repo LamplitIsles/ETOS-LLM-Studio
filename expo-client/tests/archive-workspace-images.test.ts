@@ -19,13 +19,23 @@ test('finds literal workspace image references without changing mixed Markdown',
   assert.equal(ref.requestPath, `/api/chat/workspace-image?path=${encodeURIComponent(ref.path)}`);
 });
 
-test('does not interpret code, unknown HTML, links, escapes or malformed tags', () => {
+test('extracts paired tags regardless of surrounding text or Markdown', () => {
+  const image = marker('/synthetic/workspace/.lamplit/attachments/a.jpg');
+  for (const source of [
+    `普通文本!${image}`, `你好（测试），${image}！`, `before${image}after`,
+    `\`${image}\``, `\`\`\`html\n${image}\n\`\`\``, `~~~html\n${image}\n~~~`,
+    `<div>${image}</div>`, `[${image}](https://example.invalid)`, `**${image}**`,
+  ]) {
+    const result = findArchiveWorkspaceImages(source, opts);
+    assert.equal(result.images.length, 1, source);
+    assert.equal(source.slice(result.images[0]!.start, result.images[0]!.end), image);
+  }
+});
+
+test('rejects malformed or ambiguous image markers', () => {
   const image = marker('/synthetic/workspace/image.png');
   const cases = [
-    `\`${image}\``, `\`\`\`html\n${image}\n\`\`\``, `~~~html\n${image}\n~~~`, `    ${image}\n`,
-    `\`example\` ${image}`, `> ${image}`, `- ${image}`, `# ${image}`,
-    `<div>${image}</div>`, `<span>${image}</span>`, `[${image}](https://example.invalid)`,
-    `\\${image}`, `![x](${image})`, image.replace('path=', 'src='),
+    image.replace('path=', 'src='), image.replace('</image>', ''),
     image.replace('image>', 'image x>'), marker('/synthetic/workspace/a"b.png'),
     marker('/synthetic/workspace/a<foo>.png'),
   ];
@@ -37,7 +47,7 @@ test('paths, capabilities, size and cancellation fail closed', () => {
     assert.equal(findArchiveWorkspaceImages(marker(path), opts).images.length, 0, path);
   }
   assert.equal(findArchiveWorkspaceImages(marker('/ok/a.png'), { ...opts, workspaceImages: false }).images.length, 0);
-  assert.equal(findArchiveWorkspaceImages(`first\r\n\r\n${marker('/ok/a.png')}`, opts).status, 'unsupported');
+  assert.equal(findArchiveWorkspaceImages(`first\r\n\r\n${marker('/ok/a.png')}`, opts).images.length, 1);
   assert.equal(findArchiveWorkspaceImages('x'.repeat(131073) + marker('/ok/a.png'), opts).status, 'limit');
   assert.equal(findArchiveWorkspaceImages(Array.from({ length: 17 }, (_, i) => marker(`/ok/${i}.png`, i + 1)).join(' '), opts).status, 'limit');
   const abort = new AbortController(); abort.abort();
@@ -67,12 +77,21 @@ test('recognized literal reference uses the existing authenticated bounded image
   await assert.rejects(loadMarkdownImage(ref.requestPath, transport, { ...opts, workspaceImages: false }), /invalid_media/);
 });
 
-test('preserves ordering and UTF-16 offsets without parsing formatted or code content', () => {
+test('preserves ordering, nonempty contents and UTF-16 offsets', () => {
   const a = marker('/synthetic/一.png');
-  const b = marker('/synthetic/two.gif', 2);
-  const source = `👨‍👩‍👧‍👦 ${a} 文本 ${b}\n\n**${a}**\n\n\`example ${b}\``;
+  const b = marker('/synthetic/two.gif', 2).replace('></image>', '>synthetic content</image>');
+  const c = '<image path="/synthetic/three.webp">**文字**</image>';
+  const source = `👨‍👩‍👧‍👦 ${a} 文本 ${b} ${c}`;
   const result = findArchiveWorkspaceImages(source, opts);
   assert.equal(result.status, 'ok');
-  assert.deepEqual(result.images.map(ref => source.slice(ref.start, ref.end)), [a, b]);
-  assert.deepEqual(result.images.map(ref => ref.path), ['/synthetic/一.png', '/synthetic/two.gif']);
+  assert.deepEqual(result.images.map(ref => source.slice(ref.start, ref.end)), [a, b, c]);
+  assert.deepEqual(result.images.map(ref => ref.path), ['/synthetic/一.png', '/synthetic/two.gif', '/synthetic/three.webp']);
+});
+
+test('skips an ambiguous outer image and retains a separately paired inner image', () => {
+  const inner = marker('/synthetic/inner.png', 2);
+  const source = `<image name=[Image #1] path="/synthetic/outer.png">${inner}</image>`;
+  const result = findArchiveWorkspaceImages(source, opts);
+  assert.deepEqual(result.images.map(ref => ref.path), ['/synthetic/inner.png']);
+  assert.equal(source.slice(result.images[0]!.start, result.images[0]!.end), inner);
 });

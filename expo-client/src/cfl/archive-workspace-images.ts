@@ -1,4 +1,3 @@
-import { Marked, type Token } from 'marked';
 import { workspaceImageUrl } from '../../vendor/contracts/src/workspace-images';
 import { isWorkspaceImageGet } from './workspace-image-query';
 
@@ -6,9 +5,9 @@ import { isWorkspaceImageGet } from './workspace-image-query';
 // text or implicitly request an unbounded number of workspace files.
 const MAX_SOURCE = 131_072;
 const MAX_IMAGES = 16;
-const OPEN = /<image name=\[Image #([1-9]\d{0,5})\] path="([^"<>\r\n]{1,4096})">$/u;
-const UNSAFE_TEXT = /[<>\\\[\]()*_~`!]/u;
-const parser = new Marked({ gfm: true });
+// Accept the Codex label shape and a path-only opening tag.
+const OPEN = /<image(?:[ \t]+name=\[Image #[1-9]\d{0,5}\])?[ \t]+path="([^"<>\r\n]{1,4096})"[ \t]*>/gu;
+const CLOSE = '</image>';
 
 export type ArchiveWorkspaceImage = Readonly<{
   /** UTF-16 offsets into the unchanged search record; never split Markdown at these offsets. */
@@ -31,62 +30,38 @@ function check(options: Options) {
 }
 
 /**
- * Identify the unambiguous, empty Codex local-image marker in ordinary, top-level
- * Markdown paragraphs. This is metadata only: keep the original Markdown intact.
- * Markers inside formatted spans, code, links, HTML, lists, and blockquotes are
- * intentionally not interpreted. No filesystem or network operation happens here.
+ * Identify unambiguous paired local-image markers anywhere in a search record,
+ * including inside Markdown or code. This is metadata only: keep the original
+ * Markdown intact. No filesystem or network operation happens here.
  */
 export function findArchiveWorkspaceImages(source: string, options: Options): ArchiveWorkspaceImages {
   check(options);
   if (!options.workspaceImages) return { status: 'unavailable', images: [] };
   if (source.length > MAX_SOURCE) return { status: 'limit', images: [] };
 
-  let blocks: Token[];
-  try { blocks = parser.lexer(source); } catch { return { status: 'unsupported', images: [] }; }
-  // Marked normalizes CRLF, among other cases. Do not guess original offsets.
-  if (blocks.map(block => block.raw).join('') !== source) return { status: 'unsupported', images: [] };
   const images: ArchiveWorkspaceImage[] = [];
-  let blockOffset = 0;
-  for (const block of blocks) {
-    if (block.type === 'paragraph' && Array.isArray(block.tokens)) {
-      const tokens = block.tokens;
-      const raw = tokens.map((token: Token) => token.raw).join('');
-      if (!block.raw.startsWith(raw)) return { status: 'unsupported', images: [] };
-      const found: ArchiveWorkspaceImage[] = [];
-      let offset = 0;
-      let safe = true;
-      for (let index = 0; index < tokens.length; index++) {
-        const token = tokens[index] as Token;
-        if (token.type === 'html') { safe = false; break; }
-        // Ambiguous parsing beside inline code/escapes is not worth turning a
-        // quoted example into a request. Skip this entire paragraph.
-        if (token.type === 'escape' || token.type === 'codespan') { safe = false; break; }
-        if (token.type === 'text') {
-          const match = OPEN.exec(token.raw);
-          const next = tokens[index + 1] as Token | undefined;
-          if (match && next?.type === 'html' && next.raw === '</image>') {
-            if (UNSAFE_TEXT.test(token.raw.slice(0, match.index))) { safe = false; break; }
-            const path = match[2]!;
-            let requestPath: string | null = null;
-            // The archive path is a literal filesystem path, not an encoded
-            // Markdown destination. Encode first so '%' remains a literal '%'.
-            try { requestPath = workspaceImageUrl(encodeURIComponent(path)); } catch { /* invalid Unicode */ }
-            if (requestPath && isWorkspaceImageGet(requestPath)) {
-              const start = blockOffset + offset + match.index;
-              found.push({ start, end: blockOffset + offset + token.raw.length + next.raw.length, path, requestPath });
-            }
-            offset += token.raw.length + next.raw.length;
-            index++;
-            continue;
-          }
-          if (UNSAFE_TEXT.test(token.raw)) { safe = false; break; }
-        }
-        offset += token.raw.length;
-      }
-      if (safe) images.push(...found);
-      if (images.length > MAX_IMAGES) return { status: 'limit', images: [] };
+  const openings = new RegExp(OPEN.source, OPEN.flags);
+  let count = 0;
+  for (let match = openings.exec(source); match; match = openings.exec(source)) {
+    if (++count > MAX_IMAGES) return { status: 'limit', images: [] };
+    const close = source.indexOf(CLOSE, openings.lastIndex);
+    if (close < 0) break;
+    const nested = source.indexOf('<image', openings.lastIndex);
+    if (nested >= 0 && nested < close) {
+      // Don't guess how an outer image containing another opening is paired.
+      openings.lastIndex = nested;
+      continue;
     }
-    blockOffset += block.raw.length;
+    const end = close + CLOSE.length;
+    openings.lastIndex = end;
+    const path = match[1]!;
+    let requestPath: string | null = null;
+    // The archive path is a literal filesystem path, not an encoded
+    // Markdown destination. Encode first so '%' remains a literal '%'.
+    try { requestPath = workspaceImageUrl(encodeURIComponent(path)); } catch { /* invalid Unicode */ }
+    if (requestPath && isWorkspaceImageGet(requestPath)) {
+      images.push({ start: match.index, end, path, requestPath });
+    }
   }
   check(options);
   return { status: 'ok', images };
