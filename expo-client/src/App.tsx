@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Keyboard, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, AppState, Image, Keyboard, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type ScrollViewProps } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView, KeyboardChatScrollView, KeyboardProvider, KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { ReduceMotion, useAnimatedReaction, useAnimatedStyle, useDerivedValue, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
-import { BottomSheet, RNHostView } from '@expo/ui';
 import { SymbolView } from 'expo-symbols';
 import { requireOptionalNativeModule } from 'expo';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
@@ -20,6 +19,7 @@ import { WebAuth } from './cfl/web-auth';
 import { loadAppearance, loadAppearanceImage } from './cfl/appearance';
 import { type ImageData, type ApiTransport } from './cfl/transport';
 import { recentStickers } from './cfl/recent-stickers';
+import { classifyStickerOpacity } from './cfl/sticker-opacity';
 import { CameraPermissionError, capturePhoto, pickFiles, pickImages, type AttachmentDraft } from './cfl/drafts';
 import { CameraPhotoError, prepareCameraPhoto } from './cfl/camera-photo';
 import { validateDrafts } from './cfl/intake';
@@ -33,12 +33,13 @@ import { Input } from './ui/Input';
 import { TimelineViewport } from './ui/TimelineScrollView';
 import { captureHistoryAnchor } from './ui/historyAnchor';
 import { rowsFor, type TimelineRow as Row } from './ui/timelineRows';
+import { chatTimeHeadings, nextChatDayBoundary } from './ui/chatTime';
 import { attachmentValidationMessage, cameraPhotoMessage } from './ui/attachmentValidationMessage';
 import { ReminderButton } from './ui/ReminderButton';
 import { ChatSearch } from './ui/ChatSearch';
 import { MessageText } from './ui/MessageText';
+import { MessageSurface } from './ui/MessageSurface';
 import { ChatSettings } from './ui/ChatSettings';
-import { ContextButton } from './ui/ContextButton';
 import { useKeyboardDiagnostic } from './ui/keyboardDiagnostic';
 import type { InputAreaProps } from '../modules/etos-input-area/src';
 import type { InputAreaProbeArgs, InputAreaProbeResult } from '../modules/etos-input-area/src/probe-core';
@@ -60,24 +61,34 @@ type AppearanceView = { client: Client; sessionId: string; name: string; avatar?
 function AuthImage({ id, media, controller, mediaType, sticker = false }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean }) {
   const [value, setValue] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [opaqueSize, setOpaqueSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     let active = true;
     const abort = new AbortController();
-    setValue(null); setFailed(false);
+    setValue(null); setFailed(false); setOpaqueSize(null);
     const current = controller.scope();
     // JPEG previews are opaque; formats that can carry transparency or animation
     // need the original attachment rather than a converted preview.
-    void controller.readImage(media, id, () => active && current(), sticker || mediaType !== 'image/jpeg' ? 'original' : 'preview', abort.signal).then(({ bytes, contentType }) => {
+    void controller.readImage(media, id, () => active && current(), sticker || mediaType !== 'image/jpeg' ? 'original' : 'preview', abort.signal).then(image => {
       if (!active || !current()) return;
+      const { bytes, contentType } = image;
       let binary = '';
       for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      setValue(`data:${contentType};base64,${btoa(binary)}`);
+      const uri = `data:${contentType};base64,${btoa(binary)}`;
+      setValue(uri);
+      if (sticker) void classifyStickerOpacity(image, () => active && current(), abort.signal).then(async opacity => {
+        if (!active || !current() || opacity !== 'opaque') return;
+        const size = await new Promise<{ width: number; height: number }>((resolve, reject) => Image.getSize(uri, (width, height) => resolve({ width, height }), reject));
+        if (!active || !current() || !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0) return;
+        const scale = Math.min(120 / size.width, 120 / size.height);
+        setOpaqueSize({ width: size.width * scale, height: size.height * scale });
+      }).catch(() => {});
     }).catch(() => { if (active && current()) setFailed(true); });
     return () => { active = false; abort.abort(); };
   }, [id, media, controller, mediaType, sticker]);
   if (failed) return <Text style={styles.mediaNotice}>图片暂时无法显示</Text>;
   if (!value) return <View style={styles.imageLoading}><ActivityIndicator /><Text style={styles.mediaNotice}>图片加载中</Text></View>;
-  return <Image source={{ uri: value }} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? styles.stickerImage : styles.image} />;
+  return <Image source={{ uri: value }} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? [styles.stickerImage, opaqueSize && { ...opaqueSize, borderRadius: 12 }] : styles.image} />;
 }
 
 function imageUri(image: ImageData, createdUrls: string[]): string {
@@ -100,10 +111,10 @@ function MessageBubble({ row, media, controller, sessionId, workspaceImages, lat
   const placeholderStyle = [styles.contentPlaceholder, { color: dark ? '#e3e7ec' : '#4d5561', backgroundColor: dark ? 'rgba(38,43,51,0.94)' : 'rgba(247,248,250,0.94)' }];
   const hasImage = item?.images?.some(image => !image.sticker);
   return <View ref={latestRef} nativeID={`timeline-${row._id}`} testID={mine ? 'message-user' : 'message-agent'} style={[styles.messageRow, mine ? styles.mine : styles.theirs]}>
-    {item?.source?.kind === 'reminder' && row.text ? <ReminderButton text={row.text} /> : (row.text || row.pendingState === 'failed') ? <Surface tint={mine ? '#536d94' : undefined} style={[styles.bubble, mine && styles.myBubble]}>
+    {item?.source?.kind === 'reminder' && row.text ? <ReminderButton text={row.text} /> : (row.text || row.pendingState === 'failed') ? <MessageSurface mine={mine}>
       {!!row.text && <MessageText key={`${media.origin}:${sessionId}:${workspaceImages}`} text={row.text} foreground={foreground} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />}
       {row.pendingState === 'failed' && <Text style={styles.errorSmall}>发送失败，请检查连接</Text>}
-    </Surface> : null}
+    </MessageSurface> : null}
     {hasImage && item?.images?.filter(image => !image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} />)}
     {item?.images?.filter(image => image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
     {item?.files?.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
@@ -153,12 +164,15 @@ function AppContent() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [snapshot, setSnapshot] = useState<ChatSnapshot | null>(null);
+  const [chatDayNow, setChatDayNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setTimeout(() => setChatDayNow(Date.now()), Math.max(1, nextChatDayBoundary(chatDayNow) - Date.now() + 50));
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') setChatDayNow(Date.now()); });
+    return () => { clearTimeout(timer); subscription.remove(); };
+  }, [chatDayNow]);
   const [spaceOpen, setSpaceOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [stopState, setStopState] = useState<{ client: Client; session: string; turn: string; state: 'pending' | 'unknown' | 'stopped' } | null>(null);
-  const stopPending = useRef(false);
   const [draft, setDraft] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
   const [toolbarHeight, setToolbarHeight] = useState(72);
@@ -649,28 +663,14 @@ function AppContent() {
   };
   const workspaceImages = snapshot?.view?.capabilities.workspaceImages === true;
   const messages = useMemo(() => snapshot ? rowsFor(snapshot) : [], [snapshot]);
-  const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => client && sessionId ? <MessageBubble key={item._id} row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} /> : null, [client, sessionId, workspaceImages, messages.length]);
+  const timeHeadings = useMemo(() => chatTimeHeadings(messages, chatDayNow), [messages, chatDayNow]);
+  const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => client && sessionId ? <View>
+    {timeHeadings[item._id] && <View style={styles.timeHeading}><Text testID="chat-time-heading" style={[styles.timeHeadingText, { color: dark ? '#e1e4e8' : '#59616c', backgroundColor: dark ? 'rgba(35,39,45,0.85)' : 'rgba(245,247,250,0.9)' }]}>{timeHeadings[item._id]}</Text></View>}
+    <MessageBubble row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} />
+  </View> : null, [client, sessionId, workspaceImages, messages.length, timeHeadings, dark]);
   const currentAppearance = appearance?.client === client && appearance.sessionId === sessionId ? appearance : null;
   const title = currentAppearance?.name || snapshot?.view?.name || '聊天';
   const background = width > height ? currentAppearance?.landscape : currentAppearance?.portrait;
-  const usage = snapshot?.view?.contextUsage;
-  const contextPercent = usage?.tokens != null && usage.capacity != null && usage.capacity > 0 ? Math.min(100, Math.max(0, Math.round(usage.tokens / usage.capacity * 100))) : null;
-  const activeTurn = snapshot?.view?.activeTurnId;
-  const stopForCurrentTurn = stopState?.client === client && stopState.session === sessionId && stopState.turn === activeTurn ? stopState.state : null;
-  const stopReply = async () => {
-    if (!client || !snapshot || !sessionId || !activeTurn || stopPending.current || stopForCurrentTurn) return;
-    const target = client.controller.captureStopTarget(snapshot);
-    if (!target) { setError('当前回复已发生变化，请稍后再试。'); return; }
-    const scope = client.controller.scope();
-    stopPending.current = true;
-    setStopState({ client, session: sessionId, turn: activeTurn, state: 'pending' });
-    const result = await client.controller.stopTurn(target);
-    stopPending.current = false;
-    if (!scope() || active.current !== client || client.controller.snapshot().view?.activeTurnId !== activeTurn) return;
-    if (result === 'unknown') { setStopState({ client, session: sessionId, turn: activeTurn, state: 'unknown' }); setError('停止结果未确认，请检查连接和当前回复状态。'); }
-    else if (result === 'stopped') setStopState({ client, session: sessionId, turn: activeTurn, state: 'stopped' });
-    else { setStopState(null); setError(result === 'not_stopped' || result === 'stale' ? '当前回复已发生变化。' : '暂时无法停止回复，请检查连接。'); }
-  };
 
   // Navigation must remain available even if a native panel request never
   // settles. Retire its host instead of issuing another native request.
@@ -734,7 +734,6 @@ function AppContent() {
           <View style={[styles.identityDivider, { backgroundColor: muted }]} />
           <Button accessibilityLabel="打开伴侣空间" variant="ghost" icon={{ ios: 'ellipsis', web: 'more_horiz', android: 'more_horiz' }} onPress={() => navigateFromChat(() => setSpaceOpen(true))} />
         </Surface><Surface style={styles.headerActions}>
-          {activeTurn && snapshot?.view?.capabilities.stop ? <Button size="navigation" accessibilityLabel="停止回复" disabled={!!stopForCurrentTurn || snapshot.connection !== 'online'} icon={{ ios: 'stop.fill', web: 'stop', android: 'stop' }} onPress={() => void stopReply()} /> : <ContextButton percentage={contextPercent} dark={dark} onPress={() => navigateFromChat(() => setContextOpen(true))} />}
           <Button accessibilityLabel="搜索聊天记录" variant="ghost" icon={{ ios: 'magnifyingglass', web: 'search', android: 'search' }} onPress={() => navigateFromChat(() => setSearchOpen(true))} />
           <Button accessibilityLabel="设置" variant="ghost" icon={{ ios: 'gearshape', web: 'settings', android: 'settings' }} onPress={() => navigateFromChat(() => setSettingsOpen(true))} />
         </Surface></View>
@@ -817,10 +816,6 @@ function AppContent() {
         </View>
         {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} media={client.media} workspaceImages={snapshot?.view?.capabilities.workspaceImages === true} dark={dark} onClose={() => setSearchOpen(false)} />}
         {settingsOpen && sessionId && <ChatSettings key={sessionId} controller={client.controller} media={client.media} dark={dark} onClose={() => setSettingsOpen(false)} onBackgroundSaved={() => setAppearanceRevision(value => value + 1)} />}
-        <BottomSheet isPresented={contextOpen} onDismiss={() => setContextOpen(false)} snapPoints={['half']} containerColor={dark ? '#25282d' : '#f7f8fa'} testID="context-sheet"><RNHostView><View style={styles.contextSheet}>
-          <View style={styles.contextHeading}><Text style={[styles.contextTitle, { color: ink }]}>上下文</Text><Button accessibilityLabel="关闭上下文" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setContextOpen(false)} /></View>
-          <Text style={{ color: ink }}>{snapshot?.view?.contextUsage.tokens == null ? '暂无上下文用量数据' : `已使用 ${snapshot.view.contextUsage.tokens.toLocaleString()}${snapshot.view.contextUsage.capacity == null ? '' : ` / ${snapshot.view.contextUsage.capacity.toLocaleString()}`} tokens`}</Text>
-        </View></RNHostView></BottomSheet>
       </View>
     </View>
     {spaceOpen && <View style={styles.screen}><NativeTabsFrame header={spaceHeader} ink={ink} page={page} dark={dark} bottomInset={insets.bottom} /></View>}
@@ -837,7 +832,6 @@ const styles = StyleSheet.create({
   spaceTopbar: { paddingHorizontal: 20 },
   chatTopbar: { position: 'absolute', left: 0, right: 0, zIndex: 2, paddingHorizontal: 18, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerActions: { borderRadius: 999, flexDirection: 'row', alignItems: 'center', padding: 5 },
-  contextSheet: { flex: 1, paddingHorizontal: 16, gap: 12 }, contextHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, contextTitle: { fontSize: 19, fontWeight: '600' },
   chatAlerts: { position: 'absolute', left: 0, right: 0, zIndex: 2 },
   chatError: { marginHorizontal: 18, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, backgroundColor: '#fff' },
   chatErrorText: { color: '#9c302b', fontSize: 14, lineHeight: 20 },
@@ -846,7 +840,8 @@ const styles = StyleSheet.create({
   avatarText: { color: '#fff', fontSize: 17, fontWeight: '700' }, identityDivider: { width: StyleSheet.hairlineWidth, height: 23, opacity: 0.45 },
   chatBody: { flex: 1, minHeight: 0 }, floatingComposer: { position: 'absolute', bottom: 0, left: 0, right: 0 },
   messageRow: { marginVertical: 4, marginHorizontal: 18, gap: 6 }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '78%' }, theirs: { flex: 1, alignItems: 'flex-start' },
-  bubble: { borderRadius: 22, paddingHorizontal: 15, paddingVertical: 11 }, myBubble: { borderBottomRightRadius: 7 }, messageText: { fontSize: 16, lineHeight: 23 }, errorSmall: { color: '#ffe2df', fontSize: 11, marginTop: 4 },
+  timeHeading: { alignItems: 'center', marginTop: 20, marginBottom: 12 }, timeHeadingText: { overflow: 'hidden', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4, fontSize: 12, lineHeight: 16 },
+  messageText: { fontSize: 16, lineHeight: 23 }, errorSmall: { color: '#ffe2df', fontSize: 11, marginTop: 4 },
   image: { width: 200, height: 150, borderRadius: 16 }, stickerImage: { width: 120, height: 120 }, imageLoading: { width: 140, height: 90, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#e1e4e8', borderRadius: 16 }, mediaNotice: { fontSize: 12, color: '#727782' }, contentPlaceholder: { color: '#777f8b', backgroundColor: 'rgba(130,140,150,0.14)', borderRadius: 13, padding: 12, overflow: 'hidden', maxWidth: 240 },
   composerOuter: { paddingTop: 4, paddingHorizontal: 7 }, composerSurface: { flex: 1, borderRadius: 22 },
   composerContents: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, gap: 6 },

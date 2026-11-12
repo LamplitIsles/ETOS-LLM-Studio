@@ -1,4 +1,5 @@
 const { chromium } = require('@playwright/test');
+const assert = require('node:assert/strict');
 const { isolatedContext } = require('./ui-test-context.cjs');
 
 (async () => {
@@ -23,6 +24,13 @@ const { isolatedContext } = require('./ui-test-context.cjs');
     await dialog.getByRole('textbox', { name: '搜索聊天记录' }).press('Enter');
     await dialog.getByRole('button', { name: '搜索测试 **格式标记**' }).first().click({ timeout: 4000 });
     await dialog.locator('strong').getByText('格式标记').first().waitFor({ timeout: 4000 });
-    console.log('PASS: Enter, highlighted results, and Markdown search details');
+    const user = dialog.getByTestId('search-context-user').last();
+    const assistant = dialog.getByTestId('search-context-assistant').first();
+    await user.waitFor(); await assistant.waitFor();
+    const [userBox, assistantBox] = await Promise.all([user.boundingBox(), assistant.boundingBox()]);
+    assert.ok(userBox && assistantBox && userBox.x > assistantBox.x, 'user and assistant context bubbles should align on opposite sides');
+    assert.equal(await dialog.getByText('伙伴', { exact: true }).count(), 0);
+    assert.equal(await dialog.getByText('你', { exact: true }).count(), 0);
+    console.log('PASS: Enter, highlighted results, Markdown, and separate user/assistant context bubbles');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
