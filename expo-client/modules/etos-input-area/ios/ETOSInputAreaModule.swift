@@ -42,8 +42,17 @@ public final class ETOSInputAreaModule: Module {
       classifyStaticImageOpacity(data, contentType, width, height)
     }.runOnQueue(stickerOpacityQueue)
     View(ETOSInputAreaView.self) {}
+    // Availability is not activation; every panel must explicitly opt in.
+    Function("supportsSequentialHandoff") {
+      #if DEBUG
+      return true
+      #else
+      return false
+      #endif
+    }
     View(ETOSKeyboardPanelView.self) {
       ViewName("KeyboardPanel")
+      Events("onSequentialHandoff")
       Prop("scopeGeneration") { (view: ETOSKeyboardPanelView, value: Int) in
         view.setGeneration(value)
       }
@@ -71,6 +80,68 @@ public final class ETOSInputAreaModule: Module {
       let candidates = input.subviews.filter { $0 is UITextView || $0 is UITextField }
       guard candidates.count == 1, let backing = candidates.first else { return "input_unsupported" }
       return panelView.dismiss(generation: generation, backing: backing)
+    }.runOnQueue(.main)
+
+    AsyncFunction("enableSequentialHandoff") { (panelTag: Int, generation: Int) -> String in
+      #if DEBUG
+      guard let panel = self.appContext?.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self) else { return "targets_unavailable" }
+      return panel.enableSequentialHandoff(generation: generation)
+      #else
+      return "unavailable"
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("disableSequentialHandoff") { (panelTag: Int, generation: Int) -> String in
+      #if DEBUG
+      guard let panel = self.appContext?.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self) else { return "targets_unavailable" }
+      return panel.disableSequentialHandoff(generation: generation)
+      #else
+      return "unavailable"
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("beginSequentialHandoff") { (hostTag: Int, panelTag: Int, inputTag: Int, generation: Int, operation: Int, destination: Int, height: Double) -> String in
+      #if DEBUG
+      guard let context = self.appContext,
+            let host = context.findView(withTag: hostTag, ofType: ETOSInputAreaView.self),
+            let panel = context.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self),
+            let input = context.findView(withTag: inputTag, ofType: UIView.self),
+            host.window != nil, panel.isDescendant(of: host), input.isDescendant(of: host),
+            NSStringFromClass(type(of: input)) == "RCTTextInputComponentView" else { return "targets_unavailable" }
+      let candidates = input.subviews.filter { $0 is UITextView || $0 is UITextField }
+      guard candidates.count == 1, let backing = candidates.first else { return "input_unsupported" }
+      return panel.beginSequentialHandoff(generation: generation, operation: operation, backing: backing, destination: destination, height: height)
+      #else
+      return "unavailable"
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("snapshotSequentialHandoff") { (hostTag: Int, panelTag: Int, inputTag: Int, generation: Int) -> [String: String] in
+      #if DEBUG
+      guard let context = self.appContext,
+            let host = context.findView(withTag: hostTag, ofType: ETOSInputAreaView.self),
+            let panel = context.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self),
+            let input = context.findView(withTag: inputTag, ofType: UIView.self),
+            host.window != nil, panel.isDescendant(of: host), input.isDescendant(of: host),
+            NSStringFromClass(type(of: input)) == "RCTTextInputComponentView" else { return ["status": "unavailable"] }
+      let candidates = input.subviews.filter { $0 is UITextView || $0 is UITextField }
+      guard candidates.count == 1, let backing = candidates.first else { return ["status": "unavailable"] }
+      return panel.sequentialSnapshot(generation: generation, backing: backing)
+      #else
+      return ["status": "unavailable"]
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("cancelSequentialHandoff") { (panelTag: Int, generation: Int, operation: Int) -> String in
+      guard let context = self.appContext,
+            let panel = context.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self) else { return "not_pending" }
+      return panel.cancelSequentialHandoff(generation: generation, operation: operation)
+    }.runOnQueue(.main)
+
+    AsyncFunction("inspectSequentialHandoff") { (panelTag: Int, generation: Int, operation: Int) -> String in
+      guard let context = self.appContext,
+            let panel = context.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self) else { return "not_pending" }
+      return panel.inspectSequentialHandoff(generation: generation, operation: operation)
     }.runOnQueue(.main)
 
     // A one-shot, read-only feasibility probe. No view is retained or bound.
