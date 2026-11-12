@@ -8,6 +8,20 @@ their process-local fixtures under `tests/fixtures`.
 The chat UI composes FlashList and native/Web controls around the CFL data
 controller; it does not depend on a bundled chat UI framework.
 
+## 聊天交互状态（2026-11-12）
+
+- 聊天搜索使用当前 CFL 搜索协议；CFL 当前通过 FlickLog 查询和读取历史。
+  搜索结果按发送者、可用时间和摘要显示，点击进入消息上下文。Enter 搜索、
+  结果列表高亮和 Markdown 气泡已实现；详情中匹配词高亮仍在开发。
+- 搜索正文中可识别的成对 `<image ...></image>` 标签，会在展示时转换为
+  原位置的图片，使用 CFL 工作区图片接口及现有认证和路径检查。档案内容不变；
+  选择和复制针对呈现后的 Markdown。用户已在 iPhone 验证一个真实示例；代码块等
+  特殊 Markdown 上下文和未被标签引用的附件不能据此视为完整支持。
+- 用户在 iPhone 确认过搜索定位、自动聚焦、列表样式、搜索关闭、多行输入高度、
+  中文输入和长文本滚动。验证针对当时的开发版与交互，不代表所有机型和输入法。
+- 用户决定移除聊天顶部的上下文圆圈和停止按钮。键盘、表情与附件面板互切的
+  平滑动画仍待处理；静态不透明表情圆角的 iOS 原生判定仍需新构建和设备验证。
+
 ## iOS 开发（Mac）
 
 项目已为 npm 12 授权固定版本 `react-native-enriched-markdown@1.2.0-nightly-20261109-ca015bcac` 所需的安装脚本。使用环境代理下载该库的原生资源时，Node 需启用环境代理，可运行 `NODE_USE_ENV_PROXY=1 npm ci`。
@@ -24,7 +38,7 @@ Cloud 通过 Homebrew 查找 `ruby@3.3`，缺失时安装，再在 CI 工具目�
 
 需要脱离 Metro 的本地版本时，运行 `npm run ios:build:release` 构建未签名 Release；用户可在 Mac 本机运行 `npm run ios:install:release` 签名已有 Release 产物并安装，不重新编译（多台设备同样可加 `-- --device <identifier>`）。Release 内嵌生产 JS 和资源，安装后无需 Metro，真实聊天仍需连接网络。它与 Debug 使用相同的 `io.guion.etos.cfl4960` bundle ID，会替换同一 App 的现有安装。此本地签名安装受开发签名有效期限制，不等同于 App Store 分发；OTA 更新尚未上线，不是此流程的前提。安装结果不明时 Debug 和 Release 共用上述确认流程。
 
-构建产物名由 app config 的 `name` 派生为 `ETOSChat.app`，工程目录与 target 仍是 `ETOSExpo`；`ios:build`、`ios:install` 与 `ios:archive` 都按这个产物名取用。构建复用既有 `~/Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe`；如需指定另一个**已有**目录，设置 `ETOS_DERIVED_DATA`。默认签名 Team 为 `RL5WAW5828`，可用 `ETOS_DEVELOPMENT_TEAM` 覆盖。Mac 曾在本次依赖锁更新前完成 Expo iOS 原生未签名构建；当前依赖配置的构建、真实登录和设备交互仍待验证。
+构建产物名由 app config 的 `name` 派生为 `ETOSChat.app`，工程目录与 target 仍是 `ETOSExpo`；`ios:build`、`ios:install` 与 `ios:archive` 都按这个产物名取用。构建复用既有 `~/Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe`；如需指定另一个**已有**目录，设置 `ETOS_DERIVED_DATA`。默认签名 Team 为 `RL5WAW5828`，可用 `ETOS_DEVELOPMENT_TEAM` 覆盖。Mac 曾在本次依赖锁更新前完成 Expo iOS 原生未签名构建；当前依赖配置的构建仍待验证；真实登录与部分设备交互已有阶段性验证，完整设备验收仍未完成。
 
 ## Development
 
@@ -395,7 +409,8 @@ peer dependencies, licensing, and platform validation limits.
   Ambiguous quotes, angle brackets, unsupported attributes and outer nested tags
   are skipped. The actual renderer still uses Enriched Markdown. A workspace file
   can change or disappear and `.model.jpg` is not evidence of the original image
-  or sticker. Search attachment coverage and iOS display remain unverified.
+  or sticker. A user confirmed one search image on iPhone; full search attachment
+  coverage remains unverified.
 - Real iOS: `createNativeAuth()`; call `select(httpsOrigin)` then `signIn()`
   only on explicit user action. Pass that same auth and origin to
   `createNativeChat(origin, auth)` from `factory.native.ts`. Stop the old
