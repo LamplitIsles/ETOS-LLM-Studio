@@ -1,14 +1,40 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { RNHostView } from '@expo/ui';
 import type { SearchCard, SearchReadResult } from '../../vendor/contracts/src/index';
 import type { ChatController } from '../cfl/chat';
 import type { ApiTransport } from '../cfl/transport';
+import { findArchiveWorkspaceImages } from '../cfl/archive-workspace-images';
+import { loadMarkdownImage } from '../cfl/markdown-image';
+import { createMarkdownImageUri } from '../cfl/markdown-image-uri';
 import { Button } from './Button';
 import { Input } from './Input';
 import { MessageText } from './MessageText';
 import { MessageSurface } from './MessageSurface';
 import { FullSheet } from './FullSheet';
+
+function SearchImage({ requestPath, media, controller, workspaceImages, color }: {
+  requestPath: string; media: ApiTransport; controller: ChatController; workspaceImages: boolean; color: string;
+}) {
+  const [uri, setUri] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const scope = controller.scope(), abort = new AbortController();
+    const current = () => active && scope();
+    let release: (() => void) | undefined;
+    setUri(null); setFailed(false);
+    void loadMarkdownImage(requestPath, media, { workspaceImages, isCurrent: current, signal: abort.signal })
+      .then(image => createMarkdownImageUri(image, current, abort.signal))
+      .then(result => { if (!current()) { result.release(); return; } release = result.release; setUri(result.uri); })
+      .catch(() => { if (current()) setFailed(true); });
+    return () => { active = false; abort.abort(); release?.(); };
+  }, [controller, media, requestPath, workspaceImages]);
+  if (failed) return <Text style={{ color }}>图片暂时无法显示</Text>;
+  if (!uri) return <View style={styles.imageLoading}><ActivityIndicator /></View>;
+  return <Image source={{ uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.searchImage}
+    onError={() => setFailed(true)} />;
+}
 
 function SearchMessage({ kind, role, text, active, truncated, dark, media, controller, workspaceImages }: {
   kind: 'message' | 'compaction'; role?: 'user' | 'assistant'; text: string; active: boolean; truncated?: boolean;
@@ -18,11 +44,13 @@ function SearchMessage({ kind, role, text, active, truncated, dark, media, contr
   const unknown = kind === 'compaction' || !role;
   const ink = mine ? '#ffffff' : dark ? '#f4f4f6' : '#252631';
   const muted = mine ? '#e1e9f3' : dark ? '#b6bcc6' : '#616975';
+  const images = useMemo(() => findArchiveWorkspaceImages(text, { workspaceImages, isCurrent: () => true }).images, [text, workspaceImages]);
   return <View testID={kind === 'compaction' ? 'search-context-summary' : mine ? 'search-context-user' : role === 'assistant' ? 'search-context-assistant' : 'search-context-unknown'}
     style={[styles.messageRow, mine ? styles.mine : styles.theirs]}>
     {unknown && <Text style={[styles.recordLabel, { color: muted }]}>{kind === 'compaction' ? '摘要' : '角色未知'}</Text>}
     <MessageSurface mine={mine} style={active ? { borderWidth: 2, borderColor: dark ? '#96bce2' : '#658db5' } : undefined}>
       <MessageText text={text} foreground={ink} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />
+      {images.map(image => <SearchImage key={`${image.start}:${image.requestPath}`} requestPath={image.requestPath} media={media} controller={controller} workspaceImages={workspaceImages} color={muted} />)}
       {!!truncated && <Text style={{ color: muted }}>内容已截断</Text>}
     </MessageSurface>
   </View>;
@@ -118,4 +146,4 @@ export function ChatSearch({ controller, media, workspaceImages, dark, onClose }
     </View></RNHostView>
   </FullSheet>;
 }
-const styles = StyleSheet.create({ page: { flex: 1, gap: 12, paddingHorizontal: 16, paddingBottom: 16 }, heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, title: { fontSize: 19, fontWeight: '600' }, search: { flexDirection: 'row', alignItems: 'center', gap: 8 }, input: { flex: 1 }, results: { flex: 1 }, hit: { marginVertical: 4, alignItems: 'flex-start' }, hitButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 }, messageRow: { marginVertical: 4, maxWidth: '78%' }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end' }, theirs: { alignSelf: 'flex-start', alignItems: 'flex-start' }, recordLabel: { marginBottom: 4, fontSize: 12 } });
+const styles = StyleSheet.create({ page: { flex: 1, gap: 12, paddingHorizontal: 16, paddingBottom: 16 }, heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, title: { fontSize: 19, fontWeight: '600' }, search: { flexDirection: 'row', alignItems: 'center', gap: 8 }, input: { flex: 1 }, results: { flex: 1 }, hit: { marginVertical: 4, alignItems: 'flex-start' }, hitButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 }, messageRow: { marginVertical: 4, maxWidth: '78%' }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end' }, theirs: { alignSelf: 'flex-start', alignItems: 'flex-start' }, recordLabel: { marginBottom: 4, fontSize: 12 }, searchImage: { width: 200, height: 200, borderRadius: 12 }, imageLoading: { width: 200, height: 120, alignItems: 'center', justifyContent: 'center' } });

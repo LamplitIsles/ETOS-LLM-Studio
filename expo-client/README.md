@@ -386,15 +386,13 @@ peer dependencies, licensing, and platform validation limits.
   The marker path is a literal filesystem path, including any `%` characters;
   the parser encodes it before using the shared Markdown destination contract.
   The server remains responsible for workspace containment and symlink checks.
-  `unavailable` means the capability is absent, `limit` means the 131,072 UTF-16
-  source-unit or 16-image limit was exceeded, and `unsupported` means the lexer
-  could not safely preserve source offsets. In each case `images` is empty.
-  `ok` means the bounded scan ran, **not** that every image was found: it only
-  accepts an unambiguous `<image name=[Image #N] path="…"></image>` in ordinary
-  top-level paragraphs. It skips markers in formatted spans, links, code,
-  unknown HTML, lists or blockquotes, and paths with ambiguous quotes or angle
-  brackets. It uses the existing `marked` lexer solely to conservatively locate
-  references; the actual renderer still uses Enriched Markdown. A workspace file
+  `unavailable` means the capability is absent; `limit` means the 131,072 UTF-16
+  source-unit or 16-opening limit was exceeded. In either case `images` is empty.
+  `ok` means the bounded scan ran, **not** that every image was found: it accepts
+  paired tags with `path="…"` and an optional Codex `name=[Image #N]`, anywhere
+  in the record, including code. The content between the tags may be nonempty.
+  Ambiguous quotes, angle brackets, unsupported attributes and outer nested tags
+  are skipped. The actual renderer still uses Enriched Markdown. A workspace file
   can change or disappear and `.model.jpg` is not evidence of the original image
   or sticker. Search attachment coverage and iOS display remain unverified.
 - Real iOS: `createNativeAuth()`; call `select(httpsOrigin)` then `signIn()`
