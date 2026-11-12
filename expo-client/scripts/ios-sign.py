@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 
-BUNDLE = "studio.etos.expo.dev"
+BUNDLE = "io.guion.etos.cfl4960"
 
 
 class ToolError(RuntimeError):

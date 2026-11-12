@@ -49,3 +49,5 @@ Cloud App 的 Info.plist 不指定 `ETKeychainAccessGroup` 或 `AppIdentifierPre
 在 Xcode Cloud 中选择以上 workspace 和 scheme，选定 Xcode 27.1（27A9275），添加 iOS Archive 并选择 TestFlight and App Store；唯一自动启动条件设置为 Tag Changes，选择自定义标签并匹配**以 `v` 开头**。移除默认分支、PR 和定时触发条件，并确认其他 workflow 不会自动构建。标签创建或更新都可能触发构建；App Store Connect 的版本和构建号必须避免已有记录冲突。
 
 已知 Xcode 26.6／Swift 6.3.3 在 Release 优化 `ChatSendContentSource.Coordinator` 的析构时崩溃；Linux Swift 6.4.1、SDK 27.1 的 Release 成功不能证明 Apple Xcode 或 Xcode Cloud 成功。Cloud 仍使用 Release 优化，需在可用的 Apple 工具链中验证。签名、归档包内无扩展、App Store Connect 上传与 TestFlight 分发也须在获授权后验证。`ci_scripts/ci_pre_xcodebuild.sh` 对 `ETOS LLM Studio Cloud` scheme 跳过扩展本地化检查，仍注入提交哈希；其他 scheme 继续执行原有检查。
+
+同一 App（ETOS Chat，Bundle ID `io.guion.etos.cfl4960`）的开发壳归档入口改为 Expo 工程：workspace `ETOSExpo.xcworkspace`、scheme `ETOSExpo Dev Archive`。此时 `ci_pre_xcodebuild.sh` 走 Expo 分支，写入 `CFBundleVersion` 与 `ETCommitHash` 并跳过上面的扩展本地化检查；`ci_post_clone.sh` 只在该 scheme 下准备 Node/npm 与 Pods。具体配置步骤、用户安装与 Metro 连接见 [Expo TestFlight 开发壳](expo-testflight-dev-shell.md)。

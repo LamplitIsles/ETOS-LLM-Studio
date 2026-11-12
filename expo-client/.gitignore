@@ -1,5 +1,15 @@
 .expo/
 dist/
 !package-lock.json
-/ios/
 /.ios-install-unknown.json
+
+# Expo 生成的 ios 工程必须持续存在于仓库中，Xcode Cloud 才能识别并归档开发壳。
+# Pods、build、xcuserdata、.xcode.env.local 等由 ios/.gitignore 继续忽略。
+/ios/*
+!/ios/.gitignore
+!/ios/.xcode.env
+!/ios/Podfile
+!/ios/Podfile.lock
+!/ios/Podfile.properties.json
+!/ios/ETOSExpo
+!/ios/ETOSExpo.xcodeproj

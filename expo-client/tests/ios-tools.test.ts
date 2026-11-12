@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -23,7 +23,7 @@ test('selects paired iPhone with developer mode; multiple require an identifier'
 });
 
 function fixture(fn: (f: { root: string; calls: { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }[];
-  execute: (action: 'prepare' | 'build' | 'install' | 'acknowledge', run?: Run, configuration?: Configuration) => void; fake: Run }) => void) {
+  execute: (action: 'prepare' | 'build' | 'install' | 'acknowledge' | 'archive', run?: Run, configuration?: Configuration) => void; fake: Run }) => void) {
   const root = mkdtempSync(join(tmpdir(), 'etos-ios-test-'));
   const calls: { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }[] = [];
   const fake: Run = (command, args, cwd, env) => {
@@ -63,9 +63,9 @@ test('unsigned build and install sign the existing Debug app without compiling',
   execute('install');
   assert.deepEqual(calls.map(c => c.command), ['xcrun', 'python3', 'xcrun']);
   assert.equal(calls[1].args[0], join(root, 'scripts/ios-sign.py'));
-  assert.equal(calls[1].args[calls[1].args.indexOf('--app') + 1], join(root, 'Build/Products/Debug-iphoneos/ETOSExpo.app'));
+  assert.equal(calls[1].args[calls[1].args.indexOf('--app') + 1], join(root, 'Build/Products/Debug-iphoneos/ETOSChat.app'));
   assert.equal(calls[1].args[calls[1].args.indexOf('--team') + 1], 'CUSTOM');
-  assert.deepEqual(calls[2].args, ['devicectl', 'device', 'install', 'app', '--device', 'one', join(root, 'Build/Products/Debug-iphoneos/ETOSExpo.app'), '--timeout', '120']);
+  assert.deepEqual(calls[2].args, ['devicectl', 'device', 'install', 'app', '--device', 'one', join(root, 'Build/Products/Debug-iphoneos/ETOSChat.app'), '--timeout', '120']);
   assert.equal(existsSync(join(root, '.ios-install-unknown.json')), false);
 }));
 
@@ -105,9 +105,9 @@ test('Release build and install use Release output and production bundling envir
   calls.length = 0;
   execute('install', undefined, 'Release');
   assert.deepEqual(calls.map(c => c.command), ['xcrun', 'python3', 'xcrun']);
-  assert.equal(calls[1].args[calls[1].args.indexOf('--app') + 1], join(root, 'Build/Products/Release-iphoneos/ETOSExpo.app'));
+  assert.equal(calls[1].args[calls[1].args.indexOf('--app') + 1], join(root, 'Build/Products/Release-iphoneos/ETOSChat.app'));
   assert.equal(calls[1].env.NODE_ENV, 'test');
-  assert.equal(calls[2].args.at(-3), join(root, 'Build/Products/Release-iphoneos/ETOSExpo.app'));
+  assert.equal(calls[2].args.at(-3), join(root, 'Build/Products/Release-iphoneos/ETOSChat.app'));
 }));
 
 test('unknown install blocks the other configuration in both directions', () => {
@@ -129,7 +129,7 @@ test('CLI rejects invalid configurations and ambiguous arguments before any acti
   const cli = fileURLToPath(new URL('../scripts/ios-cli.ts', import.meta.url));
   for (const args of [ ['build', '--configuration', 'Production'], ['build', '--configuration'],
     ['prepare', '--configuration', 'Release'], ['install', '--configuration', 'Release', '--configuration', 'Debug'],
-    ['install', '--device', 'one', '--configuration', 'Release'] ]) {
+    ['install', '--device', 'one', '--configuration', 'Release'], ['archive', '--configuration', 'Release'] ]) {
     const result = spawnSync(process.execPath, ['--experimental-strip-types', cli, ...args], { encoding: 'utf8', env: { NODE_ENV: 'test' } });
     assert.equal(result.status, 1, JSON.stringify(args));
     assert.match(result.stderr, /配置必须是|用法/);
@@ -147,4 +147,29 @@ test('missing hardware UDID prevents signing and install', () => fixture(({ root
   assert.throws(() => execute('install', withoutUdid), /缺少 UDID/);
   assert.equal(calls.length, 0);
   assert.equal(existsSync(join(root, '.ios-install-unknown.json')), false);
+}));
+
+test('development archive uses the root Cloud workspace and shared Debug scheme unsigned without installing', () => fixture(({ root, calls, execute }) => {
+  execute('archive');
+  assert.equal(calls.length, 1);
+  const archive = calls[0];
+  assert.equal(archive.command, 'xcodebuild');
+  assert.deepEqual(archive.args, ['-workspace', '../ETOSExpo.xcworkspace', '-scheme', 'ETOSExpo Dev Archive', '-configuration', 'Debug',
+    '-destination', 'generic/platform=iOS', '-derivedDataPath', root, '-archivePath', join(root, 'build', 'ETOSExpo-dev.xcarchive'),
+    '-disableAutomaticPackageResolution', '-jobs', '2', 'ARCHS=arm64', 'CODE_SIGNING_ALLOWED=NO', 'archive']);
+  assert.equal(archive.env.DEVELOPER_DIR, '/Applications/Xcode.app/Contents/Developer');
+  assert.equal(archive.env.SKIP_BUNDLING, '1');
+}));
+
+test('development archive replaces the previous archive and needs the existing DerivedData', () => fixture(({ root, calls, execute }) => {
+  const stale = join(root, 'build', 'ETOSExpo-dev.xcarchive');
+  mkdirSync(stale, { recursive: true });
+  writeFileSync(join(stale, 'previous-build'), 'x');
+  execute('archive');
+  assert.equal(existsSync(join(stale, 'previous-build')), false);
+  assert.equal(calls.length, 1);
+  calls.length = 0;
+  assert.throws(() => ios('archive', { root, env: { NODE_ENV: 'test', ETOS_DERIVED_DATA: join(root, 'missing-derived') },
+    run: () => { throw new Error('不应运行构建命令'); } }), /DerivedData 目录不存在/);
+  assert.equal(calls.length, 0);
 }));

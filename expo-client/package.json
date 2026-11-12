@@ -15,6 +15,7 @@
     "dev": "expo start --dev-client --lan --port 8081",
     "ios:prepare": "tsx scripts/ios-cli.ts prepare",
     "ios:build": "tsx scripts/ios-cli.ts build",
+    "ios:archive": "tsx scripts/ios-cli.ts archive",
     "ios:build:release": "tsx scripts/ios-cli.ts build --configuration Release",
     "ios:install": "tsx scripts/ios-cli.ts install",
     "ios:install:release": "tsx scripts/ios-cli.ts install --configuration Release",

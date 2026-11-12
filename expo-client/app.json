@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "ETOS Expo",
+    "name": "ETOS Chat",
     "slug": "etos-expo-chat",
+    "version": "2.0.0",
     "scheme": "etosllmstudio",
     "runtimeVersion": { "policy": "fingerprint" },
     "updates": {
@@ -10,7 +11,8 @@
       "useEmbeddedUpdate": true
     },
     "ios": {
-      "bundleIdentifier": "studio.etos.expo.dev"
+      "bundleIdentifier": "io.guion.etos.cfl4960",
+      "appleTeamId": "RL5WAW5828"
     },
     "web": {
       "bundler": "metro"

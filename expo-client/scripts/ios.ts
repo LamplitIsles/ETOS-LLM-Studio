@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -29,7 +29,14 @@ export function selectDevice(devices: Device[], requested?: string): string {
 
 export type Configuration = 'Debug' | 'Release';
 
-export function ios(action: 'prepare' | 'build' | 'install' | 'acknowledge', options: {
+// 与 expo-client/ios 中共享的 Xcode Cloud 开发壳归档 scheme 保持同一个名字。
+export const DEV_ARCHIVE_SCHEME = 'ETOSExpo Dev Archive';
+
+// Prebuild 由 app.json 的 name 派生 Xcode 产物名（PRODUCT_NAME / FULL_PRODUCT_NAME），
+// 而工程目录与 target 仍叫 ETOSExpo；因此构建产物是 ETOSChat.app。
+export const APP_PRODUCT = 'ETOSChat';
+
+export function ios(action: 'prepare' | 'build' | 'install' | 'acknowledge' | 'archive', options: {
   root: string; env: NodeJS.ProcessEnv; run: Run; device?: string; configuration?: Configuration;
 }): void {
   const { root, run, device, configuration = 'Debug' } = options;
@@ -54,7 +61,7 @@ export function ios(action: 'prepare' | 'build' | 'install' | 'acknowledge', opt
   }
   const derived = env.ETOS_DERIVED_DATA || join(homedir(), 'Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe');
   if (!existsSync(derived) || !statSync(derived).isDirectory()) throw new Error(`DerivedData 目录不存在：${derived}；请指定已有目录 ETOS_DERIVED_DATA。`);
-  const app = join(derived, `Build/Products/${configuration}-iphoneos/ETOSExpo.app`);
+  const app = join(derived, `Build/Products/${configuration}-iphoneos/${APP_PRODUCT}.app`);
   const buildEnv: NodeJS.ProcessEnv = { ...env };
   if (configuration === 'Release') {
     buildEnv.NODE_ENV = 'production';
@@ -62,6 +69,18 @@ export function ios(action: 'prepare' | 'build' | 'install' | 'acknowledge', opt
   }
   const buildArgs = ['-workspace', 'ios/ETOSExpo.xcworkspace', '-scheme', 'ETOSExpo', '-configuration', configuration,
     '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-disableAutomaticPackageResolution', '-jobs', '2', 'ARCHS=arm64'];
+  if (action === 'archive') {
+    // 复现 Cloud 的开发壳归档：使用根级 ETOSExpo.xcworkspace（cloud 交付的真实入口）、
+    // 共享开发归档 scheme、Debug 编译与未签名；不安装也不上传。
+    const archivePath = join(root, 'build', 'ETOSExpo-dev.xcarchive');
+    rmSync(archivePath, { recursive: true, force: true });
+    mkdirSync(join(root, 'build'), { recursive: true });
+    run('xcodebuild', ['-workspace', '../ETOSExpo.xcworkspace', '-scheme', DEV_ARCHIVE_SCHEME, '-configuration', 'Debug',
+      '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-archivePath', archivePath,
+      '-disableAutomaticPackageResolution', '-jobs', '2', 'ARCHS=arm64', 'CODE_SIGNING_ALLOWED=NO', 'archive'], root, env);
+    console.log(`未签名开发归档已生成：${archivePath}`);
+    return;
+  }
   if (action === 'build') {
     run('xcodebuild', [...buildArgs, 'CODE_SIGNING_ALLOWED=NO', 'build'], root, buildEnv);
     return;

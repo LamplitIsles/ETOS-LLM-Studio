@@ -4,7 +4,7 @@ import { ios, run } from './ios.ts';
 
 const [action, ...args] = process.argv.slice(2);
 try {
-  if (!['prepare', 'build', 'install', 'acknowledge'].includes(action)) throw new Error('无效的操作。');
+  if (!['prepare', 'build', 'install', 'acknowledge', 'archive'].includes(action)) throw new Error('无效的操作。');
   let configuration: 'Debug' | 'Release' = 'Debug';
   let device: string | undefined;
   if (args[0] === '--configuration') {
@@ -18,8 +18,8 @@ try {
     device = args[1];
     args.splice(0, 2);
   }
-  if (args.length) throw new Error('用法：ios:prepare | ios:build[:release] | ios:install[:release] [-- --device <identifier>] | ios:install:ack');
-  ios(action as 'prepare' | 'build' | 'install' | 'acknowledge', {
+  if (args.length) throw new Error('用法：ios:prepare | ios:build[:release] | ios:install[:release] [-- --device <identifier>] | ios:install:ack | ios:archive');
+  ios(action as 'prepare' | 'build' | 'install' | 'acknowledge' | 'archive', {
     root: resolve(dirname(fileURLToPath(import.meta.url)), '..'), env: process.env, run, device, configuration,
   });
 } catch (error) {
