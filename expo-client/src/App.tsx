@@ -213,6 +213,12 @@ function AppContent() {
   const chatComposerHeight = useSharedValue(72);
   const chatKeyboardFrozen = useSharedValue(false);
   const emojiProgress = useSharedValue(0);
+  const panelSwap = useSharedValue(0);
+  useEffect(() => {
+    panelSwap.value = withTiming(panelKind === 'stickers' ? 0 : 1, { duration: 180, reduceMotion: ReduceMotion.System });
+  }, [panelKind, panelSwap]);
+  const stickerSwapStyle = useAnimatedStyle(() => ({ opacity: 1 - panelSwap.value, transform: [{ translateY: 20 * panelSwap.value }] }));
+  const attachmentSwapStyle = useAnimatedStyle(() => ({ opacity: panelSwap.value, transform: [{ translateY: 20 * (1 - panelSwap.value) }] }));
   const keyboard = useReanimatedKeyboardAnimation();
   const nativeStickyOffset = useSharedValue(0);
   useAnimatedReaction(
@@ -729,11 +735,11 @@ function AppContent() {
     <View style={[styles.screen, { display: spaceOpen ? 'none' : 'flex' }]}>
       {background && <><Image testID="chat-background" source={{ uri: background }} accessibilityIgnoresInvertColors accessible={false} resizeMode="cover" style={StyleSheet.absoluteFill} /><View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: dark ? 'rgba(15,19,24,0.38)' : 'rgba(245,247,250,0.20)' }]} /></>}
       <View style={[styles.shell, { maxWidth: width > 760 ? 760 : undefined }]}>
-        <View testID="chat-topbar" pointerEvents="box-none" style={[styles.chatTopbar, { top: insets.top }]}><Surface style={styles.identity}>
+        <View testID="chat-topbar" pointerEvents="box-none" style={[styles.chatTopbar, { top: insets.top }]}><Surface interactive style={styles.identity}>
           <View testID="chat-avatar" style={styles.avatar}>{currentAppearance?.avatar ? <Image testID="companion-avatar" source={{ uri: currentAppearance.avatar }} accessible={false} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{title.slice(0, 1).toUpperCase()}</Text>}</View>
           <View style={[styles.identityDivider, { backgroundColor: muted }]} />
           <Button accessibilityLabel="打开伴侣空间" variant="ghost" icon={{ ios: 'ellipsis', web: 'more_horiz', android: 'more_horiz' }} onPress={() => navigateFromChat(() => setSpaceOpen(true))} />
-        </Surface><Surface style={styles.headerActions}>
+        </Surface><Surface interactive style={styles.headerActions}>
           <Button accessibilityLabel="搜索聊天记录" variant="ghost" icon={{ ios: 'magnifyingglass', web: 'search', android: 'search' }} onPress={() => navigateFromChat(() => setSearchOpen(true))} />
           <Button accessibilityLabel="设置" variant="ghost" icon={{ ios: 'gearshape', web: 'settings', android: 'settings' }} onPress={() => navigateFromChat(() => setSettingsOpen(true))} />
         </Surface></View>
@@ -776,7 +782,13 @@ function AppContent() {
               <Animated.View style={nativePanelAvailable ? nativeStickyStyle : undefined}>
               <View ref={composerRef} testID="floating-composer" onLayout={event => { const height = event.nativeEvent.layout.height; toolbarHeightRef.current = height; keyboardDiagnostic.record('layout', { height: Math.round(height) }); setToolbarHeight(height); }}>
               <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || !!uncertain || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
-                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={StyleSheet.absoluteFill}>{null}</Surface></View>{panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
+                const panelReady = () => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } };
+                const attachmentPanel = <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />;
+                const panelContent = <View key={nativePanelAvailable ? 'native-panel' : `${panelKind}:${panelVersion}`} onLayout={nativePanelAvailable ? undefined : panelReady} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={StyleSheet.absoluteFill}>{null}</Surface></View>{nativePanelAvailable ? <View style={styles.screen}>
+                  <Animated.View pointerEvents={panelKind === 'stickers' ? 'auto' : 'none'} accessibilityElementsHidden={panelKind !== 'stickers'} importantForAccessibility={panelKind === 'stickers' ? 'auto' : 'no-hide-descendants'} style={[StyleSheet.absoluteFill, stickerSwapStyle]}><View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View></Animated.View>
+                  <Animated.View pointerEvents={panelKind === 'attachments' ? 'auto' : 'none'} accessibilityElementsHidden={panelKind !== 'attachments'} importantForAccessibility={panelKind === 'attachments' ? 'auto' : 'no-hide-descendants'} style={[StyleSheet.absoluteFill, attachmentSwapStyle]}>{attachmentPanel}</Animated.View>
+                  <View key={`${panelKind}:${panelVersion}`} pointerEvents="none" collapsable={false} onLayout={panelReady} style={styles.panelLayoutMarker} />
+                </View> : panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : attachmentPanel}</View>;
                 const inputPanel = nativePanelAvailable && inputAreaModule ? <inputAreaModule.KeyboardPanel scopeGeneration={inputAreaSession} style={styles.nativePanelPlaceholder} onLayout={event => { if (panelGeneration.current === inputAreaSession) { panelTagGeneration.current = inputAreaSession; panelTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } }} accessibilityElementsHidden={!emojiOpen} importantForAccessibility={emojiOpen ? 'auto' : 'no-hide-descendants'}><View collapsable={false} style={{ height: emojiPanelHeight }}>{panelContent}</View></inputAreaModule.KeyboardPanel> : <EmojiPanel open={emojiOpen} panelHeight={emojiPanelHeight} visibleHeight={emojiVisibleHeight} progress={emojiProgress} instantOpen={emojiInstantOpen}>{panelContent}</EmojiPanel>;
                 return <>
               <InputArea generation={inputAreaSession} onLayout={event => { if (nativePanelAvailable || (__DEV__ && Platform.OS === 'ios' && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1')) { if (panelGeneration.current === inputAreaSession) { hostTagGeneration.current = inputAreaSession; inputAreaHostTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } } }} composer={<Animated.View style={[styles.composerOuter, composerInset]} onLayout={event => { chatComposerHeight.value = event.nativeEvent.layout.height; }}>
@@ -851,6 +863,7 @@ const styles = StyleSheet.create({
   composerInputMeasure: { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 },
   composerInput: { fontSize: 16, lineHeight: 22, paddingHorizontal: 4, paddingVertical: 10, textAlignVertical: 'center' },
   bottomPanel: { borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' },
+  panelLayoutMarker: { position: 'absolute', width: 1, height: 1, top: 0, left: 0 },
   nativePanelPlaceholder: { height: 0, width: '100%' },
   attachmentPanel: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
   attachmentHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
