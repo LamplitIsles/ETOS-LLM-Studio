@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Keyboard, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type ScrollViewProps } from 'react-native';
-import { EnrichedMarkdownText, type MarkdownStyle } from 'react-native-enriched-markdown';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,9 +20,6 @@ import { WebAuth } from './cfl/web-auth';
 import { loadAppearance, loadAppearanceImage } from './cfl/appearance';
 import { type ImageData, type ApiTransport } from './cfl/transport';
 import { recentStickers } from './cfl/recent-stickers';
-import { classifyMarkdownImage, loadMarkdownImage } from './cfl/markdown-image';
-import { createMarkdownImageUri } from './cfl/markdown-image-uri';
-import { markdownImageResolverAvailable } from './cfl/markdown-resolver';
 import { CameraPermissionError, capturePhoto, pickFiles, pickImages, type AttachmentDraft } from './cfl/drafts';
 import { CameraPhotoError, prepareCameraPhoto } from './cfl/camera-photo';
 import { validateDrafts } from './cfl/intake';
@@ -40,7 +36,9 @@ import { rowsFor, type TimelineRow as Row } from './ui/timelineRows';
 import { attachmentValidationMessage, cameraPhotoMessage } from './ui/attachmentValidationMessage';
 import { ReminderButton } from './ui/ReminderButton';
 import { ChatSearch } from './ui/ChatSearch';
+import { MessageText } from './ui/MessageText';
 import { ChatSettings } from './ui/ChatSettings';
+import { ContextButton } from './ui/ContextButton';
 import { useKeyboardDiagnostic } from './ui/keyboardDiagnostic';
 import type { InputAreaProps } from '../modules/etos-input-area/src';
 import type { InputAreaProbeArgs, InputAreaProbeResult } from '../modules/etos-input-area/src/probe-core';
@@ -93,72 +91,6 @@ function imageUri(image: ImageData, createdUrls: string[]): string {
   return `data:${image.contentType};base64,${btoa(binary)}`;
 }
 
-// An older native build without the parser cannot intercept embedded media.
-const embeddedMedia = /!\[|<\s*\/?\s*(?:img|video|source|audio|iframe)\b/i;
-
-function MessageText({ text, foreground, dark, media, controller, workspaceImages }: {
-  text: string; foreground: string; dark: boolean; media: ApiTransport; controller: ChatController; workspaceImages: boolean;
-}) {
-  const [resolveImage, setResolveImage] = useState<null | ((image: { url: string }) => Promise<{ uri: string }>)>(null);
-  const resolverAvailable = markdownImageResolverAvailable();
-  useEffect(() => {
-    if (!resolverAvailable) return;
-    let active = true;
-    const scope = controller.scope();
-    const abort = new AbortController();
-    const releases = new Set<() => void>();
-    const current = () => active && scope();
-    const resolve = async ({ url }: { url: string }): Promise<{ uri: string }> => {
-      try {
-        const options = { workspaceImages, isCurrent: current, signal: abort.signal };
-        const source = classifyMarkdownImage(url, media.origin, options);
-        // A browser image can display cross-origin resources even when the
-        // image server does not grant JavaScript CORS access.
-        if (Platform.OS === 'web' && source.kind === 'external') return { uri: source.url };
-        const image = await loadMarkdownImage(url, media, options);
-        const result = await createMarkdownImageUri(image, current, abort.signal);
-        if (!current()) { result.release(); return { uri: '' }; }
-        releases.add(result.release);
-        return { uri: result.uri };
-      } catch { return { uri: '' }; }
-    };
-    setResolveImage(() => resolve);
-    return () => { active = false; abort.abort(); for (const release of releases) release(); };
-  }, [controller, media, workspaceImages, resolverAvailable]);
-  const markdownStyle = useMemo<MarkdownStyle>(() => {
-    const block = { color: foreground, fontSize: 16, lineHeight: 23 };
-    const subtle = dark ? 'rgba(255,255,255,0.12)' : 'rgba(20,30,45,0.08)';
-    return {
-      paragraph: { ...block, marginBottom: 8 },
-      h1: { ...block, fontSize: 23, lineHeight: 30, fontWeight: 'bold' },
-      h2: { ...block, fontSize: 21, lineHeight: 28, fontWeight: 'bold' },
-      h3: { ...block, fontSize: 19, lineHeight: 26, fontWeight: 'bold' },
-      h4: { ...block, fontWeight: 'bold' }, h5: { ...block, fontWeight: 'bold' }, h6: { ...block, fontWeight: 'bold' },
-      list: { ...block, bulletColor: foreground, markerColor: foreground, marginBottom: 8 },
-      blockquote: { ...block, borderColor: foreground, backgroundColor: subtle, marginBottom: 8 },
-      codeBlock: { color: dark ? '#f4f4f6' : '#252631', backgroundColor: dark ? '#30363d' : '#e5e8ed', borderRadius: 10, fontSize: 14, marginBottom: 8 },
-      code: { color: foreground, backgroundColor: subtle },
-      link: { color: foreground, underline: true },
-      table: { ...block, headerTextColor: foreground, headerBackgroundColor: subtle, rowEvenBackgroundColor: 'transparent', rowOddBackgroundColor: subtle },
-      math: { color: foreground, backgroundColor: 'transparent', fontSize: 18, padding: 0, marginBottom: 8 },
-      inlineMath: { color: foreground },
-      image: { maxHeight: 240, resizeMode: 'contain', borderRadius: 12 },
-      inlineImage: { size: 72 },
-    };
-  }, [foreground, dark]);
-  const openLink = useCallback(({ url }: { url: string }) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') void Linking.openURL(parsed.href).catch(() => {});
-    } catch { /* Unsupported or relative links are not opened. */ }
-  }, []);
-  if (!resolverAvailable && embeddedMedia.test(text)) return <Text selectable style={[styles.messageText, { color: foreground }]}>{text}</Text>;
-  if (resolverAvailable && !resolveImage) return null;
-  return <EnrichedMarkdownText markdown={text} flavor="github" markdownStyle={markdownStyle}
-    md4cFlags={{ hardSoftBreaks: true }} selectable enableTaskListItemToggle={false}
-    enableLinkPreview={false} onLinkPress={openLink}
-    {...(resolveImage ? { resolveImageSource: resolveImage, renderers: { video: () => <Text style={{ color: foreground }}>视频暂不支持显示</Text> } } : {})} />;
-}
 
 function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null> }) {
   const { dark } = useAppearance();
@@ -225,6 +157,8 @@ function AppContent() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [stopState, setStopState] = useState<{ client: Client; session: string; turn: string; state: 'pending' | 'unknown' | 'stopped' } | null>(null);
+  const stopPending = useRef(false);
   const [draft, setDraft] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
   const [toolbarHeight, setToolbarHeight] = useState(72);
@@ -719,6 +653,24 @@ function AppContent() {
   const currentAppearance = appearance?.client === client && appearance.sessionId === sessionId ? appearance : null;
   const title = currentAppearance?.name || snapshot?.view?.name || '聊天';
   const background = width > height ? currentAppearance?.landscape : currentAppearance?.portrait;
+  const usage = snapshot?.view?.contextUsage;
+  const contextPercent = usage?.tokens != null && usage.capacity != null && usage.capacity > 0 ? Math.min(100, Math.max(0, Math.round(usage.tokens / usage.capacity * 100))) : null;
+  const activeTurn = snapshot?.view?.activeTurnId;
+  const stopForCurrentTurn = stopState?.client === client && stopState.session === sessionId && stopState.turn === activeTurn ? stopState.state : null;
+  const stopReply = async () => {
+    if (!client || !snapshot || !sessionId || !activeTurn || stopPending.current || stopForCurrentTurn) return;
+    const target = client.controller.captureStopTarget(snapshot);
+    if (!target) { setError('当前回复已发生变化，请稍后再试。'); return; }
+    const scope = client.controller.scope();
+    stopPending.current = true;
+    setStopState({ client, session: sessionId, turn: activeTurn, state: 'pending' });
+    const result = await client.controller.stopTurn(target);
+    stopPending.current = false;
+    if (!scope() || active.current !== client || client.controller.snapshot().view?.activeTurnId !== activeTurn) return;
+    if (result === 'unknown') { setStopState({ client, session: sessionId, turn: activeTurn, state: 'unknown' }); setError('停止结果未确认，请检查连接和当前回复状态。'); }
+    else if (result === 'stopped') setStopState({ client, session: sessionId, turn: activeTurn, state: 'stopped' });
+    else { setStopState(null); setError(result === 'not_stopped' || result === 'stale' ? '当前回复已发生变化。' : '暂时无法停止回复，请检查连接。'); }
+  };
 
   // Navigation must remain available even if a native panel request never
   // settles. Retire its host instead of issuing another native request.
@@ -782,7 +734,7 @@ function AppContent() {
           <View style={[styles.identityDivider, { backgroundColor: muted }]} />
           <Button accessibilityLabel="打开伴侣空间" variant="ghost" icon={{ ios: 'ellipsis', web: 'more_horiz', android: 'more_horiz' }} onPress={() => navigateFromChat(() => setSpaceOpen(true))} />
         </Surface><Surface style={styles.headerActions}>
-          <Button accessibilityLabel="上下文" variant="ghost" icon={{ ios: 'chart.bar', web: 'monitoring', android: 'monitoring' }} onPress={() => navigateFromChat(() => setContextOpen(true))} />
+          {activeTurn && snapshot?.view?.capabilities.stop ? <Button size="navigation" accessibilityLabel="停止回复" disabled={!!stopForCurrentTurn || snapshot.connection !== 'online'} icon={{ ios: 'stop.fill', web: 'stop', android: 'stop' }} onPress={() => void stopReply()} /> : <ContextButton percentage={contextPercent} dark={dark} onPress={() => navigateFromChat(() => setContextOpen(true))} />}
           <Button accessibilityLabel="搜索聊天记录" variant="ghost" icon={{ ios: 'magnifyingglass', web: 'search', android: 'search' }} onPress={() => navigateFromChat(() => setSearchOpen(true))} />
           <Button accessibilityLabel="设置" variant="ghost" icon={{ ios: 'gearshape', web: 'settings', android: 'settings' }} onPress={() => navigateFromChat(() => setSettingsOpen(true))} />
         </Surface></View>
@@ -825,7 +777,7 @@ function AppContent() {
               <Animated.View style={nativePanelAvailable ? nativeStickyStyle : undefined}>
               <View ref={composerRef} testID="floating-composer" onLayout={event => { const height = event.nativeEvent.layout.height; toolbarHeightRef.current = height; keyboardDiagnostic.record('layout', { height: Math.round(height) }); setToolbarHeight(height); }}>
               <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || !!uncertain || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
-                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom, backgroundColor: dark ? '#25282d' : '#f7f8fa' }]}>{panelKind === 'stickers' ? <View testID="stickers-panel" style={[styles.screen, { backgroundColor: dark ? '#25282d' : '#f7f8fa' }]}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
+                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={StyleSheet.absoluteFill}>{null}</Surface></View>{panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
                 const inputPanel = nativePanelAvailable && inputAreaModule ? <inputAreaModule.KeyboardPanel scopeGeneration={inputAreaSession} style={styles.nativePanelPlaceholder} onLayout={event => { if (panelGeneration.current === inputAreaSession) { panelTagGeneration.current = inputAreaSession; panelTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } }} accessibilityElementsHidden={!emojiOpen} importantForAccessibility={emojiOpen ? 'auto' : 'no-hide-descendants'}><View collapsable={false} style={{ height: emojiPanelHeight }}>{panelContent}</View></inputAreaModule.KeyboardPanel> : <EmojiPanel open={emojiOpen} panelHeight={emojiPanelHeight} visibleHeight={emojiVisibleHeight} progress={emojiProgress} instantOpen={emojiInstantOpen}>{panelContent}</EmojiPanel>;
                 return <>
               <InputArea generation={inputAreaSession} onLayout={event => { if (nativePanelAvailable || (__DEV__ && Platform.OS === 'ios' && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1')) { if (panelGeneration.current === inputAreaSession) { hostTagGeneration.current = inputAreaSession; inputAreaHostTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } } }} composer={<Animated.View style={[styles.composerOuter, composerInset]} onLayout={event => { chatComposerHeight.value = event.nativeEvent.layout.height; }}>
@@ -834,7 +786,7 @@ function AppContent() {
                   {preparingPhoto && <View accessibilityRole="progressbar" accessibilityLabel="正在处理照片" style={[styles.photoPreparing, { backgroundColor: dark ? '#30343a' : '#f4f5f7' }]}><ActivityIndicator size="small" /><Text style={{ color: ink }}>正在处理照片…</Text></View>}
                   <View style={styles.composerContents}>
                     <Button accessibilityLabel="附件" size="navigation" variant="ghost" icon={{ ios: 'plus', web: 'add', android: 'add' }} disabled={busy || !!uncertain || panelBusy} onPress={() => emojiOpen && panelKind === 'attachments' ? closeEmojiPanel() : openComposerPanel('attachments')} />
-                    <Surface style={styles.composerSurface}>
+                    <Surface interactive style={styles.composerSurface}>
                       <View style={styles.composerField}>
                         <View style={styles.composerInputWrap}>
                         <Text pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
@@ -863,7 +815,7 @@ function AppContent() {
             </ComposerContainer>
           </KeyboardAvoidingView>
         </View>
-        {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} dark={dark} onClose={() => setSearchOpen(false)} />}
+        {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} media={client.media} workspaceImages={snapshot?.view?.capabilities.workspaceImages === true} dark={dark} onClose={() => setSearchOpen(false)} />}
         {settingsOpen && sessionId && <ChatSettings key={sessionId} controller={client.controller} media={client.media} dark={dark} onClose={() => setSettingsOpen(false)} onBackgroundSaved={() => setAppearanceRevision(value => value + 1)} />}
         <BottomSheet isPresented={contextOpen} onDismiss={() => setContextOpen(false)} snapPoints={['half']} containerColor={dark ? '#25282d' : '#f7f8fa'} testID="context-sheet"><RNHostView><View style={styles.contextSheet}>
           <View style={styles.contextHeading}><Text style={[styles.contextTitle, { color: ink }]}>上下文</Text><Button accessibilityLabel="关闭上下文" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setContextOpen(false)} /></View>
@@ -899,7 +851,7 @@ const styles = StyleSheet.create({
   composerOuter: { paddingTop: 4, paddingHorizontal: 7 }, composerSurface: { flex: 1, borderRadius: 22 },
   composerContents: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, gap: 6 },
   composerField: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, paddingLeft: 8 },
-  composerEmoji: { alignSelf: 'center' },
+  composerEmoji: { alignSelf: 'flex-end' },
   composerInputWrap: { flex: 1, minWidth: 0 },
   composerInputMeasure: { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 },
   composerInput: { fontSize: 16, lineHeight: 22, paddingHorizontal: 4, paddingVertical: 10, textAlignVertical: 'center' },

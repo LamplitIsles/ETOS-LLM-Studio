@@ -9,6 +9,7 @@ export type InputProps = {
   maxLength?: number; autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters'; autoCorrect?: boolean;
   keyboardType?: KeyboardTypeOptions; style?: StyleProp<ViewStyle>;
   autoFocus?: boolean; shape?: 'pill';
+  onSubmitEditing?: (value: string) => void; returnKeyType?: 'search' | 'done';
 };
 
 export function Input({ value, onChangeText, style, multiline, shape, ...props }: InputProps) {
