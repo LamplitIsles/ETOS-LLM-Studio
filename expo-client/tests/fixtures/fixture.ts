@@ -24,6 +24,9 @@ export function createFixture(options: { newOperationId?: () => string } = {}) {
   const receipts = new Map<string, { text: string; receipt: Receipt }>();
   let entries: Awaited<ReturnType<PendingStore['load']>> = [];
   const store: PendingStore = { async load() { return entries; }, async save(_, value) { entries = value; } };
+  const setActiveTurn = (turn: string | null) => {
+    view = { ...view, activeTurnId: turn }; notify(view); for (const listener of listeners) listener(view);
+  };
   const port: ChatPort = {
     async history() { return { messages: old, before: null }; },
     async search({ query }) {
@@ -54,14 +57,16 @@ export function createFixture(options: { newOperationId?: () => string } = {}) {
       notifyReceipt(receipt); for (const listener of receiptListeners) listener(receipt);
       return receipt;
     },
-    async lookup(id) { return receipts.get(id)?.receipt ?? null; }, close() {},
+    async lookup(id) { return receipts.get(id)?.receipt ?? null; },
+    async stop(id) { if (view.activeTurnId !== id) return { stopped: false }; setActiveTurn(null); return { stopped: true }; },
+    close() {},
   };
   let sequence = 0;
   const controller = new ChatController('fixture://local', async () => ({ close() {} }) as WebSocket, store,
     options.newOperationId ?? (() => `00000000-0000-4000-8000-${String(++sequence).padStart(12, '0')}`),
     async (_, changed, _offline, delivery) => { notify = changed; notifyReceipt = delivery; changed(view); return port; });
   const media = createFixtureMedia();
-  return { controller, media, port, read: () => view, subscribe(listener: (view: ChatView) => void) {
+  return { controller, media, port, setActiveTurn, read: () => view, subscribe(listener: (view: ChatView) => void) {
     listeners.add(listener); return () => { listeners.delete(listener); };
   }, subscribeReceipts(listener: (receipt: Receipt) => void) {
     receiptListeners.add(listener); return () => { receiptListeners.delete(listener); };

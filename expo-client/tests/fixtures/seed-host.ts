@@ -20,7 +20,7 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
     async read() { return fixture.read(); },
     subscribe(changed: (change: ChatChange) => void) {
       publishReply = changed;
-      const close = fixture.subscribe(view => changed({ type: 'update', scope, window: { messages: view.messages, before: view.before } }));
+      const close = fixture.subscribe(view => changed({ type: 'update', scope, window: { messages: view.messages, before: view.before }, state: { activeTurnId: view.activeTurnId } }));
       const closeReceipts = fixture.subscribeReceipts(receipt => changed({ type: 'deliveryResult', scope, receipt }));
       return { scope, close() { publishReply = undefined; close(); closeReceipts(); } };
     },
@@ -33,6 +33,7 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
     },
     submit: fixture.port.submit,
     lookup: fixture.port.lookup,
+    stop: fixture.port.stop,
     search: fixture.port.search,
     searchRead: fixture.port.searchRead,
   } as unknown as ChatBackend;
@@ -41,6 +42,10 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
   let syntheticSequence = 0;
   const server = http.createServer((req, res) => {
     void (async () => {
+      if (req.method === 'POST' && !req.headers.origin && (req.url === '/__test/turn/start' || req.url === '/__test/turn/clear')) {
+        fixture.setActiveTurn(req.url.endsWith('/start') ? 'fixture-active-turn' : null);
+        res.writeHead(204).end(); return;
+      }
       if (replyScenario && req.method === 'POST' && !req.headers.origin && /^\/__test\/reply\/[123]$/.test(req.url ?? '')) {
         const stage = Number(req.url!.at(-1));
         if (!publishReply) { res.writeHead(409).end(); return; }

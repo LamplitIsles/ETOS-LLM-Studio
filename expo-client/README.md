@@ -88,6 +88,10 @@ virtual `http://127.0.0.1:8091` origin to `ETOS_UI_PROXY_PORT`, retaining the
 required Host and Origin. It rejects the common shared service ports 3090,
 5173, 8081, 8082, 8091 and 8092. The host can also be started programmatically with `startFixtureSeedHost()` from
 `tests/fixtures/seed-host.ts`; it returns `request`, `setStatus` and `close`.
+For stop-interaction tests, a Node test may POST `/__test/turn/start` or
+`/__test/turn/clear` to that test host's printed control port without an Origin
+header. These create or clear a synthetic active turn; they are not seed proxy
+routes or real CFL endpoints. Use a fresh test-owned host for each test.
 The pinned Playwright dependency can use Chromium installed with
 `npx playwright install chromium`; omit `CHROME_PATH` to use that browser.
 
@@ -176,6 +180,22 @@ peer dependencies, licensing, and platform validation limits.
   item once its server `operationId` appears. A pending `submitted` item is
   retained until it is visible in the server view. `unknown` is not a user
   failure; the controller looks it up and never automatically resends it.
+- To stop an active turn, capture `controller.captureStopTarget(snapshot)`
+  from the currently displayed snapshot; it returns an opaque controller-owned
+  target or `null`. On an explicit user action, call
+  `await controller.stopTurn(target)`. `stopped` and `not_stopped` report the
+  server's answer for that specific turn; continue displaying the subscribed
+  view as the authority for current activity. `stale`, `offline`, and
+  `unavailable` mean no request was dispatched. After dispatch, a transport,
+  response, session, or connection failure yields `unknown`: it may have taken
+  effect, and no result lookup exists. The controller never retries. Calls for
+  the same captured target share one result, including `unknown`; a different
+  target is unavailable while a request remains in flight. A new target and a
+  subsequent explicit user action constitute a new request, so the UI should
+  make the uncertain prior result clear instead of retrying automatically.
+  A still-active turn after reconnect does not prove the earlier request has
+  finished. Discard asynchronous UI results after its own session/navigation
+  generation changes; a response never modifies the controller's view.
 - After the controller has started and its chat view is established, call
   `loadAppearance(media, controller.scope())` from `src/cfl/appearance.ts`.
   It returns `{companionName, userName, companionAvatar, backgrounds}` (the

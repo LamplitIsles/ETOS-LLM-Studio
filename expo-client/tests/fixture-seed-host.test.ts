@@ -77,3 +77,25 @@ test('isolated fixture host serves seed status, chat protocol, history and stage
   assert.equal((await request('/api/chat/media/fixture-image/preview')).status, 401);
   assert.equal((await request(workspacePath)).status, 401);
 });
+
+test('test-owned turn control publishes a stoppable turn and is not a browser-origin endpoint', async () => {
+  const host = await startFixtureSeedHost();
+  const socket = new WebSocket(`ws://127.0.0.1:${host.controlPort}/api/chat/socket`);
+  let current: ChatView | undefined;
+  let onView: ((view: ChatView) => void) | undefined;
+  const client = await openChat(socket as unknown as globalThis.WebSocket, view => { current = view; onView?.(view); }, () => {});
+  const waitFor = (predicate: (view: ChatView) => boolean) => {
+    if (current && predicate(current)) return Promise.resolve();
+    return new Promise<void>(resolve => { onView = view => { if (predicate(view)) { onView = undefined; resolve(); } }; });
+  };
+  try {
+    const url = `http://127.0.0.1:${host.controlPort}/__test/turn/start`;
+    const denied = await fetch(url, { method: 'POST', headers: { Origin: 'http://example.invalid' } });
+    assert.notEqual(denied.status, 204);
+    const running = waitFor(view => view.activeTurnId === 'fixture-active-turn');
+    assert.equal((await fetch(url, { method: 'POST' })).status, 204); await running;
+    assert.deepEqual(await client.stop('stale-turn'), { stopped: false });
+    const finished = waitFor(view => view.activeTurnId === null);
+    assert.deepEqual(await client.stop('fixture-active-turn'), { stopped: true }); await finished;
+  } finally { client.close(); await host.close(); }
+});
