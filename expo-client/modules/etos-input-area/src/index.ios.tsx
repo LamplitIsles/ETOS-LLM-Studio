@@ -15,5 +15,5 @@ export { KeyboardPanel, keyboardPanelAvailable, requestKeyboardPanel, dismissKey
 export type { KeyboardPanelProps } from './keyboard-panel';
 export type { KeyboardPanelRequest, KeyboardPanelResult, KeyboardPanelDismiss } from './keyboard-panel-core';
 
-export { sequentialHandoffAvailable, enableSequentialHandoff, disableSequentialHandoff, snapshotSequentialHandoff, beginSequentialHandoff, cancelSequentialHandoff, inspectSequentialHandoff, sanitizeSequentialEvent } from "./sequential-handoff";
+export { sequentialHandoffAvailable, firstTapAndAbandonAvailable, enableSequentialHandoff, disableSequentialHandoff, abandonSequentialHandoff, snapshotSequentialHandoff, beginSequentialHandoff, cancelSequentialHandoff, inspectSequentialHandoff, sanitizeSequentialEvent } from "./sequential-handoff";
 export type { SequentialArgs, SequentialEvent } from "./sequential-handoff";

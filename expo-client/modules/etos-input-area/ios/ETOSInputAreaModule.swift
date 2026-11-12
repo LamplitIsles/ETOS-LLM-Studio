@@ -50,6 +50,13 @@ public final class ETOSInputAreaModule: Module {
       return false
       #endif
     }
+    Function("supportsFirstTapAndAbandon") {
+      #if DEBUG
+      return true
+      #else
+      return false
+      #endif
+    }
     View(ETOSKeyboardPanelView.self) {
       ViewName("KeyboardPanel")
       Events("onSequentialHandoff")
@@ -86,6 +93,15 @@ public final class ETOSInputAreaModule: Module {
       #if DEBUG
       guard let panel = self.appContext?.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self) else { return "targets_unavailable" }
       return panel.enableSequentialHandoff(generation: generation)
+      #else
+      return "unavailable"
+      #endif
+    }.runOnQueue(.main)
+
+    AsyncFunction("abandonSequentialHandoff") { (panelTag: Int, generation: Int, operation: Int) -> String in
+      #if DEBUG
+      guard let panel = self.appContext?.findView(withTag: panelTag, ofType: ETOSKeyboardPanelView.self) else { return "targets_unavailable" }
+      return panel.abandonSequentialHandoff(generation: generation, operation: operation)
       #else
       return "unavailable"
       #endif

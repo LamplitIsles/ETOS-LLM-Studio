@@ -43,25 +43,40 @@ extension UIResponder {
   }
 }
 
-private func etosProvedFirstResponder(in window: UIWindow) -> UIResponder? {
+private func etosFocusProbe(in window: UIWindow) -> (UIResponder?, String) {
   guard window.isKeyWindow, let scene = window.windowScene,
-        scene.activationState == .foregroundActive else { return nil }
+        scene.activationState == .foregroundActive else { return (nil, "window_inactive") }
   let capture = ETOSFocusCapture()
   let handled = UIApplication.shared.sendAction(#selector(UIResponder.etos127CaptureFirstResponder(_:)),
                                                  to: nil, from: capture, for: nil)
-  guard handled, let responder = capture.responder, responder.isFirstResponder,
-        window.isKeyWindow, window.windowScene === scene,
-        scene.activationState == .foregroundActive else { return nil }
+  guard handled else { return (nil, "action_unhandled") }
+  guard let responder = capture.responder else { return (nil, "capture_missing") }
+  guard responder.isFirstResponder else { return (nil, "not_first") }
+  guard window.isKeyWindow, window.windowScene === scene,
+        scene.activationState == .foregroundActive else { return (nil, "window_inactive") }
   var current: UIResponder? = responder
   var seen = Set<ObjectIdentifier>()
   for _ in 0..<128 {
-    guard let node = current else { return nil }
-    guard seen.insert(ObjectIdentifier(node)).inserted else { return nil }
-    if let foundWindow = node as? UIWindow { return foundWindow === window ? responder : nil }
-    if node is UIApplication { return nil }
+    guard let node = current else { return (nil, "chain_unresolved") }
+    guard seen.insert(ObjectIdentifier(node)).inserted else { return (nil, "chain_unresolved") }
+    if let foundWindow = node as? UIWindow { return foundWindow === window ? (responder, "confirmed") : (nil, "other_window") }
+    if node is UIApplication { return (nil, "chain_unresolved") }
     current = node.next
   }
-  return nil
+  return (nil, "chain_unresolved")
+}
+
+private func etosProvedFirstResponder(in window: UIWindow) -> UIResponder? {
+  etosFocusProbe(in: window).0
+}
+
+private func etosKeyboardGeometry(in window: UIWindow) -> String {
+  let frame = window.keyboardLayoutGuide.layoutFrame
+  let bottom = window.safeAreaInsets.bottom
+  guard frame.width.isFinite, frame.width > 0, frame.height.isFinite,
+        bottom.isFinite, frame.height >= max(0, bottom - 1),
+        !window.bounds.isEmpty else { return "unavailable" }
+  return frame.height > bottom + 1 ? "overlap_possible" : "no_overlap_observed"
 }
 
 // Neutral in-window responder, never a text input and never the panel owner.
@@ -117,6 +132,9 @@ public final class ETOSKeyboardPanelView: ExpoView {
   private enum KeyboardVisibility { case unknown, changing, visible, hidden }
   private var keyboardVisibility: KeyboardVisibility = .unknown
   private var sequentialEnabled = false
+  // Once explicitly abandoned, this native instance cannot dispatch another
+  // panel request. UIKit may still be settling an earlier operation.
+  private var sequentialAbandoned = false
   private var visibilityObservers: [NSObjectProtocol] = []
   private var lastPanelOwner: (generation: Int, operation: Int)?
   private weak var input: UIView?
@@ -140,6 +158,7 @@ public final class ETOSKeyboardPanelView: ExpoView {
   // method is unreachable through the module; the original path stays intact.
   func enableSequentialHandoff(generation expected: Int) -> String {
     guard expected == generation, expected >= 0, window != nil else { return "session_changed" }
+    guard !sequentialAbandoned else { return "abandoned" }
     guard input == nil, sequentialPending == nil else { return "input_owned_elsewhere" }
     if !sequentialEnabled {
       sequentialEnabled = true
@@ -260,6 +279,7 @@ public final class ETOSKeyboardPanelView: ExpoView {
   }
 
   func dismiss(generation expected: Int, backing: UIView) -> String {
+    guard !sequentialAbandoned else { return "handoff_abandoned" }
     guard sequentialPending == nil, !sequentialOwner.isFirstResponder else { return "input_owned_elsewhere" }
     guard expected == generation, expected >= 0, window != nil else { return "session_changed" }
     guard backing.window === window else { return "targets_unavailable" }
@@ -278,6 +298,7 @@ public final class ETOSKeyboardPanelView: ExpoView {
   }
 
   func switchMode(generation expected: Int, backing: UIView, panel: Bool, height: Double) -> String {
+    guard !sequentialAbandoned else { return "handoff_abandoned" }
     guard sequentialPending == nil, !sequentialOwner.isFirstResponder else { return "input_owned_elsewhere" }
     guard expected == generation, expected >= 0, window != nil else { return "session_changed" }
     guard height.isFinite, height >= 1, height <= 1000 else { return "invalid_height" }
@@ -352,6 +373,7 @@ public final class ETOSKeyboardPanelView: ExpoView {
 
   func beginSequentialHandoff(generation expected: Int, operation: Int, backing: UIView,
                               destination: Int, height: Double) -> String {
+    guard !sequentialAbandoned else { return "abandoned" }
     guard sequentialEnabled else { return "unavailable" }
     guard expected == generation, expected >= 0 else { return "session_changed" }
     guard operation > highestOperation, operation <= 9_007_199_254_740_991 else { return "invalid_operation" }
@@ -367,8 +389,14 @@ public final class ETOSKeyboardPanelView: ExpoView {
     let from: UIResponder = destination == 0 ? backing : sequentialOwner
     let fromKnownHidden = destination == 0 && !from.isFirstResponder
     if fromKnownHidden {
-      guard keyboardVisibility == .hidden else { return "keyboard_state_unknown" }
+      // Debug single-window experiment for an explicit tap. This is a current
+      // geometry observation, not proof that an earlier animation committed.
+      guard keyboardVisibility != .visible, keyboardVisibility != .changing else { return "keyboard_state_unknown" }
+      let geometry = etosKeyboardGeometry(in: boundWindow)
+      guard geometry != "unavailable" else { return "keyboard_state_unknown" }
+      guard geometry == "no_overlap_observed" else { return "keyboard_overlap" }
       let current = etosProvedFirstResponder(in: boundWindow)
+      // A nil action result cannot distinguish empty focus from interception.
       guard current === boundWindow || current === focusFence else { return "focus_unknown" }
     } else {
       guard from.isFirstResponder else { return "focus_unknown" }
@@ -493,11 +521,31 @@ public final class ETOSKeyboardPanelView: ExpoView {
     return op.cancelled ? "draining" : "pending_unconfirmed"
   }
 
+  // Explicitly give up the experiment for this native instance. Never move
+  // focus and never infer the state of an outstanding UIKit transition.
+  func abandonSequentialHandoff(generation expected: Int, operation: Int) -> String {
+    guard expected == generation, expected >= 0 else { return "session_changed" }
+    guard sequentialEnabled, !sequentialAbandoned else { return "unavailable" }
+    guard operation > 0,
+          ((sequentialPending?.operation == operation && sequentialPending?.generation == expected) ||
+           (lastPanelOwner?.operation == operation && lastPanelOwner?.generation == expected))
+    else { return "not_current" }
+    sequentialAbandoned = true
+    sequentialEnabled = false
+    sequentialPending = nil
+    lastPanelOwner = nil
+    removeSequentialObservers()
+    for observer in visibilityObservers { NotificationCenter.default.removeObserver(observer) }
+    visibilityObservers.removeAll()
+    keyboardVisibility = .unknown
+    return "abandoned"
+  }
+
   // A diagnostic snapshot, never proof that a transition is committed.
   func sequentialSnapshot(generation expected: Int, backing: UIView) -> [String: String] {
     guard sequentialEnabled, expected == generation, let w = window,
           backing.window === w else { return ["status": "unavailable"] }
-    let current = etosProvedFirstResponder(in: w)
+    let (current, focusProbe) = etosFocusProbe(in: w)
     let focus: String
     if current === backing { focus = "composer" }
     else if current === sequentialOwner { focus = "panel" }
@@ -513,9 +561,8 @@ public final class ETOSKeyboardPanelView: ExpoView {
     case .hidden: visibility = "hidden"
     }
     // Layout is an observation, not a presentation/animation completion signal.
-    let guideHeight = w.keyboardLayoutGuide.layoutFrame.height
-    let geometry = guideHeight > w.safeAreaInsets.bottom + 1 ? "overlap_possible" : "no_overlap_observed"
-    return ["status": "observed", "focus": focus, "visibility": visibility, "geometry": geometry]
+    let geometry = etosKeyboardGeometry(in: w)
+    return ["status": "observed", "focus": focus, "focusProbe": focusProbe, "visibility": visibility, "geometry": geometry]
   }
 
 }
