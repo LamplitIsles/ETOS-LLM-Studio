@@ -374,6 +374,29 @@ peer dependencies, licensing, and platform validation limits.
   On iOS, check `markdownImageResolverAvailable()` before enabling the nightly
   GitHub-flavor resolver; a missing parser otherwise falls back to untrusted URLs.
   Always return a controlled URI or `{uri: ''}`, never `undefined` for failure.
+- `findArchiveWorkspaceImages(source, {workspaceImages, isCurrent, signal})`
+  in `src/cfl/archive-workspace-images.ts` identifies a conservative subset of
+  the Codex local-image marker in search record text. `images` contains UTF-16
+  `start`/`end`, the untrusted literal `path`, and a canonical `requestPath`.
+  Render and copy the **original** Markdown unchanged; never split it at these
+  offsets. A UI can show the recognized references separately, preserving their
+  order, and pass each `requestPath` to `loadMarkdownImage`, then use and release
+  `createMarkdownImageUri` as above. Scope, capability, cancellation and server
+  authorization still apply; parsing neither fetches nor confirms a file exists.
+  The marker path is a literal filesystem path, including any `%` characters;
+  the parser encodes it before using the shared Markdown destination contract.
+  The server remains responsible for workspace containment and symlink checks.
+  `unavailable` means the capability is absent, `limit` means the 131,072 UTF-16
+  source-unit or 16-image limit was exceeded, and `unsupported` means the lexer
+  could not safely preserve source offsets. In each case `images` is empty.
+  `ok` means the bounded scan ran, **not** that every image was found: it only
+  accepts an unambiguous `<image name=[Image #N] path="…"></image>` in ordinary
+  top-level paragraphs. It skips markers in formatted spans, links, code,
+  unknown HTML, lists or blockquotes, and paths with ambiguous quotes or angle
+  brackets. It uses the existing `marked` lexer solely to conservatively locate
+  references; the actual renderer still uses Enriched Markdown. A workspace file
+  can change or disappear and `.model.jpg` is not evidence of the original image
+  or sticker. Search attachment coverage and iOS display remain unverified.
 - Real iOS: `createNativeAuth()`; call `select(httpsOrigin)` then `signIn()`
   only on explicit user action. Pass that same auth and origin to
   `createNativeChat(origin, auth)` from `factory.native.ts`. Stop the old
