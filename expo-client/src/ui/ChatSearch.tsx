@@ -1,40 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { RNHostView } from '@expo/ui';
+import { SymbolView } from 'expo-symbols';
 import type { SearchCard, SearchReadResult } from '../../vendor/contracts/src/index';
 import type { ChatController } from '../cfl/chat';
 import type { ApiTransport } from '../cfl/transport';
 import { findArchiveWorkspaceImages } from '../cfl/archive-workspace-images';
-import { loadMarkdownImage } from '../cfl/markdown-image';
-import { createMarkdownImageUri } from '../cfl/markdown-image-uri';
 import { Button } from './Button';
 import { Input } from './Input';
 import { MessageText } from './MessageText';
 import { MessageSurface } from './MessageSurface';
 import { FullSheet } from './FullSheet';
-
-function SearchImage({ requestPath, media, controller, workspaceImages, color }: {
-  requestPath: string; media: ApiTransport; controller: ChatController; workspaceImages: boolean; color: string;
-}) {
-  const [uri, setUri] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let active = true;
-    const scope = controller.scope(), abort = new AbortController();
-    const current = () => active && scope();
-    let release: (() => void) | undefined;
-    setUri(null); setFailed(false);
-    void loadMarkdownImage(requestPath, media, { workspaceImages, isCurrent: current, signal: abort.signal })
-      .then(image => createMarkdownImageUri(image, current, abort.signal))
-      .then(result => { if (!current()) { result.release(); return; } release = result.release; setUri(result.uri); })
-      .catch(() => { if (current()) setFailed(true); });
-    return () => { active = false; abort.abort(); release?.(); };
-  }, [controller, media, requestPath, workspaceImages]);
-  if (failed) return <Text style={{ color }}>图片暂时无法显示</Text>;
-  if (!uri) return <View style={styles.imageLoading}><ActivityIndicator /></View>;
-  return <Image source={{ uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.searchImage}
-    onError={() => setFailed(true)} />;
-}
 
 function SearchMessage({ kind, role, text, active, truncated, dark, media, controller, workspaceImages }: {
   kind: 'message' | 'compaction'; role?: 'user' | 'assistant'; text: string; active: boolean; truncated?: boolean;
@@ -44,13 +20,20 @@ function SearchMessage({ kind, role, text, active, truncated, dark, media, contr
   const unknown = kind === 'compaction' || !role;
   const ink = mine ? '#ffffff' : dark ? '#f4f4f6' : '#252631';
   const muted = mine ? '#e1e9f3' : dark ? '#b6bcc6' : '#616975';
-  const images = useMemo(() => findArchiveWorkspaceImages(text, { workspaceImages, isCurrent: () => true }).images, [text, workspaceImages]);
+  const markdown = useMemo(() => {
+    const images = findArchiveWorkspaceImages(text, { workspaceImages, isCurrent: () => true }).images;
+    let rendered = '', offset = 0;
+    for (const image of images) {
+      rendered += `${text.slice(offset, image.start)}![聊天图片](<${image.requestPath}>)`;
+      offset = image.end;
+    }
+    return rendered + text.slice(offset);
+  }, [text, workspaceImages]);
   return <View testID={kind === 'compaction' ? 'search-context-summary' : mine ? 'search-context-user' : role === 'assistant' ? 'search-context-assistant' : 'search-context-unknown'}
     style={[styles.messageRow, mine ? styles.mine : styles.theirs]}>
     {unknown && <Text style={[styles.recordLabel, { color: muted }]}>{kind === 'compaction' ? '摘要' : '角色未知'}</Text>}
     <MessageSurface mine={mine} style={active ? { borderWidth: 2, borderColor: dark ? '#96bce2' : '#658db5' } : undefined}>
-      <MessageText text={text} foreground={ink} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />
-      {images.map(image => <SearchImage key={`${image.start}:${image.requestPath}`} requestPath={image.requestPath} media={media} controller={controller} workspaceImages={workspaceImages} color={muted} />)}
+      <MessageText text={markdown} foreground={ink} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />
       {!!truncated && <Text style={{ color: muted }}>内容已截断</Text>}
     </MessageSurface>
   </View>;
@@ -99,7 +82,15 @@ function SearchContext({ selected, dark, media, controller, workspaceImages }: {
   </ScrollView>;
 }
 
-export function ChatSearch({ controller, media, workspaceImages, dark, onClose }: { controller: ChatController; media: ApiTransport; workspaceImages: boolean; dark: boolean; onClose: () => void }) {
+function searchDate(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? '' : new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date);
+}
+
+export function ChatSearch({ controller, media, workspaceImages, companionName, dark, onClose }: { controller: ChatController; media: ApiTransport; workspaceImages: boolean; companionName: string; dark: boolean; onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchCard[]>([]);
   const [searched, setSearched] = useState(false);
@@ -129,21 +120,31 @@ export function ChatSearch({ controller, media, workspaceImages, dark, onClose }
     catch { if (generation.current === id) setError('无法打开这条记录，请重试。'); }
     finally { if (generation.current === id) setLoading(false); }
   };
+  const back = () => { generation.current++; controller.cancelSearch(); setSelected(null); setError(''); };
   return <FullSheet open={presented} onRequestClose={() => setPresented(false)} onDismiss={onClose} color={dark ? '#25282d' : '#f7f8fa'} testID="chat-search-sheet">
     <RNHostView><View style={styles.page}>
-      <View style={styles.heading}><Text style={[styles.title, { color: ink }]}>聊天记录搜索</Text><Button accessibilityLabel="关闭聊天搜索" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setPresented(false)} /></View>
+      <View style={styles.heading}><Button accessibilityLabel={selected ? '返回搜索结果' : '关闭聊天搜索'} size="navigation" icon={selected ? { ios: 'chevron.left', web: 'arrow_back', android: 'arrow_back' } : { ios: 'xmark', web: 'close', android: 'close' }} onPress={selected ? back : () => setPresented(false)} /><Text style={[styles.title, { color: ink }]}>聊天记录</Text></View>
       {!selected && <View style={styles.search}><Input style={styles.input} accessibilityLabel="搜索聊天记录" placeholder="搜索聊天记录" value={query} onChangeText={changeQuery} onSubmitEditing={value => void search(value)} returnKeyType="search" maxLength={500} shape="pill" autoFocus /><Button accessibilityLabel="搜索" size="navigation" icon={{ ios: 'magnifyingglass', web: 'search', android: 'search' }} disabled={!query.trim() || loading} onPress={() => void search()} /></View>}
-      {selected && <Button variant="ghost" onPress={() => { generation.current++; controller.cancelSearch(); setSelected(null); setError(''); }}>返回搜索结果</Button>}
       {loading && <ActivityIndicator />}
       {!!error && <Text accessibilityRole="alert" style={{ color: dark ? '#ffb5ac' : '#9c302b' }}>{error}</Text>}
       {selected ? <SearchContext key={selected.record.id} selected={selected} dark={dark} media={media} controller={controller} workspaceImages={workspaceImages} /> :
       <ScrollView keyboardShouldPersistTaps="always" style={styles.results}>
           {!loading && searched && !error && hits.length === 0 && <Text style={{ color: muted }}>没有找到聊天记录</Text>}
-          {!loading && searched && !error && hits.length > 0 && <Text style={{ color: muted }}>{`找到 ${estimatedTotal ?? hits.length} 条结果`}</Text>}
-          {hits.map(hit => <View key={hit.id} style={styles.hit}><Pressable accessibilityRole="button" accessibilityLabel={hit.snippet.segments.map(segment => segment.text).join('') || '打开记录'} onPress={() => void open(hit)} style={styles.hitButton}><Text style={{ color: ink }}>{hit.snippet.segments.map((segment, index) => <Text key={index} testID={segment.highlighted ? 'search-highlight' : undefined} style={segment.highlighted ? { backgroundColor: dark ? '#74571b' : '#ffdf82', color: dark ? '#fff' : '#28210e' } : undefined}>{segment.text}</Text>)}</Text></Pressable>{hit.sessionName && <Text style={{ color: muted }}>{hit.sessionName}</Text>}</View>)}
-          {limited && <Text style={{ color: muted }}>仅显示部分结果，请尝试更具体的搜索词。</Text>}
+          {!loading && searched && !error && hits.length > 0 && <Text style={[styles.resultCount, { color: muted }]}>{`找到 ${estimatedTotal ?? hits.length} 条结果${limited || (estimatedTotal !== null && estimatedTotal > hits.length) ? ` · 仅显示前 ${hits.length} 条` : ''}`}</Text>}
+          {hits.length > 0 && <View style={[styles.hitList, { backgroundColor: dark ? '#292d32' : '#ffffff' }]}>{hits.map((hit, index) => {
+            const snippet = hit.snippet.segments.map(segment => segment.text).join('');
+            const sender = hit.kind === 'compaction' ? '记忆摘要' : hit.role === 'user' ? '你' : hit.role === 'assistant' ? companionName : '角色未知';
+            const date = searchDate(hit.createdAt);
+            return <Pressable key={hit.id} accessibilityRole="button" accessibilityLabel={[sender, date, snippet].filter(Boolean).join('，')} accessibilityHint="打开聊天记录" onPress={() => void open(hit)}
+              style={[styles.hitButton, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: dark ? '#51565d' : '#d9dde2' }]}>
+              <View style={styles.hitContent}><Text numberOfLines={1} style={[styles.hitSender, { color: ink }]}>{sender}</Text>
+                {!!date && <Text style={[styles.hitDate, { color: ink }]}>{date}</Text>}
+                <Text numberOfLines={2} style={[styles.hitSnippet, { color: muted }]}>{hit.snippet.segments.map((segment, part) => <Text key={part} testID={segment.highlighted ? 'search-highlight' : undefined} style={segment.highlighted ? { backgroundColor: dark ? '#b88a2f' : '#ffdf82', color: '#241b09' } : undefined}>{segment.text}</Text>)}</Text>
+              </View><SymbolView name={{ ios: 'chevron.right', web: 'chevron_right', android: 'chevron_right' }} size={18} tintColor={muted} />
+            </Pressable>;
+          })}</View>}
       </ScrollView>}
     </View></RNHostView>
   </FullSheet>;
 }
-const styles = StyleSheet.create({ page: { flex: 1, gap: 12, paddingHorizontal: 16, paddingBottom: 16 }, heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, title: { fontSize: 19, fontWeight: '600' }, search: { flexDirection: 'row', alignItems: 'center', gap: 8 }, input: { flex: 1 }, results: { flex: 1 }, hit: { marginVertical: 4, alignItems: 'flex-start' }, hitButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 }, messageRow: { marginVertical: 4, maxWidth: '78%' }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end' }, theirs: { alignSelf: 'flex-start', alignItems: 'flex-start' }, recordLabel: { marginBottom: 4, fontSize: 12 }, searchImage: { width: 200, height: 200, borderRadius: 12 }, imageLoading: { width: 200, height: 120, alignItems: 'center', justifyContent: 'center' } });
+const styles = StyleSheet.create({ page: { flex: 1, gap: 12, paddingHorizontal: 16, paddingBottom: 16 }, heading: { flexDirection: 'row', alignItems: 'center', gap: 8 }, title: { fontSize: 19, fontWeight: '600' }, search: { flexDirection: 'row', alignItems: 'center', gap: 8 }, input: { flex: 1 }, results: { flex: 1 }, resultCount: { marginTop: 8, marginBottom: 12, fontSize: 14 }, hitList: { borderRadius: 16, overflow: 'hidden' }, hitButton: { minHeight: 72, flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingHorizontal: 14, paddingVertical: 12 }, hitContent: { flex: 1, gap: 3 }, hitSender: { fontSize: 16, fontWeight: '600' }, hitDate: { fontSize: 13 }, hitSnippet: { fontSize: 14, lineHeight: 20 }, messageRow: { marginVertical: 4, maxWidth: '78%' }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end' }, theirs: { alignSelf: 'flex-start', alignItems: 'flex-start' }, recordLabel: { marginBottom: 4, fontSize: 12 } });

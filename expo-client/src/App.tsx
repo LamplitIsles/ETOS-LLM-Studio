@@ -814,7 +814,7 @@ function AppContent() {
             </ComposerContainer>
           </KeyboardAvoidingView>
         </View>
-        {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} media={client.media} workspaceImages={snapshot?.view?.capabilities.workspaceImages === true} dark={dark} onClose={() => setSearchOpen(false)} />}
+        {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} media={client.media} workspaceImages={snapshot?.view?.capabilities.workspaceImages === true} companionName={snapshot?.view?.name || '伙伴'} dark={dark} onClose={() => setSearchOpen(false)} />}
         {settingsOpen && sessionId && <ChatSettings key={sessionId} controller={client.controller} media={client.media} dark={dark} onClose={() => setSettingsOpen(false)} onBackgroundSaved={() => setAppearanceRevision(value => value + 1)} />}
       </View>
     </View>

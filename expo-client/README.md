@@ -378,10 +378,11 @@ peer dependencies, licensing, and platform validation limits.
   in `src/cfl/archive-workspace-images.ts` identifies a conservative subset of
   the Codex local-image marker in search record text. `images` contains UTF-16
   `start`/`end`, the untrusted literal `path`, and a canonical `requestPath`.
-  Render and copy the **original** Markdown unchanged; never split it at these
-  offsets. A UI can show the recognized references separately, preserving their
-  order, and pass each `requestPath` to `loadMarkdownImage`, then use and release
-  `createMarkdownImageUri` as above. Scope, capability, cancellation and server
+  Search displays recognized tags as Markdown images at their original position;
+  the underlying archive content is unchanged. Selection and copy operate on the
+  rendered Markdown rather than preserving the original tag. Image loading uses
+  the existing `MessageText` resolver and its scoped `createMarkdownImageUri`
+  cleanup as above. Scope, capability, cancellation and server
   authorization still apply; parsing neither fetches nor confirms a file exists.
   The marker path is a literal filesystem path, including any `%` characters;
   the parser encodes it before using the shared Markdown destination contract.
