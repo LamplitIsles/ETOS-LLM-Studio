@@ -196,6 +196,34 @@ peer dependencies, licensing, and platform validation limits.
   A still-active turn after reconnect does not prove the earlier request has
   finished. Discard asynchronous UI results after its own session/navigation
   generation changes; a response never modifies the controller's view.
+- For a received sticker, pass the `ImageData` already obtained with
+  `controller.readImage(media, attachmentId, current, 'original', signal)` to
+  `classifyStickerOpacity(image, current, signal)` from
+  `src/cfl/sticker-opacity`. It returns `opaque`, `transparent`, or `unknown`;
+  only `opaque` is evidence for clipping to rounded corners. Keep displaying
+  the original unchanged while classification runs, and use no clipping for
+  `transparent` or `unknown`. Check the same component/session scope again
+  before applying its result. Classification makes no media request and does
+  not own or alter the supplied bytes.
+  Static JPEG, PNG and WebP are decoded at original dimensions and inspected
+  pixel by pixel. GIF, APNG/animated WebP, 16-bit PNG (whose alpha might be
+  rounded by RGBA8 conversion), unsupported decoders, invalid data, cancellation
+  and over-budget work return `unknown`. Limits are 8,000,000 encoded bytes,
+  4,096 pixels per dimension and 4,000,000 total pixels. One decode runs at a
+  time, with up to eight waiting jobs and 16,000,000 queued bytes; overflow
+  returns `unknown`. Waiting cancellation is immediate; a running platform
+  decode is allowed to finish and its stale result is discarded. No temporary
+  file or persistent classification cache is created.
+  Web uses a local Blob and canvas; iOS uses a background ImageIO method added
+  to the existing ETOS input-area module. An old binary, unsupported platform,
+  or unavailable native method returns `unknown`; a new iOS binary must be
+  built and installed before this classification can run there. No new Pod
+  source file or dependency was added. The native build and iPhone behavior
+  have not been verified. A complete solution for opaque animations requires
+  a bounded, fully composited all-frame decoder and device validation.
+  Run the data-layer checks with `npx tsx --test tests/sticker-opacity.test.ts`
+  and the local Chromium decoder check with
+  `CHROME_PATH=/path/to/chrome node tests/sticker-opacity-browser.cjs`.
 - After the controller has started and its chat view is established, call
   `loadAppearance(media, controller.scope())` from `src/cfl/appearance.ts`.
   It returns `{companionName, userName, companionAvatar, backgrounds}` (the
