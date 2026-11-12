@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "skills": {
+    "expo-animation": {
+      "source": "expo/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/expo/skills/expo-animation/SKILL.md",
+      "computedHash": "887ae52d885a9fe2c7d42cf684cd6ba10d410f44480c2501f822accb02b6c483",
+      "installMode": "copy"
+    },
+    "find-animation-opportunities": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-animation-opportunities/SKILL.md",
+      "computedHash": "465d087c41768e4f14ed640dd049036009f613feb55baaa5831b68b33178f9d2",
+      "installMode": "copy"
+    }
+  }
+}
