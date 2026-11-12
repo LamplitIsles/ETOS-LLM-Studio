@@ -104,7 +104,7 @@ export function ChatSearch({ controller, media, workspaceImages, dark, onClose }
   return <FullSheet open={presented} onRequestClose={() => setPresented(false)} onDismiss={onClose} color={dark ? '#25282d' : '#f7f8fa'} testID="chat-search-sheet">
     <RNHostView><View style={styles.page}>
       <View style={styles.heading}><Text style={[styles.title, { color: ink }]}>聊天记录搜索</Text><Button accessibilityLabel="关闭聊天搜索" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setPresented(false)} /></View>
-      {!selected && <View style={styles.search}><Input style={styles.input} accessibilityLabel="搜索聊天记录" placeholder="搜索聊天记录" value={query} onChangeText={changeQuery} onSubmitEditing={value => void search(value)} returnKeyType="search" maxLength={500} shape="pill" /><Button disabled={!query.trim() || loading} onPress={() => void search()}>搜索</Button></View>}
+      {!selected && <View style={styles.search}><Input style={styles.input} accessibilityLabel="搜索聊天记录" placeholder="搜索聊天记录" value={query} onChangeText={changeQuery} onSubmitEditing={value => void search(value)} returnKeyType="search" maxLength={500} shape="pill" autoFocus /><Button accessibilityLabel="搜索" size="navigation" icon={{ ios: 'magnifyingglass', web: 'search', android: 'search' }} disabled={!query.trim() || loading} onPress={() => void search()} /></View>}
       {selected && <Button variant="ghost" onPress={() => { generation.current++; controller.cancelSearch(); setSelected(null); setError(''); }}>返回搜索结果</Button>}
       {loading && <ActivityIndicator />}
       {!!error && <Text accessibilityRole="alert" style={{ color: dark ? '#ffb5ac' : '#9c302b' }}>{error}</Text>}

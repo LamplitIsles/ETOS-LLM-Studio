@@ -11,6 +11,11 @@ const { isolatedContext } = require('./ui-test-context.cjs');
     await page.getByRole('button', { name: '搜索聊天记录', exact: true }).click({ timeout: 60000 });
     const dialog = page.getByRole('dialog');
     const input = dialog.getByRole('textbox', { name: '搜索聊天记录' });
+    await input.waitFor();
+    const searchButton = dialog.getByRole('button', { name: '搜索', exact: true });
+    const searchButtonBox = await searchButton.boundingBox();
+    assert.ok(searchButtonBox && searchButtonBox.width >= 44 && searchButtonBox.height >= 44, 'search icon has a 44pt touch target');
+    await assertEventually(async () => assert.equal(await input.evaluate(element => document.activeElement === element), true, 'search input should receive focus on opening'));
     await input.fill('最近总觉得');
     if (process.env.SEARCH_CONTROL === 'button') await dialog.getByRole('button', { name: '搜索', exact: true }).click();
     else await input.press('Enter');
@@ -34,3 +39,11 @@ const { isolatedContext } = require('./ui-test-context.cjs');
     console.log('PASS: Enter, highlighted results, Markdown, and separate user/assistant context bubbles');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+async function assertEventually(check) {
+  let last;
+  for (let i = 0; i < 20; i++) {
+    try { await check(); return; } catch (error) { last = error; await new Promise(resolve => setTimeout(resolve, 100)); }
+  }
+  throw last;
+}

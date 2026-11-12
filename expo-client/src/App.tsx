@@ -788,13 +788,13 @@ function AppContent() {
                     <Surface interactive style={styles.composerSurface}>
                       <View style={styles.composerField}>
                         <View style={styles.composerInputWrap}>
-                        <Text pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                        {Platform.OS !== 'ios' && <Text pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                           onLayout={event => setInputHeight(Math.max(44, Math.min(132, Math.ceil(event.nativeEvent.layout.height))))}
-                          style={[styles.composerInputMeasure, styles.composerInput]}>{draft ? `${draft}${draft.endsWith('\n') ? '\u200b' : ''}` : ' '}</Text>
+                          style={[styles.composerInputMeasure, styles.composerInput]}>{draft ? `${draft}${draft.endsWith('\n') ? '\u200b' : ''}` : ' '}</Text>}
                         <TextInput ref={inputRef} accessibilityLabel="输入消息…" placeholder="输入消息…" placeholderTextColor={muted} value={draft} onChangeText={setText}
                           onPressIn={() => { if (nativePanelAvailable && nativePanelMode.current === 'panel') openSystemKeyboard(); }}
                           onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy && !uncertain} multiline maxLength={16000}
-                          style={[styles.composerInput, { height: inputHeight, color: ink }]} />
+                          style={[styles.composerInput, Platform.OS === 'ios' ? { minHeight: 44, maxHeight: 132, color: ink } : { height: inputHeight, color: ink }]} />
                         </View>
                         <View style={styles.composerEmoji}>
                           <Button disabled={panelBusy} accessibilityLabel={emojiOpen && panelKind === 'stickers' ? '键盘' : '表情'} size="circle" variant="ghost"
