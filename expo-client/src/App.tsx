@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Image, Keyboard, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, AppState, Image, Keyboard, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type NativeSyntheticEvent, type ScrollViewProps } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,14 +41,16 @@ import { MessageText } from './ui/MessageText';
 import { MessageSurface } from './ui/MessageSurface';
 import { ChatSettings } from './ui/ChatSettings';
 import { useKeyboardDiagnostic } from './ui/keyboardDiagnostic';
+import { SequentialPanelGate } from './ui/sequentialPanelGate';
 import type { InputAreaProps } from '../modules/etos-input-area/src';
 import type { InputAreaProbeArgs, InputAreaProbeResult } from '../modules/etos-input-area/src/probe-core';
 import type { KeyboardPanelProps } from '../modules/etos-input-area/src/keyboard-panel';
 import type { KeyboardPanelDismiss, KeyboardPanelRequest, KeyboardPanelResult } from '../modules/etos-input-area/src/keyboard-panel-core';
+import type { SequentialArgs, SequentialEvent } from '../modules/etos-input-area/src/sequential-handoff-core';
 
 // An older development binary cannot load a newly added native view. Keep its
 // existing input usable until the new binary is installed.
-const inputAreaModule: { InputArea: React.ComponentType<InputAreaProps>; probeInputAreaTargets: (args: InputAreaProbeArgs) => Promise<InputAreaProbeResult>; KeyboardPanel: React.ComponentType<KeyboardPanelProps>; keyboardPanelAvailable: () => boolean; requestKeyboardPanel: (args: KeyboardPanelRequest) => Promise<KeyboardPanelResult>; dismissKeyboardPanel: (args: KeyboardPanelDismiss) => Promise<KeyboardPanelResult> } | null = Platform.OS !== 'ios' || requireOptionalNativeModule('ETOSInputArea')
+const inputAreaModule: { InputArea: React.ComponentType<InputAreaProps>; probeInputAreaTargets: (args: InputAreaProbeArgs) => Promise<InputAreaProbeResult>; KeyboardPanel: React.ComponentType<KeyboardPanelProps>; keyboardPanelAvailable: () => boolean; requestKeyboardPanel: (args: KeyboardPanelRequest) => Promise<KeyboardPanelResult>; dismissKeyboardPanel: (args: KeyboardPanelDismiss) => Promise<KeyboardPanelResult>; firstTapAndAbandonAvailable: () => boolean; enableSequentialHandoff: (panel: number, generation: number) => Promise<{status: string}>; beginSequentialHandoff: (args: SequentialArgs) => Promise<{status: string}>; abandonSequentialHandoff: (panel: number, generation: number, operation: number) => Promise<{status: string}>; } | null = Platform.OS !== 'ios' || requireOptionalNativeModule('ETOSInputArea')
   ? require('../modules/etos-input-area/src')
   : null;
 const InputArea: React.ComponentType<InputAreaProps> = inputAreaModule?.InputArea
@@ -196,6 +198,13 @@ function AppContent() {
   // The chat scroll view owns keyboard insets; the sticky composer moves with the keyboard.
   const iosChatKeyboard = Platform.OS === 'ios';
   const nativePanelAvailable = iosChatKeyboard && !!inputAreaModule?.keyboardPanelAvailable();
+  const sequentialCandidate = nativePanelAvailable && __DEV__ && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1' && !!inputAreaModule?.firstTapAndAbandonAvailable();
+  const sequentialEnable = useRef<{ generation: number; panel: number; result: Promise<{status: string}> } | null>(null);
+  const cancelSequentialEnableWait = useRef<(() => void) | null>(null);
+  const sequentialOperation = useRef(0);
+  const sequentialGate = useRef(new SequentialPanelGate());
+  const sequentialPanel = useRef(false);
+  const [sequentialPanelOpen, setSequentialPanelOpen] = useState(false);
   const panelTag = useRef<number | null>(null);
   const panelTagGeneration = useRef(0);
   const panelGeneration = useRef(0);
@@ -236,6 +245,7 @@ function AppContent() {
   const switchingKeyboard = useRef(false);
   const toolbarHeightRef = useRef(toolbarHeight);
   const waitingForSearchKeyboard = useRef(false);
+  const searchKeyboardPhase = useRef<'unknown' | 'showing' | 'shown' | 'hiding' | 'hidden'>('unknown');
   const restoringPanelAfterSearch = useRef(false);
   const searchHandoffEpoch = useRef(0);
   const stickerSearchActiveRef = useRef(false);
@@ -265,7 +275,7 @@ function AppContent() {
   const openComposerPanel = (kind: 'stickers' | 'attachments') => {
     if (nativePanelAvailable && (nativePanelBusy.current || nativePanelUnknown.current || pendingPanelOpen.current || searchBlur.current || restoringPanelAfterSearch.current)) return;
     if (desiredPanelKind.current !== kind) { desiredPanelKind.current = kind; setPanelVersion(++panelRevision.current); }
-    if (nativePanelAvailable && emojiOpen && nativePanelMode.current === 'panel' && inputRef.current?.isFocused()) { setPanelKind(kind); return; }
+    if (nativePanelAvailable && emojiOpen && nativePanelMode.current === 'panel' && (inputRef.current?.isFocused() || sequentialPanel.current)) { setPanelKind(kind); return; }
     setPanelKind(kind);
     if (nativePanelAvailable) {
       pendingPanelOpen.current = kind;
@@ -311,7 +321,7 @@ function AppContent() {
       if (generation !== panelGeneration.current || handoff !== searchHandoffEpoch.current) return;
       if (result.status !== 'requested') { if (result.status !== 'unavailable' && result.status !== 'invalid_response' && result.status !== 'session_changed') { nativePanelMode.current = 'closed'; setEmojiOpen(false); } clearSearchHandoff(); return; }
       // An RN focus callback can arrive before the native acknowledgement.
-      if (inputRef.current?.isFocused() || !restoringPanelAfterSearch.current) { clearSearchHandoff(); return; }
+      if (sequentialPanel.current || inputRef.current?.isFocused() || !restoringPanelAfterSearch.current) { clearSearchHandoff(); return; }
       const hostTag = inputAreaHostTag.current, inputTag = findNodeHandle(inputRef.current), scrollTag = messagesRef.current?.getScrollableNode();
       const scope = client?.controller.scope();
       const current = () => generation === panelGeneration.current && !!client && active.current === client && !!scope?.() && handoff === searchHandoffEpoch.current && restoringPanelAfterSearch.current;
@@ -326,12 +336,14 @@ function AppContent() {
     });
   }, [clearSearchHandoff, nativePanelAvailable, client]);
   const onStickerSearchVisibilityChange = useCallback((visible: boolean) => {
-    if (visible) { searchHandoffEpoch.current++; stickerSearchActiveRef.current = true; waitingForSearchKeyboard.current = false; restoringPanelAfterSearch.current = false; chatKeyboardFrozen.value = true; setStickerSearchActive(true); }
+    if (visible) { searchHandoffEpoch.current++; stickerSearchActiveRef.current = true; searchKeyboardPhase.current = 'unknown'; waitingForSearchKeyboard.current = false; restoringPanelAfterSearch.current = false; chatKeyboardFrozen.value = true; setStickerSearchActive(true); }
     else if (!stickerSearchActiveRef.current || waitingForSearchKeyboard.current || restoringPanelAfterSearch.current) return;
+    else if (sequentialCandidate && emojiOpenRef.current && (Keyboard.isVisible() || ['showing', 'shown', 'hiding'].includes(searchKeyboardPhase.current))) waitingForSearchKeyboard.current = true;
+    else if (sequentialCandidate && searchKeyboardPhase.current === 'unknown') { setEmojiOpen(false); clearSearchHandoff(); }
     else if (nativePanelAvailable && emojiOpenRef.current) restorePanelAfterSearch();
     else if (Platform.OS === 'ios' && Keyboard.isVisible()) { waitingForSearchKeyboard.current = true; Keyboard.dismiss(); }
     else clearSearchHandoff();
-  }, [chatKeyboardFrozen, clearSearchHandoff, nativePanelAvailable, restorePanelAfterSearch]);
+  }, [chatKeyboardFrozen, clearSearchHandoff, nativePanelAvailable, restorePanelAfterSearch, sequentialCandidate]);
   const prepareNativeStickerSearch = async () => {
     if (nativePanelBusy.current || nativePanelUnknown.current || nativePanelMode.current !== 'panel') return false;
     onStickerSearchVisibilityChange(true);
@@ -357,26 +369,31 @@ function AppContent() {
     if (searchBlur.current !== state) return false;
     searchBlur.current = null; setPanelBusy(nativePanelBusy.current);
     if (!state.observed) { clearSearchHandoff(); setEmojiOpen(false); setError('搜索暂时无法打开，请重试。'); return false; }
+    if (sequentialCandidate) searchKeyboardPhase.current = 'unknown';
     return true;
   };
   useEffect(() => {
+    const willShow = Keyboard.addListener('keyboardWillShow', () => { if (stickerSearchActiveRef.current) searchKeyboardPhase.current = 'showing'; });
+    const willHide = Keyboard.addListener('keyboardWillHide', () => { if (stickerSearchActiveRef.current && ['showing', 'shown', 'hiding'].includes(searchKeyboardPhase.current)) searchKeyboardPhase.current = 'hiding'; });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
-      if (waitingForSearchKeyboard.current) { waitingForSearchKeyboard.current = false; if (nativePanelAvailable && emojiOpen) restorePanelAfterSearch(); else clearSearchHandoff(); }
-      else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !stickerSearchActiveRef.current) {
+      const searchHide = stickerSearchActiveRef.current && ['showing', 'shown', 'hiding'].includes(searchKeyboardPhase.current);
+      if (searchHide) searchKeyboardPhase.current = 'hidden';
+      if (waitingForSearchKeyboard.current && (!sequentialCandidate || searchHide)) { waitingForSearchKeyboard.current = false; if (nativePanelAvailable && emojiOpen) restorePanelAfterSearch(); else clearSearchHandoff(); }
+      else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !sequentialPanel.current && !stickerSearchActiveRef.current) {
         // A system dismissal can leave the custom inputView assigned. Reopening
         // must request it again, even when its content is already mounted.
         setEmojiOpen(false);
       }
     });
     const show = Keyboard.addListener('keyboardDidShow', event => {
-      if (stickerSearchActiveRef.current) return;
+      if (stickerSearchActiveRef.current) { searchKeyboardPhase.current = 'shown'; return; }
       const height = Math.round(event.endCoordinates.height);
       if (height > 0 && (!nativePanelAvailable || nativePanelMode.current !== 'panel')) setEmojiPanelHeight(height);
       if (nativePanelAvailable) return;
       if (waitingForComposerKeyboard.current) { waitingForComposerKeyboard.current = false; switchingKeyboard.current = false; chatContentInset.value = toolbarHeightRef.current + 20; chatKeyboardFrozen.value = false; setEmojiOpen(false); }
     });
-    return () => { hide.remove(); show.remove(); };
-  }, [chatContentInset, chatKeyboardFrozen, clearSearchHandoff, nativePanelAvailable, emojiOpen, restorePanelAfterSearch]);
+    return () => { willShow.remove(); willHide.remove(); hide.remove(); show.remove(); };
+  }, [chatContentInset, chatKeyboardFrozen, clearSearchHandoff, nativePanelAvailable, sequentialCandidate, emojiOpen, restorePanelAfterSearch]);
   const ChatKeyboardScroll = useMemo(() => React.forwardRef<React.ComponentRef<typeof ScrollView>, ScrollViewProps>((props, ref) =>
     <KeyboardChatScrollView {...props} ref={ref} automaticallyAdjustContentInsets={false} contentInsetAdjustmentBehavior="never"
       keyboardLiftBehavior="whenAtEnd" freeze={chatKeyboardFrozen} extraContentPadding={chatContentInset} onEndVisible={visible => setShowScrollToBottom(!visible)} />
@@ -428,13 +445,20 @@ function AppContent() {
   const hostTagGeneration = useRef(0);
   const inputAreaProbeSequence = useRef(0);
   useEffect(() => {
-    // Reset UI immediately for the new scope, but keep a dispatched native
-    // request locked until it actually settles.
+    // Retire this scope's native operation before resetting the visible UI.
     nativePanelMode.current = 'closed'; nativePanelUnknown.current = false; pendingPanelOpen.current = null;
+    sequentialPanel.current = false; setSequentialPanelOpen(false);
     searchHandoffEpoch.current++; searchBlur.current = null; waitingForSearchKeyboard.current = false; restoringPanelAfterSearch.current = false;
     stickerSearchActiveRef.current = false; switchingKeyboard.current = false; waitingForComposerKeyboard.current = false;
     chatKeyboardFrozen.value = false; setStickerSearchActive(false); setEmojiOpen(false); setPanelBusy(nativePanelBusy.current);
     return () => {
+      cancelSequentialEnableWait.current?.(); cancelSequentialEnableWait.current = null;
+      nativePanelBusy.current = false;
+      if (sequentialEnable.current?.generation === inputAreaSession) sequentialEnable.current = null;
+      const pending = sequentialGate.current.abandon(inputAreaSession);
+      if (pending) {
+        if (inputAreaModule) void inputAreaModule.abandonSequentialHandoff(pending.panel, pending.generation, pending.operation);
+      }
       if (hostTagGeneration.current === inputAreaSession) inputAreaHostTag.current = null;
       if (panelTagGeneration.current === inputAreaSession) panelTag.current = null;
       inputAreaProbeSequence.current++; panelRequestSequence.current++; pendingPanelOpen.current = null;
@@ -454,6 +478,18 @@ function AppContent() {
     void inputAreaModule.probeInputAreaTargets({ hostTag, scrollTag, inputTag, current: () => current() && sequence === inputAreaProbeSequence.current })
       .then(result => { if (current() && sequence === inputAreaProbeSequence.current) console.log('[ETOS-KEYBOARD-DIAG]', JSON.stringify({ event: 'inputAreaProbe', phase, ...result })); });
   };
+  const onSequentialHandoff = (event: NativeSyntheticEvent<SequentialEvent>) => {
+    const value = event.nativeEvent;
+    if (__DEV__ && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1') console.log('[ETOS-KEYBOARD-DIAG]', JSON.stringify({ event: 'sequential', status: value.status }));
+    if (value.generation !== panelGeneration.current) return;
+    const outcome = sequentialGate.current.receive(value);
+    if (outcome === 'panel' || outcome === 'closed') {
+      sequentialPanel.current = outcome === 'panel';
+      setSequentialPanelOpen(sequentialPanel.current);
+    } else if (outcome === 'owner_lost') {
+      sequentialPanel.current = false; setSequentialPanelOpen(false); nativePanelMode.current = 'closed'; setEmojiOpen(false);
+    }
+  };
   nativePanelAction.current = async mode => {
     if (nativePanelBusy.current || nativePanelUnknown.current) return { status: 'unavailable' };
     if (!nativePanelAvailable || !inputAreaModule || !client || !sessionId) { setError('面板暂时无法打开，请稍后再试。'); return { status: 'targets_unavailable' }; }
@@ -464,8 +500,33 @@ function AppContent() {
     const current = () => active.current === client && scope() && generation === panelGeneration.current && sequence === panelRequestSequence.current;
     const base = { hostTag, panelTag: currentPanelTag, inputTag, generation, current };
     try {
-      const result = await (mode === 'dismiss' ? inputAreaModule.dismissKeyboardPanel(base)
-        : inputAreaModule.requestKeyboardPanel({ ...base, mode, height: emojiPanelHeight }));
+      let result: KeyboardPanelResult;
+      if (sequentialCandidate) {
+        const enabled = sequentialEnable.current;
+        let enableStatus = 'unavailable';
+        if (enabled && enabled.generation === generation && enabled.panel === currentPanelTag) {
+          let cancel!: () => void;
+          const cancelled = new Promise<{status: string}>(resolve => { cancel = () => resolve({ status: 'session_changed' }); });
+          cancelSequentialEnableWait.current = cancel;
+          enableStatus = (await Promise.race([enabled.result, cancelled])).status;
+          if (cancelSequentialEnableWait.current === cancel) cancelSequentialEnableWait.current = null;
+        }
+        if (enableStatus !== 'enabled') {
+          result = { status: enableStatus === 'session_changed' ? 'session_changed' : 'targets_unavailable' };
+        } else if (!current()) {
+          result = { status: 'session_changed' };
+        } else {
+          const operation = ++sequentialOperation.current;
+          result = await sequentialGate.current.run({ panel: currentPanelTag, generation, operation }, mode, current, async () => {
+            const started = await inputAreaModule.beginSequentialHandoff({ ...base, operation, mode, height: emojiPanelHeight });
+            if (__DEV__) console.log('[ETOS-KEYBOARD-DIAG]', JSON.stringify({ event: 'sequentialBegin', status: started.status }));
+            return started;
+          });
+        }
+      } else {
+        result = await (mode === 'dismiss' ? inputAreaModule.dismissKeyboardPanel(base)
+          : inputAreaModule.requestKeyboardPanel({ ...base, mode, height: emojiPanelHeight }));
+      }
       if (!current()) {
         if (generation === panelGeneration.current && active.current === client) {
           nativePanelUnknown.current = true; setError('面板状态暂时无法确认，请重启应用后重试。');
@@ -477,7 +538,7 @@ function AppContent() {
         setError('面板状态暂时无法确认，请重启应用后重试。');
       } else if (result.status !== 'requested' && result.status !== 'session_changed') setError('面板暂时无法切换，请稍后再试。');
       return result;
-    } finally { nativePanelBusy.current = false; setPanelBusy(!!searchBlur.current || restoringPanelAfterSearch.current); }
+    } finally { if (sequence === panelRequestSequence.current) { nativePanelBusy.current = false; setPanelBusy(!!searchBlur.current || restoringPanelAfterSearch.current); } }
   };
   useEffect(() => {
     if (!client || !sessionId) return;
@@ -687,6 +748,11 @@ function AppContent() {
     }
     if (emojiOpenRef.current || nativePanelMode.current === 'panel' || nativePanelBusy.current || nativePanelUnknown.current ||
         pendingPanelOpen.current || searchBlur.current || restoringPanelAfterSearch.current || stickerSearchActiveRef.current) {
+      cancelSequentialEnableWait.current?.(); cancelSequentialEnableWait.current = null; nativePanelBusy.current = false;
+      const pending = sequentialGate.current.abandon();
+      if (pending && inputAreaModule) {
+        void inputAreaModule.abandonSequentialHandoff(pending.panel, pending.generation, pending.operation);
+      }
       panelGeneration.current = ++inputAreaGeneration.current;
       panelRequestSequence.current++;
       pendingPanelOpen.current = null;
@@ -789,7 +855,7 @@ function AppContent() {
                   <Animated.View pointerEvents={panelKind === 'attachments' ? 'auto' : 'none'} accessibilityElementsHidden={panelKind !== 'attachments'} importantForAccessibility={panelKind === 'attachments' ? 'auto' : 'no-hide-descendants'} style={[StyleSheet.absoluteFill, attachmentSwapStyle]}>{attachmentPanel}</Animated.View>
                   <View key={`${panelKind}:${panelVersion}`} pointerEvents="none" collapsable={false} onLayout={panelReady} style={styles.panelLayoutMarker} />
                 </View> : panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : attachmentPanel}</View>;
-                const inputPanel = nativePanelAvailable && inputAreaModule ? <inputAreaModule.KeyboardPanel scopeGeneration={inputAreaSession} style={styles.nativePanelPlaceholder} onLayout={event => { if (panelGeneration.current === inputAreaSession) { panelTagGeneration.current = inputAreaSession; panelTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } }} accessibilityElementsHidden={!emojiOpen} importantForAccessibility={emojiOpen ? 'auto' : 'no-hide-descendants'}><View collapsable={false} style={{ height: emojiPanelHeight }}>{panelContent}</View></inputAreaModule.KeyboardPanel> : <EmojiPanel open={emojiOpen} panelHeight={emojiPanelHeight} visibleHeight={emojiVisibleHeight} progress={emojiProgress} instantOpen={emojiInstantOpen}>{panelContent}</EmojiPanel>;
+                const inputPanel = nativePanelAvailable && inputAreaModule ? <inputAreaModule.KeyboardPanel scopeGeneration={inputAreaSession} style={styles.nativePanelPlaceholder} onSequentialHandoff={sequentialCandidate ? onSequentialHandoff : undefined} onLayout={event => { if (panelGeneration.current === inputAreaSession) { panelTagGeneration.current = inputAreaSession; panelTag.current = findNodeHandle(event.currentTarget) ?? null; const tag = panelTag.current; if (sequentialCandidate && tag && (sequentialEnable.current?.generation !== inputAreaSession || sequentialEnable.current.panel !== tag)) sequentialEnable.current = { generation: inputAreaSession, panel: tag, result: inputAreaModule.enableSequentialHandoff(tag, inputAreaSession) }; presentPendingPanel.current(); } }} accessibilityElementsHidden={!emojiOpen} importantForAccessibility={emojiOpen ? 'auto' : 'no-hide-descendants'}><View collapsable={false} style={{ height: emojiPanelHeight }}>{panelContent}</View></inputAreaModule.KeyboardPanel> : <EmojiPanel open={emojiOpen} panelHeight={emojiPanelHeight} visibleHeight={emojiVisibleHeight} progress={emojiProgress} instantOpen={emojiInstantOpen}>{panelContent}</EmojiPanel>;
                 return <>
               <InputArea generation={inputAreaSession} onLayout={event => { if (nativePanelAvailable || (__DEV__ && Platform.OS === 'ios' && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1')) { if (panelGeneration.current === inputAreaSession) { hostTagGeneration.current = inputAreaSession; inputAreaHostTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } } }} composer={<Animated.View style={[styles.composerOuter, composerInset]} onLayout={event => { chatComposerHeight.value = event.nativeEvent.layout.height; }}>
                 <View testID="composer-content">
@@ -803,10 +869,11 @@ function AppContent() {
                         {Platform.OS !== 'ios' && <Text pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                           onLayout={event => setInputHeight(Math.max(44, Math.min(132, Math.ceil(event.nativeEvent.layout.height))))}
                           style={[styles.composerInputMeasure, styles.composerInput]}>{draft ? `${draft}${draft.endsWith('\n') ? '\u200b' : ''}` : ' '}</Text>}
-                        <TextInput ref={inputRef} accessibilityLabel="输入消息…" placeholder="输入消息…" placeholderTextColor={muted} value={draft} onChangeText={setText}
+                        <TextInput ref={inputRef} pointerEvents={sequentialPanelOpen ? 'none' : 'auto'} accessibilityElementsHidden={sequentialPanelOpen} accessibilityLabel="输入消息…" placeholder="输入消息…" placeholderTextColor={muted} value={draft} onChangeText={setText}
                           onPressIn={() => { if (nativePanelAvailable && nativePanelMode.current === 'panel') openSystemKeyboard(); }}
-                          onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy && !uncertain} multiline maxLength={16000}
+                          onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !sequentialPanel.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy && !uncertain} multiline maxLength={16000}
                           style={[styles.composerInput, Platform.OS === 'ios' ? { minHeight: 44, maxHeight: 132, color: ink } : { height: inputHeight, color: ink }]} />
+                        {sequentialPanelOpen && <Pressable accessibilityRole="button" accessibilityLabel="切换到键盘" style={StyleSheet.absoluteFill} onPress={openSystemKeyboard} />}
                         </View>
                         <View style={styles.composerEmoji}>
                           <Button disabled={panelBusy} accessibilityLabel={emojiOpen && panelKind === 'stickers' ? '键盘' : '表情'} size="circle" variant="ghost"
