@@ -60,7 +60,7 @@ plist['ETCommitHash'] = commit_hash
 with open(path, 'wb') as handle:
     plistlib.dump(plist, handle, sort_keys=False)
 PY
-    echo "已写入 CFBundleVersion=$BUILD_NUMBER、ETCommitHash=$COMMIT_HASH -> $EXPO_PLIST_PATH"
+    echo "已写入 CFBundleVersion=${BUILD_NUMBER}、ETCommitHash=${COMMIT_HASH} -> $EXPO_PLIST_PATH"
     exit 0
 fi
 

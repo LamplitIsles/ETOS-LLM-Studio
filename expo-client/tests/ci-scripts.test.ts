@@ -198,6 +198,9 @@ function harness(fn: (harness: Harness) => void, options: { platform?: string } 
 
     const baseEnv: NodeJS.ProcessEnv = {
       NODE_ENV: 'test',
+      // macOS 的 /bin/sh 在 UTF-8 locale 下会把紧邻变量的非 ASCII 字符并入变量名；测试显式设置该环境。
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
       PATH: `${bin}:/usr/bin:/bin`,
       HOME: join(root, 'home'),
       CI_PRIMARY_REPOSITORY_PATH: root,
