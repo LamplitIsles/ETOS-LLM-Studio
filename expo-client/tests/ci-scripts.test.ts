@@ -75,17 +75,31 @@ const scripts: Record<string, string> = {
     'fi',
     'exit "${FAKE_SHASUM_STATUS:-0}"',
   ].join('\n') + '\n',
-  gem: 'echo "gem $*" >> "$CALLS"\nexit "${FAKE_GEM_STATUS:-0}"\n',
-  ruby: 'echo "ruby $*" >> "$CALLS"\nprintf "%s\\n" "$USER_GEM_HOME"\n',
-  uname: 'echo "uname $*" >> "$CALLS"\necho "${FAKE_UNAME:-arm64}"\n',
-  pod: [
-    'echo "pod $*" >> "$CALLS"',
+  gem: 'echo "unexpected PATH gem $*" >> "$CALLS"\nexit 99\n',
+  ruby: [
     'case "$1" in',
-    '  --version) echo "${FAKE_POD_VERSION:-1.17.0}" ;;',
-    '  install) exit "${FAKE_POD_INSTALL_STATUS:-0}" ;;',
+    '  -e)',
+    '    echo "ruby check $3 $4" >> "$CALLS"',
+    '    if [ "$3" = "json" ] && [ "${FAKE_MISSING_JSON:-0}" = 1 ] && [ ! -f "$FAKE_TOOLS/installed-json" ]; then exit 1; fi',
+    '    if [ "$3" = "cocoapods" ] && [ "${FAKE_MISSING_POD:-0}" = 1 ] && [ ! -f "$FAKE_TOOLS/installed-pod" ]; then exit 1; fi',
+    '    ;;',
+    '  -S)',
+    '    echo "ruby $*" >> "$CALLS"',
+    '    if [ "${FAKE_GEM_STATUS:-0}" != 0 ]; then exit "$FAKE_GEM_STATUS"; fi',
+    '    case "$*" in *json:*) touch "$FAKE_TOOLS/installed-json" ;; *cocoapods:*) touch "$FAKE_TOOLS/installed-pod" ;; esac',
+    '    ;;',
+    '  *)',
+    '    runner="$1"; shift',
+    '    case "$runner" in */ci_scripts/expo_pod.rb) ;; *) exit 98 ;; esac',
+    '    echo "ruby pod $*" >> "$CALLS"',
+    '    if [ "${FAKE_RUNNER_STATUS:-0}" != 0 ]; then exit "$FAKE_RUNNER_STATUS"; fi',
+    '    case "$2" in --version) echo "$1" ;; install) exit "${FAKE_POD_INSTALL_STATUS:-0}" ;; esac',
+    '    ;;',
     'esac',
     'exit 0',
   ].join('\n') + '\n',
+  uname: 'echo "uname $*" >> "$CALLS"\necho "${FAKE_UNAME:-arm64}"\n',
+  pod: 'echo "unexpected PATH pod $*" >> "$CALLS"\nexit 99\n',
 };
 
 type Harness = {
@@ -122,7 +136,7 @@ function harness(fn: (harness: Harness) => void, options: { platform?: string } 
     assert.equal(packed.status, 0, packed.stderr);
 
     mkdirSync(join(root, 'ci_scripts'), { recursive: true });
-    for (const script of ['ci_post_clone.sh', 'ci_pre_xcodebuild.sh']) {
+    for (const script of ['ci_post_clone.sh', 'ci_pre_xcodebuild.sh', 'expo_pod.rb']) {
       cpSync(join(ciScripts, script), join(root, 'ci_scripts', script));
       chmodSync(join(root, 'ci_scripts', script), 0o755);
     }
@@ -149,7 +163,6 @@ function harness(fn: (harness: Harness) => void, options: { platform?: string } 
       FAKE_NODE_TARBALL: tarball,
       FAKE_EXPECTED_SHA: sha256[platform as keyof typeof sha256],
       EXPECTED_NODE_BIN: join(nodePath, 'bin'),
-      USER_GEM_HOME: join(root, 'user-gems'),
     };
     fn({
       root,
@@ -187,11 +200,12 @@ test('post-clone prepares pinned Node/npm, the lockfile and Pods for the Expo sc
     'shasum -a 256 -c -',
     'npm install -g npm@12.0.2 --prefix ' + join(h.tools, 'npm-12.0.2') + ' (NODE_USE_ENV_PROXY=1)',
     'npm ci (NODE_USE_ENV_PROXY=1)',
-    'pod --version',
+    'ruby check json 2.7.1',
+    'ruby check cocoapods 1.17.0',
     'node --version',
     'npm --version (NODE_USE_ENV_PROXY=1)',
-    'pod --version',
-    'pod install --deployment',
+    'ruby pod 1.17.0 --version',
+    'ruby pod 1.17.0 install --deployment',
   ]);
   assert.equal(readFileSync(join(h.root, 'expo-client/ios/.xcode.env.local'), 'utf8'),
     `export NODE_BINARY=${join(h.nodePath, 'bin/node')}\n`);
@@ -203,7 +217,7 @@ test('npm bootstrap runs with the downloaded Node although the image has no syst
   const result = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: expoScheme });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(h.calls().includes('npm install -g npm@12.0.2 --prefix ' + join(h.tools, 'npm-12.0.2') + ' (NODE_USE_ENV_PROXY=1)'), h.calls().join('\n'));
-  assert.equal(h.calls().at(-1), 'pod install --deployment');
+  assert.equal(h.calls().at(-1), 'ruby pod 1.17.0 install --deployment');
 }));
 
 test('x86_64 hosts install the darwin-x64 toolchain with its own checksum', () => harness(h => {
@@ -221,13 +235,25 @@ test('an unsupported host architecture stops before downloading anything', () =>
   assert.deepEqual(h.calls(), ['uname -m', 'uname -m']);
 }));
 
-test('post-clone installs the locked CocoaPods only when the image version differs', () => harness(h => {
-  const result = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: expoScheme, FAKE_POD_VERSION: '1.16.2' });
+test('post-clone installs missing gems using the same Ruby before invoking CocoaPods', () => harness(h => {
+  const result = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: expoScheme, FAKE_MISSING_JSON: '1', FAKE_MISSING_POD: '1' });
   assert.equal(result.status, 0, result.stderr);
   const calls = h.calls();
-  assert.ok(calls.includes('gem install --no-document --user-install cocoapods:1.17.0'), calls.join('\n'));
-  assert.equal(calls.at(-1), 'pod install --deployment');
+  const jsonInstall = calls.indexOf('ruby -S gem install --no-document --user-install json:2.7.1');
+  const podCheck = calls.indexOf('ruby check cocoapods 1.17.0');
+  assert.ok(jsonInstall >= 0 && podCheck > jsonInstall, calls.join('\n'));
+  assert.ok(calls.includes('ruby -S gem install --no-document --user-install cocoapods:1.17.0'), calls.join('\n'));
+  assert.equal(calls.at(-1), 'ruby pod 1.17.0 install --deployment');
 }));
+
+test('gem installation and CocoaPods startup failures stop before deployment', () => {
+  for (const env of [{ FAKE_MISSING_JSON: '1', FAKE_GEM_STATUS: '7' },
+    { FAKE_MISSING_POD: '1', FAKE_GEM_STATUS: '7' }, { FAKE_RUNNER_STATUS: '7' }]) harness(h => {
+    const result = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: expoScheme, ...env });
+    assert.equal(result.status, 7, h.calls().join('\n'));
+    assert.ok(!h.calls().some(line => line.includes('install --deployment')), h.calls().join('\n'));
+  });
+});
 
 test('legacy Swift schemes run no Expo dependency preparation', () => harness(h => {
   const result = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: 'ETOS LLM Studio Cloud' });
@@ -246,13 +272,13 @@ test('a Node tarball whose checksum differs from the pinned value stops before n
 test('npm and pod failures fail the preparation instead of continuing', () => harness(h => {
   const npmFailure = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: expoScheme, FAKE_NPM_CI_FAIL: '1' });
   assert.notEqual(npmFailure.status, 0);
-  assert.equal(h.calls().filter(line => line.startsWith('pod ')).length, 0, h.calls().join('\n'));
+  assert.equal(h.calls().filter(line => line.startsWith('ruby ')).length, 0, h.calls().join('\n'));
 }));
 
 test('pod install failure fails the preparation', () => harness(h => {
   const result = h.run('ci_post_clone.sh', { CI_XCODE_SCHEME: expoScheme, FAKE_POD_INSTALL_STATUS: '1' });
   assert.notEqual(result.status, 0);
-  assert.equal(h.calls().at(-1), 'pod install --deployment');
+  assert.equal(h.calls().at(-1), 'ruby pod 1.17.0 install --deployment');
 }));
 
 test('pre-xcodebuild stamps the Expo plist with the CI build number and commit only', () => harness(h => {

@@ -21,7 +21,13 @@
 
 两个脚本都按 scheme 名显式分派。`ci_post_clone.sh` 只服务 Expo 开发壳，非 Expo scheme 直接零动作；`ci_pre_xcodebuild.sh` 的 Expo 分支提前退出，其他 scheme 继续走原有 Swift 路径（扩展本地化检查与 `ETCommitHash` 写入）。
 
-- `ci_scripts/ci_post_clone.sh`：仅当 `CI_XCODE_SCHEME` 为 `ETOSExpo Dev Archive` 时执行。按 `uname -m` 选择官方 Node 24.18.1 tarball（`arm64` → `darwin-arm64`，`x86_64` → `darwin-x64`，各自独立 SHA256；其他架构直接失败），校验摘要并解压，先把下载的 Node 加入 `PATH` 再自装 npm 12.0.2（官方 npm 的 shebang 是 `env node`，冷启动镜像可能没有 system Node）。随后导出 `NODE_USE_ENV_PROXY=1`，让 npm 与安装脚本（含 enriched-markdown 的原生资产下载）遵循镜像提供的 `HTTP(S)_PROXY`，不放宽 TLS 校验；写入 `expo-client/ios/.xcode.env.local` 的 `NODE_BINARY`（Xcode 构建阶段不继承脚本 PATH），在 `expo-client` 执行 `npm ci`（保留受许可的安装脚本），再按 `Podfile.lock` 记录的 CocoaPods 版本准备 Pods：镜像预装版本一致时直接复用，不一致时才用用户 gem 安装该精确版本，最后 `pod install --deployment`（锁与 Podfile 不一致时失败，不改写锁）。脚本打印实际 Node/npm/CocoaPods 版本；任何一步失败都会终止构建。
+- `ci_scripts/ci_post_clone.sh`：仅当 `CI_XCODE_SCHEME` 为 `ETOSExpo Dev Archive` 时执行。按 `uname -m` 选择官方 Node 24.18.1 tarball（`arm64` → `darwin-arm64`，`x86_64` → `darwin-x64`，各自独立 SHA256；其他架构直接失败），校验摘要并解压，先把下载的 Node 加入 `PATH` 再自装 npm 12.0.2（官方 npm 的 shebang 是 `env node`，冷启动镜像可能没有 system Node）。随后导出 `NODE_USE_ENV_PROXY=1`，让 npm 与安装脚本（含 enriched-markdown 的原生资产下载）遵循镜像提供的 `HTTP(S)_PROXY`，不放宽 TLS 校验；写入 `expo-client/ios/.xcode.env.local` 的 `NODE_BINARY`（Xcode 构建阶段不继承脚本 PATH），在 `expo-client` 执行 `npm ci`（保留受许可的安装脚本）。脚本选定 PATH 中的 Ruby，用它检查并在缺失时安装 JSON 2.7.1 与 `Podfile.lock` 的 CocoaPods 版本；`expo_pod.rb` 在同一 Ruby 进程先激活 JSON，再载入该版本的 CocoaPods，避免 `pod` 的 shebang 指向另一 Ruby。最后保留 `pod install --deployment`；Ruby 不兼容或 gem 无法安装时构建失败，不自动安装另一套 Ruby。
+
+- `package.json` 使用 Expo autolinking 的 `ios.buildFromSource` 将 `expo-modules-core` 切换为源码构建。原先预编译 podspec 的 `source.http` 和 `prepare_command` 包含本机绝对路径；隔离测试中生成的源码 podspec 不再包含测试根路径。预编译管线中受依赖级联影响的 Expo 模块回退源码，ExpoModulesJSI 仍以 xcframework 引用；新增 `libwebp`、`SDWebImage` 和 `SDWebImageWebPCoder`，最终安装 133 个 Podfile 依赖、136 个 Pods；React Native Core、Dependencies 和 Hermes 仍使用预编译制品。源码构建的实际编译耗时尚未测量。Cloud 日志的 121 项 checksum 差异中，120 项可由 JSON 空集合格式复现，最后一项还包含上述路径差异。
+
+- `npm run ios:prepare` 通过同一入口运行本地 PATH 上的 Ruby；所选 Ruby 必须能加载 JSON 2.7.1 和 `Podfile.lock` 中指定的 CocoaPods 版本，安装在哪个 `pod` 的 shebang 所指 Ruby 并不足以证明 PATH 上的 Ruby 能加载它们。已验证 Ruby 3.3.0、JSON 2.7.1、CocoaPods 1.17.0；其他 Ruby 的兼容性未验证。本地入口会运行 prebuild 并改写生成物，必要的新 gem 或依赖安装须先取得授权。
+
+- 本次在 Mac Xcode 26.6 下使用上述 Ruby/gem，在两个不同绝对路径的隔离环境生成并验证相同锁，两个路径的 `pod install --deployment` 均通过；第二个路径的 132 份本地 podspec 的 SHA-1 均与锁匹配，且不含该测试根路径。两次 CocoaPods 生成的工程和隐私清单也逐字一致，已纳入仓库。测试未运行构建或真实 Cloud；源码编译、Cloud 镜像 Ruby 的兼容性和 Cloud 归档仍待实际验证。合成脚本测试只验证命令分派和失败传播；严格锁也不证明所有下载制品的完整性、签名或生产发布已验证。
 - `ci_scripts/ci_pre_xcodebuild.sh`：Expo scheme 分支要求正整数 `CI_BUILD_NUMBER`（拒绝空值、`0` 与前导 0）与非空 `CI_COMMIT`，把 `CFBundleVersion` 写成该构建号、`ETCommitHash` 写成完整小写 40 位提交，并跳过旧 Swift 的扩展本地化检查。旧 Swift scheme 仍执行原有本地化检查，并在缺少 `CI_COMMIT` 时回落到 `LocalBuild`。
 
 ### 本地归档入口
@@ -52,8 +58,8 @@
 ## 未验证与执行边界
 
 - 本仓库只提供接线、入口和上述步骤；Cloud workflow 修改、触发构建、上传处理、测试组、外部审核与真机安装都需单独授权并实际执行。
-- Mac 已核对（现有 checkout，候选源码）：`npm run typecheck` 通过，合成测试通过（Node 23/23、Python 7/7），`npm run ios:prepare` 成功（133 pods，随后 `pod install --deployment` 亦通过），根 workspace 能列出 `ETOSExpo`/`ETOSExpo Dev Archive` 两个 scheme 与 `ETOSInputArea`，`showBuildSettings` 得到 `PRODUCT_NAME=ETOSChat`、`FULL_PRODUCT_NAME=ETOSChat.app`、`PRODUCT_BUNDLE_IDENTIFIER=io.guion.etos.cfl4960`，`describeAllArchivableProducts` 的产品 bundle/team 正确。
-- 本地归档已按本入口实际执行一次（用户批准，Xcode 26.6）：`npm run ios:archive` 归档成功，产出固定的 `expo-client/build/ETOSExpo-dev.xcarchive`（约 363 MiB）。包内 `ETOSChat.app` 未签名、arm64，`CFBundleIdentifier=io.guion.etos.cfl4960`、`CFBundleDisplayName=ETOS Chat`、`CFBundleShortVersionString=2.0.0`、`CFBundleVersion=1`（本地默认值，不是 ASC 可用号，本地未运行 Cloud stamp 所以没有 `ETCommitHash`）；Info.plist 保留本地网络使用说明与 `NSBonjourServices=_expo._tcp`，主可执行含 `EXDevLauncher`，没有 `main.jsbundle`（Debug 不内嵌 JS）。这只证明 Debug 开发壳能在本地归档，不证明能启动、不证明 Cloud stamp/签名/上传或 TestFlight。
-- 未验证：Cloud 首次构建、Cloud 入口的自动签名状态与 App Store 分发签名结果（仓库工程没有 `CODE_SIGN_STYLE`/`ProvisioningStyle`，`CODE_SIGN_IDENTITY` 仍是 `iPhone Developer`）、Apple 对 Debug 开发客户端的上传校验、Beta App Review、TestFlight 安装与启动、设备上的局域网发现、可达 Metro 与 Fast Refresh；本地归档的产物未安装也未启动。
+- 历史验证（在本次 Expo 源码构建及锁更新之前）：Mac 现有 checkout 的 `npm run typecheck`、当时的合成测试和 `npm run ios:prepare` 通过；根 workspace 能列出两个 scheme 和 `ETOSInputArea`，`showBuildSettings` 及 `describeAllArchivableProducts` 的产品标识与团队正确。这些结果不证明当前锁和依赖配置的构建通过。
+- 历史本地归档（在本次锁更新之前，用户批准，Xcode 26.6）：`npm run ios:archive` 曾成功生成未签名的 Debug 开发壳，包含 `EXDevLauncher`，不内嵌 JS。该产物未安装或启动；不能用它证明当前源码构建、Cloud stamp/签名/上传或 TestFlight。
+- 未验证：本次修复后的 Cloud 构建、Cloud 入口的自动签名状态与 App Store 分发签名结果（仓库工程没有 `CODE_SIGN_STYLE`/`ProvisioningStyle`，`CODE_SIGN_IDENTITY` 仍是 `iPhone Developer`）、Apple 对 Debug 开发客户端的上传校验、Beta App Review、TestFlight 安装与启动、设备上的局域网发现、可达 Metro 与 Fast Refresh；本地归档的产物未安装也未启动。修复前的 Cloud Build 8 曾因 Podspec checksum 不一致而失败。
 - TestFlight 每个 build 最多可用 90 天，过期后需重新构建分发；这不代表 App Store 正式上架。
 - 历史记录中的临时开发身份（独立 Expo Bundle ID）已被撤销，仅作历史；现流程只使用 ETOS Chat 身份。

@@ -62,12 +62,12 @@ voice input remains out of scope. The system camera uses `expo-image-picker`;
 Expo modules and these direct dependencies are MIT-licensed. Their dependency
 trees have additional license notices; retain applicable notices when distributing.
 Camera WebP preparation uses the already-installed MIT `expo-image-manipulator`
-58.0.16. Its iOS podspec depends on `SDWebImageWebPCoder` (MIT), whose upstream
-podspec also depends on libwebp; preserve the applicable [libwebp license](https://github.com/webmproject/libwebp/blob/main/COPYING)
-and [patent grant](https://github.com/webmproject/libwebp/blob/main/PATENTS)
-and the resolved pods' notices in distribution. No new module was added; the
-installed device binary must already include this native module and its WebP
-coder. The exact pods in that binary and on-device encoding are not verified here.
+58.0.16. Its source-built iOS pod resolves `SDWebImageWebPCoder` 0.15.0 and
+`SDWebImage` 5.21.7 (MIT), plus libwebp 1.6.0 (BSD 3-Clause). Their notices
+and the libwebp patent grant are recorded in [third-party notices](../docs/THIRD_PARTY_NOTICES.md);
+provide the applicable notices with distributions. Two isolated CocoaPods
+installs verified these versions in the lock, not in a built or installed
+binary. On-device encoding remains unverified.
 
 ## FlashList timeline primitive
 

@@ -12,7 +12,7 @@ controller; it does not depend on a bundled chat UI framework.
 
 项目已为 npm 12 授权固定版本 `react-native-enriched-markdown@1.2.0-nightly-20261109-ca015bcac` 所需的安装脚本。使用环境代理下载该库的原生资源时，Node 需启用环境代理，可运行 `NODE_USE_ENV_PROXY=1 npm ci`。
 
-首次或原生工程需要更新时运行 `npm run ios:prepare`：生成 iOS 工程并使用当前 Ruby 用户目录中已有的 CocoaPods 安装 Pods，不清理缓存。Pods 与 pod 生成的 `ios/ETOSExpo.xcworkspace` 不纳入版本控制，新 clone 必须先执行一次。日常在 Mac 上运行 `npm run dev`，让 iPhone 与 Mac 连接同一 WiFi，打开已安装的开发版 App。JS 和界面改动可热重载；原生依赖、配置或原生代码变化时先按需 prepare，再运行 `npm run ios:build` 检查未签名构建。
+首次或原生工程需要更新时运行 `npm run ios:prepare`：生成 iOS 工程，再使用 PATH 中的 Ruby 安装 Pods，不清理缓存。该 Ruby 必须能加载 JSON 2.7.1 和 `Podfile.lock` 指定的 CocoaPods 版本；已有 `pod` 命令的 shebang 不会决定本入口使用的 Ruby。Pods 与 pod 生成的 `ios/ETOSExpo.xcworkspace` 不纳入版本控制，新 clone 必须先执行一次。日常在 Mac 上运行 `npm run dev`，让 iPhone 与 Mac 连接同一 WiFi，打开已安装的开发版 App。JS 和界面改动可热重载；原生依赖、配置或原生代码变化时先按需 prepare，再运行 `npm run ios:build` 检查未签名构建。
 
 `npm run ios:build` 执行耗时的未签名编译；用户之后在 Mac 本机运行 `npm run ios:install` 仅签名已有 Debug 产物并安装到唯一已配对、开启开发者模式的 iPhone，不重新编译，安装后不启动 App。若缺少匹配此 App、设备和证书的开发描述文件，请先在 Mac Xcode 中准备开发签名，再运行安装命令。多台时使用 `npm run ios:install -- --device <identifier>`。若安装结果不明，先在设备上核对，再运行 `npm run ios:install:ack` 确认；如需重试，另行运行安装命令。Expo 构建使用 ETOS Chat 既有身份（bundle `io.guion.etos.cfl4960`、团队 `RL5WAW5828`），会替换设备上同一 ID 的旧原生 ETOS Chat；安装前由用户自行卸载旧原生版本，仓库不提供卸载、清理或数据迁移。
 
@@ -20,7 +20,7 @@ controller; it does not depend on a bundled chat UI framework.
 
 需要脱离 Metro 的本地版本时，运行 `npm run ios:build:release` 构建未签名 Release；用户可在 Mac 本机运行 `npm run ios:install:release` 签名已有 Release 产物并安装，不重新编译（多台设备同样可加 `-- --device <identifier>`）。Release 内嵌生产 JS 和资源，安装后无需 Metro，真实聊天仍需连接网络。它与 Debug 使用相同的 `io.guion.etos.cfl4960` bundle ID，会替换同一 App 的现有安装。此本地签名安装受开发签名有效期限制，不等同于 App Store 分发；OTA 更新尚未上线，不是此流程的前提。安装结果不明时 Debug 和 Release 共用上述确认流程。
 
-构建产物名由 app config 的 `name` 派生为 `ETOSChat.app`，工程目录与 target 仍是 `ETOSExpo`；`ios:build`、`ios:install` 与 `ios:archive` 都按这个产物名取用。构建复用既有 `~/Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe`；如需指定另一个**已有**目录，设置 `ETOS_DERIVED_DATA`。默认签名 Team 为 `RL5WAW5828`，可用 `ETOS_DEVELOPMENT_TEAM` 覆盖。Mac 已完成 Expo iOS 原生未签名构建；真实登录和设备交互仍待验证。
+构建产物名由 app config 的 `name` 派生为 `ETOSChat.app`，工程目录与 target 仍是 `ETOSExpo`；`ios:build`、`ios:install` 与 `ios:archive` 都按这个产物名取用。构建复用既有 `~/Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe`；如需指定另一个**已有**目录，设置 `ETOS_DERIVED_DATA`。默认签名 Team 为 `RL5WAW5828`，可用 `ETOS_DEVELOPMENT_TEAM` 覆盖。Mac 曾在本次依赖锁更新前完成 Expo iOS 原生未签名构建；当前依赖配置的构建、真实登录和设备交互仍待验证。
 
 ## Development
 

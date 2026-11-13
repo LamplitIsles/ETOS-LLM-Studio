@@ -28,7 +28,6 @@ function fixture(fn: (f: { root: string; calls: { command: string; args: string[
   const calls: { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }[] = [];
   const fake: Run = (command, args, cwd, env) => {
     calls.push({ command, args, cwd, env });
-    if (command === 'gem') return '/fake/user-gems\n';
     if (command === 'python3') {
       assert.deepEqual(JSON.parse(readFileSync(args[args.indexOf('--device-file') + 1], 'utf8')), { udid: 'fake-udid' });
     }
@@ -37,17 +36,24 @@ function fixture(fn: (f: { root: string; calls: { command: string; args: string[
     }
     return '';
   };
+  mkdirSync(join(root, 'ios'), { recursive: true });
+  writeFileSync(join(root, 'ios/Podfile.lock'), 'COCOAPODS: 1.17.0\n');
   try { fn({ root, calls, fake, execute: (action, runner = fake, configuration = 'Debug') => ios(action, { root, env: { NODE_ENV: 'test', SKIP_BUNDLING: '1', ETOS_DERIVED_DATA: root, ETOS_DEVELOPMENT_TEAM: 'CUSTOM' }, run: runner, configuration }) }); }
   finally { rmSync(root, { recursive: true, force: true }); }
 }
 
-test('prepare explicitly generates without cleaning then uses existing user CocoaPods', () => fixture(({ root, calls, execute }) => {
+test('prepare generates without cleaning then uses the locked CocoaPods through the JSON-pinned runner', () => fixture(({ root, calls, execute }) => {
   execute('prepare');
   assert.deepEqual(calls.map(c => [c.command, c.args, c.cwd]), [
     [join(root, 'node_modules/.bin/expo'), ['prebuild', '--platform', 'ios', '--no-install', '--no-clean'], root],
-    ['gem', ['environment', 'user_gemhome'], root],
-    ['/fake/user-gems/bin/pod', ['install'], join(root, 'ios')],
+    ['ruby', [join(root, '../ci_scripts/expo_pod.rb'), '1.17.0', 'install'], join(root, 'ios')],
   ]);
+}));
+
+test('prepare rejects a missing CocoaPods version instead of invoking pod', () => fixture(({ root, calls, execute }) => {
+  writeFileSync(join(root, 'ios/Podfile.lock'), 'PODS: []\n');
+  assert.throws(() => execute('prepare'), /无法从 Podfile.lock/);
+  assert.equal(calls.length, 1);
 }));
 
 test('unsigned build and install sign the existing Debug app without compiling', () => fixture(({ root, calls, execute }) => {

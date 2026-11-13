@@ -1,5 +1,6 @@
 .expo/
 dist/
+__pycache__/
 !package-lock.json
 /.ios-install-unknown.json
 

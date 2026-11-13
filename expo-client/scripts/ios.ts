@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 
 export type Run = (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, capture?: boolean) => string;
 export const run: Run = (command, args, cwd, env, capture = false) => {
@@ -51,9 +51,10 @@ export function ios(action: 'prepare' | 'build' | 'install' | 'acknowledge' | 'a
   }
   if (action === 'prepare') {
     run(join(root, 'node_modules/.bin/expo'), ['prebuild', '--platform', 'ios', '--no-install', '--no-clean'], root, env);
-    const gemHome = run('gem', ['environment', 'user_gemhome'], root, env, true).trim();
-    if (!isAbsolute(gemHome)) throw new Error('无法确定 Ruby 用户 gem 目录。');
-    run(join(gemHome, 'bin/pod'), ['install'], join(root, 'ios'), env);
+    const lock = readFileSync(join(root, 'ios/Podfile.lock'), 'utf8');
+    const podVersion = /^COCOAPODS: (\S+)\s*$/m.exec(lock)?.[1];
+    if (!podVersion) throw new Error('无法从 Podfile.lock 读取 CocoaPods 版本。');
+    run('ruby', [join(root, '../ci_scripts/expo_pod.rb'), podVersion, 'install'], join(root, 'ios'), env);
     return;
   }
   if (action === 'install' && existsSync(marker)) {

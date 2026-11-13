@@ -2,6 +2,13 @@
   "name": "etos-expo-chat",
   "version": "0.1.0",
   "private": true,
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "buildFromSource": ["expo-modules-core"]
+      }
+    }
+  },
   "main": "index.js",
   "scripts": {
     "postinstall": "node scripts/patch-enriched-markdown.mjs",

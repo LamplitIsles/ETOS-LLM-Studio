@@ -66,24 +66,26 @@ printf 'export NODE_BINARY=%s\n' "$NODE_PATH/bin/node" > "$IOS_PATH/.xcode.env.l
 cd "$CLIENT_PATH"
 npm ci
 
-# CocoaPods 由镜像预装；只有预装版本与 Podfile.lock 不一致时才安装锁定版本。
+# 选定一个 Ruby，所有 gem 操作和 pod 都由它运行；pod 自身的 shebang 可能指向其他 Ruby。
 REQUIRED_POD_VERSION="$(sed -n 's/^COCOAPODS: //p' "$IOS_PATH/Podfile.lock")"
 if [ -z "$REQUIRED_POD_VERSION" ]; then
     echo "无法从 $IOS_PATH/Podfile.lock 读取 CocoaPods 版本" >&2
     exit 1
 fi
-INSTALLED_POD_VERSION=""
-if command -v pod >/dev/null 2>&1; then
-    INSTALLED_POD_VERSION="$(pod --version)"
-fi
-if [ "$INSTALLED_POD_VERSION" != "$REQUIRED_POD_VERSION" ]; then
-    echo "镜像 CocoaPods（${INSTALLED_POD_VERSION:-未安装}）与锁定的 $REQUIRED_POD_VERSION 不一致，安装该版本。"
-    gem install --no-document --user-install "cocoapods:$REQUIRED_POD_VERSION"
-    export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
-fi
+RUBY="$(command -v ruby)" || { echo "找不到 Ruby，无法运行 CocoaPods" >&2; exit 1; }
+for gem_version in "json:2.7.1" "cocoapods:$REQUIRED_POD_VERSION"; do
+    gem_name="${gem_version%%:*}"
+    version="${gem_version#*:}"
+    if ! "$RUBY" -e 'gem ARGV.fetch(0), "= #{ARGV.fetch(1)}"' "$gem_name" "$version" >/dev/null 2>&1; then
+        echo "为选定 Ruby 安装 $gem_name $version"
+        "$RUBY" -S gem install --no-document --user-install "$gem_version"
+    fi
+done
 
-echo "Node $(node --version)，npm $(npm --version)，CocoaPods $(pod --version)"
+POD_RUNNER="$ROOT_PATH/ci_scripts/expo_pod.rb"
+echo "Node $(node --version)，npm $(npm --version)"
+"$RUBY" "$POD_RUNNER" "$REQUIRED_POD_VERSION" --version
 
 # 云端必须严格使用已提交的 Podfile.lock，锁与 Podfile 不一致时失败而不是改写。
 cd "$IOS_PATH"
-pod install --deployment
+"$RUBY" "$POD_RUNNER" "$REQUIRED_POD_VERSION" install --deployment
