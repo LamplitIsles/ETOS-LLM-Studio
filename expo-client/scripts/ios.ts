@@ -54,7 +54,7 @@ export function ios(action: 'prepare' | 'build' | 'install' | 'acknowledge' | 'a
     const lock = readFileSync(join(root, 'ios/Podfile.lock'), 'utf8');
     const podVersion = /^COCOAPODS: (\S+)\s*$/m.exec(lock)?.[1];
     if (!podVersion) throw new Error('无法从 Podfile.lock 读取 CocoaPods 版本。');
-    run('ruby', [join(root, '../ci_scripts/expo_pod.rb'), podVersion, 'install'], join(root, 'ios'), env);
+    run(join(root, '../ci_scripts/expo_pod.sh'), ['local', join(root, '.expo/etos-ruby-tools'), podVersion, 'install'], join(root, 'ios'), env);
     return;
   }
   if (action === 'install' && existsSync(marker)) {

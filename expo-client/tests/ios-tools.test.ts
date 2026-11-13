@@ -46,7 +46,7 @@ test('prepare generates without cleaning then uses the locked CocoaPods through 
   execute('prepare');
   assert.deepEqual(calls.map(c => [c.command, c.args, c.cwd]), [
     [join(root, 'node_modules/.bin/expo'), ['prebuild', '--platform', 'ios', '--no-install', '--no-clean'], root],
-    ['ruby', [join(root, '../ci_scripts/expo_pod.rb'), '1.17.0', 'install'], join(root, 'ios')],
+    [join(root, '../ci_scripts/expo_pod.sh'), ['local', join(root, '.expo/etos-ruby-tools'), '1.17.0', 'install'], join(root, 'ios')],
   ]);
 }));
 
@@ -54,6 +54,16 @@ test('prepare rejects a missing CocoaPods version instead of invoking pod', () =
   writeFileSync(join(root, 'ios/Podfile.lock'), 'PODS: []\n');
   assert.throws(() => execute('prepare'), /无法从 Podfile.lock/);
   assert.equal(calls.length, 1);
+}));
+
+test('prepare propagates a locked dependency or CocoaPods startup failure', () => fixture(({ root, calls, execute, fake }) => {
+  const failing: Run = (command, args, cwd, env) => {
+    fake(command, args, cwd, env);
+    if (command === join(root, '../ci_scripts/expo_pod.sh')) throw new Error('locked dependencies unavailable');
+    return '';
+  };
+  assert.throws(() => execute('prepare', failing), /locked dependencies unavailable/);
+  assert.deepEqual(calls.map(call => call.command), [join(root, 'node_modules/.bin/expo'), join(root, '../ci_scripts/expo_pod.sh')]);
 }));
 
 test('unsigned build and install sign the existing Debug app without compiling', () => fixture(({ root, calls, execute }) => {

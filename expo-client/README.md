@@ -12,7 +12,11 @@ controller; it does not depend on a bundled chat UI framework.
 
 项目已为 npm 12 授权固定版本 `react-native-enriched-markdown@1.2.0-nightly-20261109-ca015bcac` 所需的安装脚本。使用环境代理下载该库的原生资源时，Node 需启用环境代理，可运行 `NODE_USE_ENV_PROXY=1 npm ci`。
 
-首次或原生工程需要更新时运行 `npm run ios:prepare`：生成 iOS 工程，再使用 PATH 中的 Ruby 安装 Pods，不清理缓存。该 Ruby 必须能加载 JSON 2.7.1 和 `Podfile.lock` 指定的 CocoaPods 版本；已有 `pod` 命令的 shebang 不会决定本入口使用的 Ruby。Pods 与 pod 生成的 `ios/ETOSExpo.xcworkspace` 不纳入版本控制，新 clone 必须先执行一次。日常在 Mac 上运行 `npm run dev`，让 iPhone 与 Mac 连接同一 WiFi，打开已安装的开发版 App。JS 和界面改动可热重载；原生依赖、配置或原生代码变化时先按需 prepare，再运行 `npm run ios:build` 检查未签名构建。
+首次或原生工程需要更新时，在 `expo-client` 运行 `npm run ios:prepare`。它生成 iOS 工程并安装 Pods，不清理缓存。本地使用 `PATH` 中选定的 Ruby 3.3.x；找不到 Ruby 或版本不符时直接失败。脚本不主动修改全局 Ruby、mise 或其他项目。
+
+首次准备 gem 需要联网并占用磁盘，依赖和缓存写入此工作区的 `.expo/etos-ruby-tools`；依赖齐全时复用缓存，缺失时重新安装。gem 和 Bundler 环境只作用于准备 Pods 的子进程。
+
+Cloud 通过 Homebrew 查找 `ruby@3.3`，缺失时安装，再在 CI 工具目录准备同一锁的依赖。Homebrew 的 patch 版本可能变化；Cloud 的 Ruby 安装、权限和实际构建尚未验证。入口使用一个 Ruby 进程加载锁定依赖与 JSON 2.7.1；Cloud 的默认 JSON 版本及其与锁的组合尚未实测。Pods 与 pod 生成的 `ios/ETOSExpo.xcworkspace` 不纳入版本控制，新 clone 必须先执行一次。日常在 Mac 上运行 `npm run dev`，让 iPhone 与 Mac 连接同一 WiFi，打开已安装的开发版 App。JS 和界面改动可热重载；原生依赖、配置或原生代码变化时先按需 prepare，再运行 `npm run ios:build` 检查未签名构建。
 
 `npm run ios:build` 执行耗时的未签名编译；用户之后在 Mac 本机运行 `npm run ios:install` 仅签名已有 Debug 产物并安装到唯一已配对、开启开发者模式的 iPhone，不重新编译，安装后不启动 App。若缺少匹配此 App、设备和证书的开发描述文件，请先在 Mac Xcode 中准备开发签名，再运行安装命令。多台时使用 `npm run ios:install -- --device <identifier>`。若安装结果不明，先在设备上核对，再运行 `npm run ios:install:ack` 确认；如需重试，另行运行安装命令。Expo 构建使用 ETOS Chat 既有身份（bundle `io.guion.etos.cfl4960`、团队 `RL5WAW5828`），会替换设备上同一 ID 的旧原生 ETOS Chat；安装前由用户自行卸载旧原生版本，仓库不提供卸载、清理或数据迁移。
 
