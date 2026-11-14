@@ -142,49 +142,13 @@ the UIKit input view eliminates the separate panel-padding path.
 To validate the candidate in the existing app, use the established Mac
 `npm run ios:prepare`, `npm run ios:build`, then, with a matching device and
 signing, `npm run ios:install`. Reuse the DerivedData path documented by the
-project; do not create another Swift cache. The diagnostic cleanup removes a
-Swift source file; if the existing CocoaPods project still references that
-file, refresh it with `npm run ios:prepare` or the project's existing `pod install`
-flow before rebuilding. The native change requires a rebuilt
-dev binary. Existing 18093 Metro can be reused if reachable and configured for
+project; do not create another Swift cache. This cleanup changes existing Swift
+files without adding or removing a source file; refresh the generated project or
+Pods using the existing workflow if they are stale. The native change requires a
+rebuilt dev binary. Existing 18093 Metro can be reused if reachable and configured for
 the binary; this module starts no service. JS/type tests and autolinking do not
 compile Swift or establish device behavior.
 
 The Fabric mounting pattern follows `expo-glass-effect`'s `GlassContainer`; its
 MIT license is reproduced in `EXPO-LICENSE`. Local podspec source metadata is
 not fetched when Expo autolinking installs this pod from its local path.
-# ETOS #127: Debug sequential focus candidate
-
-This opt-in candidate is for device comparison. It has not been Swift-compiled or device-verified. It keeps the existing single Fabric child and `PanelInputView` ordering, and adds no scroll/inset writer. Existing KCSV and FlashList MVCP are unchanged.
-
-## Build and activation boundary
-
-`supportsSequentialHandoff()` returns true only under `#if DEBUG`; false on Release. It does not activate the behavior. The JS owner must explicitly call `enableSequentialHandoff(panelTag, generation)` on the mounted panel before observing the keyboard. Until then no new responder view is attached and no keyboard observer is installed. The JS wrapper detects missing methods and strips the new event prop for an old binary; Web returns unavailable. Enable only for a deliberate dev-device experiment and retain the existing path otherwise. Existing direct child mount/unmount and the owned-child front-order repair remain in place.
-
-After the UI owner integrates the candidate into the actual app, the existing Mac flow is `cd expo-client`, `npm run ios:build`, then `npm run ios:install`. This modifies existing Swift module files, without a new Pod file; `ios:prepare` is needed only if the existing native project/Pods are stale. Reuse the already documented DerivedData directory; do not create another Swift cache. Installation outcome unknown must be inspected before any retry. Reuse the existing approved Metro; do not start a separate server. The native module alone does not opt the existing App into this candidate. The first-tap/abandon follow-up also edits existing Swift files only; it adds no Pod source or native dependency, so a current generated iOS project does not require another prepare solely for this change.
-
-## JS API and ownership
-
-* `sequentialHandoffAvailable()` is a capability check, not opt-in. `enableSequentialHandoff(panelTag, generation)` returns `enabled` or an error. Install the `KeyboardPanel` `onSequentialHandoff` handler before beginning an operation; events can arrive before the promise resolves. On old native/Web it is omitted.
-* `beginSequentialHandoff({hostTag,panelTag,inputTag,generation,operation,mode,height,current})`: mode is `panel`, `keyboard`, or `dismiss`. Operation is a positive safe integer monotonically increasing for the lifetime of that native host. `current()` checks the React session epoch after every await. `requested` acknowledges dispatch only, not a focus, hide, or show.
-* Sanitized events are `{generation, operation, status}`. Stages include `will_hide`, `did_hide`, `target_focused`, `will_show`, `did_show`, `shown`, `hidden`, `cancelled`, `drained`, `owner_lost`; the bounded fixed values convey neither text nor positions. Each notification stage is reported at most once for a hide/show pass. `sanitizeSequentialEvent` rejects stale generation/operation and all unrecognized values.
-* `cancelSequentialHandoff(panelTag,generation,operation)` and `inspectSequentialHandoff(...)` never retry or take another input's focus. An operation remains `draining` if cancellation or an attempted focus change could have begun a transition and the needed real hide has not been observed. `cancelled` is not a drain acknowledgement; `drained` or inspection after a completed transition is needed before another native request. A transport exception is `unknown`, not permission to repeat.
-* `disableSequentialHandoff(panelTag,generation)` explicitly releases a settled, non-panel-owned experiment and allows the original path; `draining` or `panel_visible` means it has not. Dismiss panel and wait for the real hide first.
-* `firstTapAndAbandonAvailable()` separately detects the newer Debug binary; the previous candidate binary returns false. Following an explicit user decision, `abandonSequentialHandoff(panelTag,generation,operation)` can abandon the matching pending operation or panel owner. It unregisters the candidate observers, invalidates its pending callback and permanently refuses both the new and legacy native panel requests for that native instance. It does **not** change focus or claim any UIKit transition finished. UI may unlock navigation and let the user tap the composer normally; it must not silently remount or retry the panel. A visible panel might remain until UIKit changes focus. If the abandon result is lost, return `unknown` and do not assume it succeeded or automatically repeat it. Actual manual focus and touch behavior still require device testing.
-* `snapshotSequentialHandoff(hostTag,panelTag,inputTag,generation,current)` returns only fixed `focus` (`composer`, `panel`, `fence`, `window`, `other`, `unknown`), `visibility` (`visible`, `hidden`, `changing`, `unknown`) and `geometry` (`overlap_possible`, `no_overlap_observed`, `unavailable`). The new binary also returns `focusProbe` (`confirmed`, `window_inactive`, `action_unhandled`, `capture_missing`, `not_first`, `chain_unresolved`, `other_window`); the earlier candidate binary yields `legacy_unknown`. It contains no content, raw class, tags, screen coordinates or identifiers. These are observations for comparison, not proof of visual completion or authorization to steal focus. Unknown/malformed/stale records fail closed.
-
-## Intended paths and remaining risk
-
-After a real observed system keyboard `didShow`, switching to a panel transfers focus from the text input to a non-text, non-accessible 1pt fence responder, waits for real UIKit `willHide` and `didHide`, rechecks the responder on the same key window/foreground scene, then makes the panel responder first. The return to composer uses the same fence/hide route. `shown` additionally requires UIKit `didShow`, not just `becomeFirstResponder`. Dismiss retains the neutral fence after the completed hide; a later explicit open can use that known-hidden state directly. The fence and panel owner are not hit-test targets; verify on device that they can still become first responder and that VoiceOver and panel touch work.
-
-Freshly mounted, an unfocused composer does not imply a settled hidden keyboard. For this opt-in single-window device experiment, an explicit user tap may nevertheless request the panel without prior keyboard notifications when the composer is not first responder; there is no pending operation or known show/hide; the same active key window has usable keyboard-guide geometry with no observed bottom overlap; and responder-chain capture proves the first responder is that window or this panel's fence. An unusable layout returns `keyboard_state_unknown`, a visible bottom overlap returns `keyboard_overlap`, and an unproved responder returns `focus_unknown`; none claims focus. This is a practical experimental condition, not proof that an earlier animation completed. Apple's keyboard guide can also show no bottom overlap for an undocked keyboard. Actual first-launch behavior and touch require device testing.
-
-`composition_active` refuses before changing focus; no marked text is read or printed. External text focus, generation change, unmount, window loss and explicit cancellation invalidate the active attempt. A non-UIView/blocked responder-chain action can make focus `unknown`; the code never uses global view search or a forced global focus grab. UIScreen notification provenance is weaker than an operation identifier; real single-window ordering and hardware-keyboard/no-notification behavior remain device questions. Pending cancellation can remain unresolved. Do not broaden this candidate to multiple simultaneous windows or assume a timeout commits a transition.
-
-## Device test after Orc integration
-
-Record only fixed states/events: known keyboard visible → panel → keyboard and composer onBlur/onFocus, real UIKit notification stages, panel touches and scroll/anchor. Separately test initial keyboard hidden, panel dismissal/reopen, rapid cancel, focus on search, marked Chinese composition, VoiceOver, hardware keyboard, safe-area/rotation and Reduce Motion. Compare long/short history, dragging and prepends with existing KCSV/MVCP. A JS model, successful bundle, or Swift compile does not establish any of these device behaviors.
-
-## Linux checks
-
-From `expo-client`, `npx tsx --test tests/sequential-handoff.test.ts` exercises the TS wrappers with test-owned fake native functions. `node --test tests/sequential-handoff-{model,source}.test.cjs` runs a model and source checks, not UIKit. Strict TypeScript was checked separately against installed dependencies. No live service, account, iPhone, Swift compiler, or Xcode was used.

@@ -1,11 +1,8 @@
 import React from 'react';
 import { requireNativeView, requireOptionalNativeModule } from 'expo';
-import type { NativeSyntheticEvent, ViewProps } from 'react-native';
-import { sequentialHandoffAvailable } from './sequential-handoff';
-import { sequentialEventProp } from './sequential-props';
-import type { SequentialEvent } from './sequential-handoff-core';
+import type { ViewProps } from 'react-native';
 import { runKeyboardPanelRequest, runKeyboardPanelDismiss, type KeyboardPanelDismiss, type KeyboardPanelNative, type KeyboardPanelRequest } from './keyboard-panel-core';
-export type KeyboardPanelProps = ViewProps & { scopeGeneration: number; onSequentialHandoff?: (event: NativeSyntheticEvent<SequentialEvent>) => void };
+export type KeyboardPanelProps = ViewProps & { scopeGeneration: number };
 let NativePanel: React.ComponentType<KeyboardPanelProps> | undefined;
 
 export function keyboardPanelAvailable() {
@@ -14,9 +11,9 @@ export function keyboardPanelAvailable() {
 }
 
 /** Only render after keyboardPanelAvailable() succeeds in the current binary. */
-export function KeyboardPanel({onSequentialHandoff, ...props}: KeyboardPanelProps) {
+export function KeyboardPanel(props: KeyboardPanelProps) {
   NativePanel ??= requireNativeView<KeyboardPanelProps>('ETOSInputArea', 'KeyboardPanel');
-  return <NativePanel {...props} {...sequentialEventProp(!!onSequentialHandoff && sequentialHandoffAvailable(), onSequentialHandoff)} />;
+  return <NativePanel {...props} />;
 }
 
 export function requestKeyboardPanel(args: KeyboardPanelRequest) {
