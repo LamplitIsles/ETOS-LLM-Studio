@@ -33,6 +33,9 @@ export type StopTarget = { readonly [stopTargetBrand]: true };
 export type StopResult = 'stopped' | 'not_stopped' | 'unknown' | 'stale' | 'offline' | 'unavailable';
 type StopCapture = { epoch: number; revision: number; turnRevision: number; connection: number; port: ChatPort | null; session: string; turn: string; result?: Promise<StopResult> };
 export type OperationIdentity = { origin: string; sessionId: string; operationId: string };
+/** References are independent copies of the validated, journaled submission. */
+export type SendAdmission = OperationIdentity & { images?: ImageRef[]; files?: FileRef[] };
+export type PreparedAdmission = { identity: OperationIdentity; images?: ImageRef[]; files?: FileRef[]; completion: Promise<void> };
 export type OperationState = 'unknown' | 'submitted' | 'failed' | 'observed';
 export type SocketFactory = () => Promise<WebSocket>;
 export type OpenPort = (socket: WebSocket, changed: (view: ChatView) => void, offline: (error: Error) => void, deliveryResult: (receipt: Receipt) => void) => Promise<ChatPort>;
@@ -276,7 +279,7 @@ export class ChatController {
     return this.beginPrepared(text, prepare).then(async result => { await result.completion; return result.identity.operationId; });
   }
   /** Captures the visible anchor and scope synchronously, before preparation or queuing. */
-  beginPrepared(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>, placement?: SendPlacement): Promise<{ identity: OperationIdentity; completion: Promise<void> }> {
+  beginPrepared(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>, placement?: SendPlacement): Promise<PreparedAdmission> {
     if (!this.state.view || !this.port || this.state.connection !== 'online') return Promise.reject(new Error('offline'));
     if (this.journalUncertain) return Promise.reject(new Error('journal_uncertain'));
     if (placement && placement.snapshot !== this.state) return Promise.reject(new Error('session_changed'));
@@ -287,7 +290,7 @@ export class ChatController {
     const current = this.scope();
     return this.serial(() => { if (!current()) throw new Error('session_changed'); return this.sendOnce(text, prepare, captured); });
   }
-  private async sendOnce(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>, anchor?: SendAnchor): Promise<{ identity: OperationIdentity; completion: Promise<void> }> {
+  private async sendOnce(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>, anchor?: SendAnchor): Promise<PreparedAdmission> {
     const view = this.state.view, port = this.port;
     if (!view || !port || this.state.connection !== 'online') throw new Error('offline');
     if (this.journalUncertain) throw new Error('journal_uncertain');
@@ -314,6 +317,9 @@ export class ChatController {
     // Preserve the saved entry even if the visible session changed while saving.
     this.entries = saved;
     if (!isCurrent()) throw new AdmissionError(identity, 'stored', 'session_changed');
+    // Snapshot before listeners or the port can mutate shared submission objects.
+    const images = entry.images?.map(image => ({ ...image, ...(image.sticker ? { sticker: { ...image.sticker } } : {}) }));
+    const files = entry.files?.map(file => ({ ...file }));
     this.publish({ pending: this.entries.filter(e => e.sessionId === view.sessionId) });
     if (!isCurrent()) throw new AdmissionError(identity, 'stored', 'session_changed');
     // Do not hold the journal serial queue while waiting for a network reply:
@@ -325,7 +331,7 @@ export class ChatController {
       } catch { /* dispatched or result lost: reconcile by lookup only */ }
       if (this.entries.some(e => e.operationId === entry.operationId && e.state === 'unknown')) queueMicrotask(() => void this.reconcile());
     })();
-    return { identity, completion };
+    return { identity, ...(images ? { images } : {}), ...(files ? { files } : {}), completion };
   }
   private acceptDelivery(value: Receipt, epoch: number, connectionId: number) {
     let receipt: Receipt;

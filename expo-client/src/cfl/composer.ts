@@ -1,6 +1,6 @@
 import type { StickerIdentity } from '../../vendor/contracts/src/index';
 import type { AttachmentDraft } from './drafts';
-import type { ChatController, SendPlacement, OperationIdentity } from './chat';
+import type { ChatController, SendPlacement, OperationIdentity, SendAdmission } from './chat';
 import { outcome } from './send-outcome';
 export type { SendOutcome } from './send-outcome';
 import type { ApiTransport } from './transport';
@@ -22,10 +22,10 @@ function prepareDrafts(transport: ApiTransport, drafts: readonly AttachmentDraft
     };
   };
 }
-/** Resolves after the pending entry is saved and published; receipt handling continues independently. */
-export async function beginSendDrafts(controller: ChatController, transport: ApiTransport, text: string, drafts: readonly AttachmentDraft[], anchor: SendPlacement): Promise<OperationIdentity> {
+/** Resolves after save/publication; images and files follow input order within each kind. */
+export async function beginSendDrafts(controller: ChatController, transport: ApiTransport, text: string, drafts: readonly AttachmentDraft[], anchor: SendPlacement): Promise<SendAdmission> {
   const result = await controller.beginPrepared(text, prepareDrafts(transport, drafts), anchor);
-  return result.identity;
+  return { ...result.identity, ...(result.images ? { images: result.images } : {}), ...(result.files ? { files: result.files } : {}) };
 }
 /** Returns after journaling and one dispatch attempt; unknown must never be resent automatically. */
 export function sendDrafts(controller: ChatController, transport: ApiTransport, text: string, drafts: readonly AttachmentDraft[]): Promise<SendOutcome> {

@@ -70,7 +70,9 @@ test('file preparation retains caller ownership across admission and receipt', a
  const store:PendingStore={async load(){return stored},async save(_o,next){stored=next}};
  const port:ChatPort={async history(){return {messages:[],before:null}},async submit(){return response.promise},async lookup(){return null},close(){}};
  const h=harness(store,port,fixture.read());await h.controller.start();const accepted=await beginSendDrafts(h.controller,fixture.media,'x',[draft],{snapshot:h.controller.snapshot(),after:null});
- assert.equal(stored[0].files?.length,1);assert.equal(released,0);response.resolve(makeReceipt(accepted.operationId));await turn();assert.equal(released,0);h.controller.stop();
+ assert.equal(stored[0].files?.length,1);
+ assert.deepEqual((accepted as typeof accepted & {files?: unknown}).files,stored[0].files,'admission carries the actual saved references');
+ assert.equal(released,0);response.resolve(makeReceipt(accepted.operationId));await turn();assert.equal(released,0);h.controller.stop();
 });
 test('ambiguous journal write carries identity, never dispatches and blocks overwrite until reload',async()=>{
  let stored:Pending[]=[],sent=0, fail=true; const store:PendingStore={async load(){return stored},async save(_o,next){stored=next;if(fail)throw Error('fixture ambiguous write')}};
@@ -148,4 +150,18 @@ test('anchor remains at the gesture when streaming advances during preparation',
  const accepting=h.controller.beginPrepared('x',async()=>{started.resolve();return prepared.promise},{snapshot:h.controller.snapshot(),after:oldKey});await started.promise;
  h.update({...initial,streamingReply:{...initial.streamingReply,text:'一二',ends:[1,2]}});prepared.resolve({});const accepted=await accepting;
  assert.deepEqual(stored[0].anchor,{after:oldKey});receipt.resolve(makeReceipt(accepted.identity.operationId));await accepted.completion;h.controller.stop();
+});
+
+test('returned prepared references do not share arrays or nested objects with journal or submission',async()=>{
+ let entries:Pending[]=[],submittedImages:unknown;const response=gate<Receipt>();
+ const store:PendingStore={async load(){return entries},async save(_o,next){entries=next}};
+ const port:ChatPort={async history(){return {messages:[],before:null}},async submit(input){submittedImages=input.images;return response.promise},async lookup(){return null},close(){}};
+ const h=harness(store,port);await h.controller.start();
+ const image={attachmentId:'img',name:'sticker.png',mediaType:'image/png' as const,availability:'available' as const,sticker:{id:'sticker',version:'0'.repeat(64)}};
+ const file={attachmentId:'file',name:'doc.txt',mediaType:'text/plain',size:4,availability:'available' as const};
+ const accepted=await h.controller.beginPrepared('x',async()=>({images:[image],files:[file]}),{snapshot:h.controller.snapshot(),after:null});
+ accepted.images![0].name='changed';accepted.images![0].sticker!.id='changed';accepted.images!.push({...image,attachmentId:'added'});accepted.files![0].name='changed';
+ assert.equal(entries[0].images?.length,1);assert.equal(entries[0].images?.[0].name,'sticker.png');assert.equal(entries[0].images?.[0].sticker?.id,'sticker');assert.equal(entries[0].files?.[0].name,'doc.txt');
+ assert.equal((submittedImages as typeof accepted.images)![0].name,'sticker.png');
+ response.resolve(makeReceipt(accepted.identity.operationId));await accepted.completion;h.controller.stop();
 });
