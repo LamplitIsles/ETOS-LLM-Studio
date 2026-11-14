@@ -27,11 +27,6 @@ export type ChatPort = Pick<Awaited<ReturnType<typeof openChat>>, 'history' | 's
 export type ChatSnapshot = { connection: 'offline' | 'connecting' | 'online'; failure: 'access_denied' | 'unavailable' | null; view: ChatView | null; history: ChatMessage[]; before: string | null; pending: Pending[] };
 /** Obtain snapshot and its visible row key together, synchronously in the send gesture. */
 export type SendPlacement = SendAnchor & { snapshot: ChatSnapshot };
-declare const stopTargetBrand: unique symbol;
-/** Opaque, controller-owned identity captured from one published chat snapshot. */
-export type StopTarget = { readonly [stopTargetBrand]: true };
-export type StopResult = 'stopped' | 'not_stopped' | 'unknown' | 'stale' | 'offline' | 'unavailable';
-type StopCapture = { epoch: number; revision: number; turnRevision: number; connection: number; port: ChatPort | null; session: string; turn: string; result?: Promise<StopResult> };
 export type OperationIdentity = { origin: string; sessionId: string; operationId: string };
 /** References are independent copies of the validated, journaled submission. */
 export type SendAdmission = OperationIdentity & { images?: ImageRef[]; files?: FileRef[] };
@@ -47,9 +42,6 @@ export class ChatController {
   private connectionId = 0;
   private searchGeneration = 0;
   private searchReadGeneration = 0;
-  private turnRevision = 0;
-  private stopTargets = new WeakMap<StopTarget, StopCapture>();
-  private stoppingTurn: { capture: StopCapture; result: Promise<StopResult> } | null = null;
   private historyLoading = false;
   private work: Promise<void> = Promise.resolve();
   private serial<T>(action: () => Promise<T>): Promise<T> {
@@ -86,51 +78,6 @@ export class ChatController {
   onlineScope(): () => boolean {
     const current = this.scope(), connectionId = this.connectionId, port = this.port, sessionId = this.state.view?.sessionId;
     return () => !!sessionId && !!port && current() && this.state.view?.sessionId === sessionId && this.connectionId === connectionId && this.port === port && this.state.connection === 'online' && this.state.failure !== 'access_denied';
-  }
-  /** Capture from the displayed snapshot, never from a stale render or a guessed ID. */
-  captureStopTarget(snapshot: ChatSnapshot): StopTarget | null {
-    const view = snapshot.view;
-    if (snapshot !== this.state || this.stopped || !view?.activeTurnId) return null;
-    const target = Object.freeze({}) as StopTarget;
-    this.stopTargets.set(target, { epoch: this.epoch, revision: this.revision, turnRevision: this.turnRevision, connection: this.connectionId, port: this.port, session: view.sessionId, turn: view.activeTurnId });
-    return target;
-  }
-  /** One explicit request; an unknown outcome is never retried by this controller. */
-  stopTurn(target: StopTarget): Promise<StopResult> {
-    const capture = this.stopTargets.get(target);
-    if (!capture) return Promise.resolve('stale');
-    const view = this.state.view;
-    if (this.stopped || capture.epoch !== this.epoch || capture.revision !== this.revision || view?.sessionId !== capture.session) return Promise.resolve('stale');
-    if (capture.turnRevision !== this.turnRevision || view.activeTurnId !== capture.turn) return Promise.resolve('stale');
-    if (capture.result) return capture.result;
-    if (this.state.connection !== 'online' || !this.port || capture.connection !== this.connectionId || capture.port !== this.port) return Promise.resolve('offline');
-    if (!view.capabilities.stop || !this.port.stop) return Promise.resolve('unavailable');
-    if (this.stoppingTurn) {
-      const other = this.stoppingTurn.capture;
-      if (other.epoch === capture.epoch && other.revision === capture.revision && other.turnRevision === capture.turnRevision && other.connection === capture.connection && other.port === capture.port && other.turn === capture.turn && other.session === capture.session) {
-        capture.result = this.stoppingTurn.result;
-        return capture.result;
-      }
-      return Promise.resolve('unavailable');
-    }
-    const port = this.port;
-    const current = () => !this.stopped && this.epoch === capture.epoch && this.revision === capture.revision && this.connectionId === capture.connection && this.port === port && this.state.connection === 'online' && this.state.view?.sessionId === capture.session;
-    // Schedule the call only after storing the flight, so synchronous re-entry also shares it.
-    const result: Promise<StopResult> = Promise.resolve().then(async () => {
-      if (this.stopped || this.epoch !== capture.epoch || this.revision !== capture.revision || this.state.view?.sessionId !== capture.session || this.turnRevision !== capture.turnRevision || this.state.view?.activeTurnId !== capture.turn) return 'stale';
-      if (!current()) return 'offline';
-      if (!this.state.view.capabilities.stop || !port.stop) return 'unavailable';
-      try {
-        const response = await port.stop!(capture.turn);
-        if (!current() || !response || typeof response.stopped !== 'boolean') return 'unknown';
-        return response.stopped ? 'stopped' : 'not_stopped';
-      } catch { return 'unknown'; }
-    });
-    capture.result = result;
-    const flight = { capture, result };
-    this.stoppingTurn = flight;
-    void result.then(() => { if (this.stoppingTurn === flight) this.stoppingTurn = null; });
-    return result;
   }
   /** Ignore outstanding search and read completions when the search UI closes. */
   cancelSearch() { this.searchGeneration++; this.searchReadGeneration++; }
@@ -179,7 +126,6 @@ export class ChatController {
   private publish(patch: Partial<ChatSnapshot>) { this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(this.state); }
   private updateView(view: ChatView) {
     const changed = this.state.view?.sessionId !== view.sessionId;
-    if (changed || this.state.view?.activeTurnId !== view.activeTurnId) this.turnRevision++;
     if (changed) { this.revision++; this.cancelPreparations(); this.imageCache.clear(); }
     this.publish({ view, history: changed ? [] : this.state.history, before: changed ? view.before : this.state.before, pending: this.entries.filter(e => e.sessionId === view.sessionId) });
     if (this.entries.some(e => e.sessionId === view.sessionId && view.messages.some(m => m.operationId === e.operationId))) {

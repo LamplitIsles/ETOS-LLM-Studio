@@ -201,22 +201,6 @@ peer dependencies, licensing, and platform validation limits.
   item once its server `operationId` appears. A pending `submitted` item is
   retained until it is visible in the server view. `unknown` is not a user
   failure; the controller looks it up and never automatically resends it.
-- To stop an active turn, capture `controller.captureStopTarget(snapshot)`
-  from the currently displayed snapshot; it returns an opaque controller-owned
-  target or `null`. On an explicit user action, call
-  `await controller.stopTurn(target)`. `stopped` and `not_stopped` report the
-  server's answer for that specific turn; continue displaying the subscribed
-  view as the authority for current activity. `stale`, `offline`, and
-  `unavailable` mean no request was dispatched. After dispatch, a transport,
-  response, session, or connection failure yields `unknown`: it may have taken
-  effect, and no result lookup exists. The controller never retries. Calls for
-  the same captured target share one result, including `unknown`; a different
-  target is unavailable while a request remains in flight. A new target and a
-  subsequent explicit user action constitute a new request, so the UI should
-  make the uncertain prior result clear instead of retrying automatically.
-  A still-active turn after reconnect does not prove the earlier request has
-  finished. Discard asynchronous UI results after its own session/navigation
-  generation changes; a response never modifies the controller's view.
 - For a received sticker, pass the `ImageData` already obtained with
   `controller.readImage(media, attachmentId, current, 'original', signal)` to
   `classifyStickerOpacity(image, current, signal)` from
