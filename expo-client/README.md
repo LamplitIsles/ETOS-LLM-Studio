@@ -319,8 +319,8 @@ peer dependencies, licensing, and platform validation limits.
   loaded history. A missing pending entry is never proof of observation.
   It returns `unknown` when the origin/session is not active, after stop,
   when storage cannot be read, or when evidence is absent. Recheck component
-  lifetime and session after awaiting it. Switching back to the session and
-  restarting the controller allows journaled receipts to be checked again.
+  lifetime and session after awaiting it. Restarting the controller allows
+  journaled receipts for the active chat identity to be checked again.
   Reconnect reconciles by ID only; it never reuploads or resubmits. Picker data
   and previews are in memory/cache and do not survive an app restart as drafts:
   tell the user the selected files need to be chosen again if an operation is
@@ -329,6 +329,35 @@ peer dependencies, licensing, and platform validation limits.
   A returned `unknown` does not guarantee an entry is still in the journal:
   an observed message may already have retired it, or storage may be unavailable.
   Staged references do not guarantee that the server still retains their bytes.
+- For optimistic UI integration, synchronously obtain `snapshot = controller.snapshot()`
+  at the send gesture and derive the last visible authoritative row's stable key
+  from that same snapshot. Call `beginSendDrafts(controller, media, text, drafts,
+  {snapshot, after, predecessor?})` or `beginSendSticker(controller, media,
+  sticker, {snapshot, after, predecessor?})`. `after` is that key or `null`;
+  `predecessor`, if supplied, must be an operation observed in that snapshot.
+  The UI owns row-key selection; the controller bounds the key but does not
+  prove its visual position. A stale snapshot is rejected before preparation.
+  Consecutive admissions with the same anchor chain their operation IDs. The
+  optional anchor is persisted with the pending entry; older or invalid anchors
+  have no placement and require conservative UI fallback.
+  The Promise returns `{origin, sessionId, operationId}` after durable save
+  and publication, without waiting for the receipt. Follow snapshot updates
+  or `operationStatus` for evidence; an unknown result must not be resent.
+  Capture the component lifetime and `controller.scope()` at the gesture and
+  recheck them before changing any UI after awaiting. The caller owns draft
+  objects throughout: retain local preview resources while displayed, transfer
+  them by operation identity on admission, and release on replacement or
+  cleanup. Journaled metadata cannot recreate local preview bytes after restart.
+  Preparation/stage rejection precedes journal and dispatch. `AdmissionError`
+  carries `identity`, `dispatched: false`, and `journal: 'stored' | 'unknown'`:
+  a failed save may still have written, while an invalidated scope can follow
+  a completed save. Keep the draft and inspect the identified operation; do
+  not infer that a journal record is absent. Further journal writes are blocked
+  after an uncertain save until the controller is restarted and its journal
+  successfully reloaded. A reload describes what the store returned at that
+  moment; the store interface cannot prove that a failed underlying write will
+  never complete later. It does not establish absence or resend an operation.
+  Existing `sendDrafts` and `sendSticker` retain their receipt-waiting API.
 - Create `new StickerClient(media, sessionId, current)` from
   `src/cfl/stickers.ts`, where `current` combines component lifetime with a
   fresh `controller.scope()`. `page('packs' | 'pack' | 'favorites' | 'search',
