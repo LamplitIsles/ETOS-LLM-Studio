@@ -1,19 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Keyboard, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type ScrollViewProps } from 'react-native';
-import { EnrichedMarkdownText, type MarkdownStyle } from 'react-native-enriched-markdown';
+import { ActivityIndicator, AppState, Image, Keyboard, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, findNodeHandle, useWindowDimensions, type ScrollViewProps } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView, KeyboardChatScrollView, KeyboardProvider, KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { ReduceMotion, useAnimatedReaction, useAnimatedStyle, useDerivedValue, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
-import { BottomSheet, RNHostView } from '@expo/ui';
 import { SymbolView } from 'expo-symbols';
 import { requireOptionalNativeModule } from 'expo';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import type { ChatMessage } from '../vendor/contracts/src/index';
+import type { ChatMessage, FileRef } from '../vendor/contracts/src/index';
 import type { StickerIdentity } from '../vendor/contracts/src/index';
 import { createDevelopmentSeedChat, developmentSeedAvailable, developmentSeedStatus } from './cfl/seed.web';
-import { type ChatController, type ChatSnapshot } from './cfl/chat';
+import { AdmissionError, type ChatController, type ChatSnapshot, type SendAdmission } from './cfl/chat';
 import { createNativeAuth } from './cfl/native-runtime';
 import { createNativeChat } from './cfl/factory.native';
 import { createWebChat } from './cfl/factory.web';
@@ -21,13 +19,11 @@ import { WebAuth } from './cfl/web-auth';
 import { loadAppearance, loadAppearanceImage } from './cfl/appearance';
 import { type ImageData, type ApiTransport } from './cfl/transport';
 import { recentStickers } from './cfl/recent-stickers';
-import { classifyMarkdownImage, loadMarkdownImage } from './cfl/markdown-image';
-import { createMarkdownImageUri } from './cfl/markdown-image-uri';
-import { markdownImageResolverAvailable } from './cfl/markdown-resolver';
+import { classifyStickerOpacity } from './cfl/sticker-opacity';
 import { CameraPermissionError, capturePhoto, pickFiles, pickImages, type AttachmentDraft } from './cfl/drafts';
 import { CameraPhotoError, prepareCameraPhoto } from './cfl/camera-photo';
 import { validateDrafts } from './cfl/intake';
-import { sendDrafts, sendSticker, type SendOutcome } from './cfl/composer';
+import { beginSendDrafts, beginSendSticker } from './cfl/composer';
 import { StickerPanel } from './StickerPanel';
 import { NativeTabsFrame } from './NativeTabsFrame';
 import { AppearanceProvider, useAppearance } from './ui/appearance';
@@ -36,10 +32,13 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { TimelineViewport } from './ui/TimelineScrollView';
 import { captureHistoryAnchor } from './ui/historyAnchor';
-import { rowsFor, type TimelineRow as Row } from './ui/timelineRows';
+import { rowsFor, sendPlacement, type TimelineRow as Row } from './ui/timelineRows';
+import { chatTimeHeadings, nextChatDayBoundary } from './ui/chatTime';
 import { attachmentValidationMessage, cameraPhotoMessage } from './ui/attachmentValidationMessage';
 import { ReminderButton } from './ui/ReminderButton';
 import { ChatSearch } from './ui/ChatSearch';
+import { MessageText } from './ui/MessageText';
+import { MessageSurface } from './ui/MessageSurface';
 import { ChatSettings } from './ui/ChatSettings';
 import { useKeyboardDiagnostic } from './ui/keyboardDiagnostic';
 import type { InputAreaProps } from '../modules/etos-input-area/src';
@@ -58,28 +57,46 @@ const InputArea: React.ComponentType<InputAreaProps> = inputAreaModule?.InputAre
 type Client = { controller: ChatController; media: ApiTransport };
 type Mode = 'seed' | 'native' | 'web';
 type AppearanceView = { client: Client; sessionId: string; name: string; avatar?: string; portrait?: string; landscape?: string };
+type LocalImagePreview = { attachmentId: string; draft?: AttachmentDraft };
+const journalNeedsCheck = (error: unknown) => error instanceof AdmissionError && error.journal === 'unknown' || error instanceof Error && error.message === 'journal_uncertain';
 
-function AuthImage({ id, media, controller, mediaType, sticker = false }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean }) {
+function AuthImage({ id, media, controller, mediaType, sticker = false, local, onRemoteReady, phase }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean; local?: LocalImagePreview; onRemoteReady?: (id: string) => void; phase?: 'pending' | 'confirmed' }) {
   const [value, setValue] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [opaqueSize, setOpaqueSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     let active = true;
     const abort = new AbortController();
-    setValue(null); setFailed(false);
+    setValue(null); setFailed(false); setLoaded(false); setOpaqueSize(null);
     const current = controller.scope();
     // JPEG previews are opaque; formats that can carry transparency or animation
     // need the original attachment rather than a converted preview.
-    void controller.readImage(media, id, () => active && current(), sticker || mediaType !== 'image/jpeg' ? 'original' : 'preview', abort.signal).then(({ bytes, contentType }) => {
+    void controller.readImage(media, id, () => active && current(), sticker || mediaType !== 'image/jpeg' ? 'original' : 'preview', abort.signal).then(image => {
       if (!active || !current()) return;
+      const { bytes, contentType } = image;
       let binary = '';
       for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      setValue(`data:${contentType};base64,${btoa(binary)}`);
+      const uri = `data:${contentType};base64,${btoa(binary)}`;
+      setValue(uri);
+      if (sticker) void classifyStickerOpacity(image, () => active && current(), abort.signal).then(async opacity => {
+        if (!active || !current() || opacity !== 'opaque') return;
+        const size = await new Promise<{ width: number; height: number }>((resolve, reject) => Image.getSize(uri, (width, height) => resolve({ width, height }), reject));
+        if (!active || !current() || !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0) return;
+        const scale = Math.min(120 / size.width, 120 / size.height);
+        setOpaqueSize({ width: size.width * scale, height: size.height * scale });
+      }).catch(() => {});
     }).catch(() => { if (active && current()) setFailed(true); });
     return () => { active = false; abort.abort(); };
-  }, [id, media, controller, mediaType, sticker]);
+  }, [id, media, controller, mediaType, sticker, phase]);
+  useEffect(() => { if (loaded && local?.draft) onRemoteReady?.(local.attachmentId); }, [loaded, local, onRemoteReady]);
+  if (local?.draft) return <View style={styles.image}>
+    <Image source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.image} />
+    {value && <Image source={{ uri: value }} accessible={false} accessibilityElementsHidden resizeMode="contain" onLoad={() => setLoaded(true)} style={[StyleSheet.absoluteFill, { opacity: 0 }]} />}
+  </View>;
   if (failed) return <Text style={styles.mediaNotice}>图片暂时无法显示</Text>;
   if (!value) return <View style={styles.imageLoading}><ActivityIndicator /><Text style={styles.mediaNotice}>图片加载中</Text></View>;
-  return <Image source={{ uri: value }} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? styles.stickerImage : styles.image} />;
+  return <Image source={{ uri: value }} onLoad={() => setLoaded(true)} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? [styles.stickerImage, opaqueSize && { ...opaqueSize, borderRadius: 12 }] : styles.image} />;
 }
 
 function imageUri(image: ImageData, createdUrls: string[]): string {
@@ -93,90 +110,32 @@ function imageUri(image: ImageData, createdUrls: string[]): string {
   return `data:${image.contentType};base64,${btoa(binary)}`;
 }
 
-// An older native build without the parser cannot intercept embedded media.
-const embeddedMedia = /!\[|<\s*\/?\s*(?:img|video|source|audio|iframe)\b/i;
 
-function MessageText({ text, foreground, dark, media, controller, workspaceImages }: {
-  text: string; foreground: string; dark: boolean; media: ApiTransport; controller: ChatController; workspaceImages: boolean;
-}) {
-  const [resolveImage, setResolveImage] = useState<null | ((image: { url: string }) => Promise<{ uri: string }>)>(null);
-  const resolverAvailable = markdownImageResolverAvailable();
-  useEffect(() => {
-    if (!resolverAvailable) return;
-    let active = true;
-    const scope = controller.scope();
-    const abort = new AbortController();
-    const releases = new Set<() => void>();
-    const current = () => active && scope();
-    const resolve = async ({ url }: { url: string }): Promise<{ uri: string }> => {
-      try {
-        const options = { workspaceImages, isCurrent: current, signal: abort.signal };
-        const source = classifyMarkdownImage(url, media.origin, options);
-        // A browser image can display cross-origin resources even when the
-        // image server does not grant JavaScript CORS access.
-        if (Platform.OS === 'web' && source.kind === 'external') return { uri: source.url };
-        const image = await loadMarkdownImage(url, media, options);
-        const result = await createMarkdownImageUri(image, current, abort.signal);
-        if (!current()) { result.release(); return { uri: '' }; }
-        releases.add(result.release);
-        return { uri: result.uri };
-      } catch { return { uri: '' }; }
-    };
-    setResolveImage(() => resolve);
-    return () => { active = false; abort.abort(); for (const release of releases) release(); };
-  }, [controller, media, workspaceImages, resolverAvailable]);
-  const markdownStyle = useMemo<MarkdownStyle>(() => {
-    const block = { color: foreground, fontSize: 16, lineHeight: 23 };
-    const subtle = dark ? 'rgba(255,255,255,0.12)' : 'rgba(20,30,45,0.08)';
-    return {
-      paragraph: { ...block, marginBottom: 8 },
-      h1: { ...block, fontSize: 23, lineHeight: 30, fontWeight: 'bold' },
-      h2: { ...block, fontSize: 21, lineHeight: 28, fontWeight: 'bold' },
-      h3: { ...block, fontSize: 19, lineHeight: 26, fontWeight: 'bold' },
-      h4: { ...block, fontWeight: 'bold' }, h5: { ...block, fontWeight: 'bold' }, h6: { ...block, fontWeight: 'bold' },
-      list: { ...block, bulletColor: foreground, markerColor: foreground, marginBottom: 8 },
-      blockquote: { ...block, borderColor: foreground, backgroundColor: subtle, marginBottom: 8 },
-      codeBlock: { color: dark ? '#f4f4f6' : '#252631', backgroundColor: dark ? '#30363d' : '#e5e8ed', borderRadius: 10, fontSize: 14, marginBottom: 8 },
-      code: { color: foreground, backgroundColor: subtle },
-      link: { color: foreground, underline: true },
-      table: { ...block, headerTextColor: foreground, headerBackgroundColor: subtle, rowEvenBackgroundColor: 'transparent', rowOddBackgroundColor: subtle },
-      math: { color: foreground, backgroundColor: 'transparent', fontSize: 18, padding: 0, marginBottom: 8 },
-      inlineMath: { color: foreground },
-      image: { maxHeight: 240, resizeMode: 'contain', borderRadius: 12 },
-      inlineImage: { size: 72 },
-    };
-  }, [foreground, dark]);
-  const openLink = useCallback(({ url }: { url: string }) => {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') void Linking.openURL(parsed.href).catch(() => {});
-    } catch { /* Unsupported or relative links are not opened. */ }
-  }, []);
-  if (!resolverAvailable && embeddedMedia.test(text)) return <Text selectable style={[styles.messageText, { color: foreground }]}>{text}</Text>;
-  if (resolverAvailable && !resolveImage) return null;
-  return <EnrichedMarkdownText markdown={text} flavor="github" markdownStyle={markdownStyle}
-    md4cFlags={{ hardSoftBreaks: true }} selectable enableTaskListItemToggle={false}
-    enableLinkPreview={false} onLinkPress={openLink}
-    {...(resolveImage ? { resolveImageSource: resolveImage, renderers: { video: () => <Text style={{ color: foreground }}>视频暂不支持显示</Text> } } : {})} />;
-}
-
-function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null> }) {
+function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef, localImages, localFiles, onRemoteReady }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null>; localImages?: readonly LocalImagePreview[]; localFiles?: readonly FileRef[]; onRemoteReady?: (id: string) => void }) {
   const { dark } = useAppearance();
   const mine = row.user._id === 'me';
   const item = row.original;
   const foreground = mine ? '#ffffff' : dark ? '#f4f4f6' : '#252631';
   const placeholderStyle = [styles.contentPlaceholder, { color: dark ? '#e3e7ec' : '#4d5561', backgroundColor: dark ? 'rgba(38,43,51,0.94)' : 'rgba(247,248,250,0.94)' }];
-  const hasImage = item?.images?.some(image => !image.sticker);
+  const images = (item?.images ?? row.pendingImages ?? []).filter(image => !image.sticker);
+  const localIds = new Set(localImages?.map(image => image.attachmentId));
+  const remoteFiles = item?.files ?? row.pendingFiles ?? [];
+  const localFileIds = new Set(localFiles?.map(file => file.attachmentId));
+  const files = [...(localFiles ?? []).map(file => remoteFiles.find(remote => remote.attachmentId === file.attachmentId) ?? file), ...remoteFiles.filter(file => !localFileIds.has(file.attachmentId))];
   return <View ref={latestRef} nativeID={`timeline-${row._id}`} testID={mine ? 'message-user' : 'message-agent'} style={[styles.messageRow, mine ? styles.mine : styles.theirs]}>
-    {item?.source?.kind === 'reminder' && row.text ? <ReminderButton text={row.text} /> : (row.text || row.pendingState === 'failed') ? <Surface tint={mine ? '#536d94' : undefined} style={[styles.bubble, mine && styles.myBubble]}>
+    {item?.source?.kind === 'reminder' && row.text ? <ReminderButton text={row.text} /> : (row.text || row.pendingState === 'failed') ? <MessageSurface mine={mine}>
       {!!row.text && <MessageText key={`${media.origin}:${sessionId}:${workspaceImages}`} text={row.text} foreground={foreground} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />}
       {row.pendingState === 'failed' && <Text style={styles.errorSmall}>发送失败，请检查连接</Text>}
-    </Surface> : null}
-    {hasImage && item?.images?.filter(image => !image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} />)}
+    </MessageSurface> : null}
+    {localImages?.map(local => {
+      const image = images.find(value => value.attachmentId === local.attachmentId);
+      return image ? <AuthImage key={local.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} local={local} onRemoteReady={onRemoteReady} phase={item ? 'confirmed' : 'pending'} />
+        : local.draft ? <Image key={local.attachmentId} source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.image} /> : null;
+    })}
+    {images.filter(image => !localIds.has(image.attachmentId)).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} />)}
     {item?.images?.filter(image => image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
-    {item?.files?.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
-    {row.pendingImages?.map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker={!!image.sticker} />)}
-    {row.pendingFiles?.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
+    {files.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
+    {row.pendingImages?.filter(image => !!image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
     {item?.ui != null && <Text style={placeholderStyle}>互动卡片 · 暂不支持显示</Text>}
     {item?.voice && <Text style={placeholderStyle}>语音消息 · 暂不支持播放</Text>}
     {item?.imageState && !item.images?.length && <Text style={placeholderStyle}>图片暂时不可用</Text>}
@@ -221,9 +180,14 @@ function AppContent() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [snapshot, setSnapshot] = useState<ChatSnapshot | null>(null);
+  const [chatDayNow, setChatDayNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setTimeout(() => setChatDayNow(Date.now()), Math.max(1, nextChatDayBoundary(chatDayNow) - Date.now() + 50));
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') setChatDayNow(Date.now()); });
+    return () => { clearTimeout(timer); subscription.remove(); };
+  }, [chatDayNow]);
   const [spaceOpen, setSpaceOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
@@ -432,7 +396,9 @@ function AppContent() {
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const attachmentsRef = useRef<AttachmentDraft[]>([]);
   const composerGeneration = useRef(0);
-  const [uncertain, setUncertain] = useState<{ outcome: SendOutcome; text: string; ids: string[] } | null>(null);
+  const [localImages, setLocalImages] = useState<Record<string, LocalImagePreview[]>>({});
+  const localImagesRef = useRef<Record<string, LocalImagePreview[]>>({});
+  const [localFiles, setLocalFiles] = useState<Record<string, FileRef[]>>({});
   const sending = useRef<object | null>(null);
   const preparingCamera = useRef<object | null>(null);
   const [preparingPhoto, setPreparingPhoto] = useState(false);
@@ -579,28 +545,37 @@ function AppContent() {
   const setDrafts = (items: AttachmentDraft[]) => { attachmentsRef.current = items; setAttachments(items); };
   useEffect(() => {
     composerGeneration.current++;
-    sending.current = null; preparingCamera.current = null; setPreparingPhoto(false); setBusy(false); setAttachments([]); setUncertain(null); setShowScrollToBottom(false);
-    return () => { historyAnchor.current?.cancel(); historyAnchor.current = null; preparingCamera.current = null; composerGeneration.current++; for (const item of attachmentsRef.current) item.release(); attachmentsRef.current = []; };
+    sending.current = null; preparingCamera.current = null; setPreparingPhoto(false); setBusy(false); setAttachments([]); setLocalImages({}); setLocalFiles({}); setShowScrollToBottom(false);
+    return () => { historyAnchor.current?.cancel(); historyAnchor.current = null; preparingCamera.current = null; composerGeneration.current++; for (const item of attachmentsRef.current) item.release(); attachmentsRef.current = []; for (const items of Object.values(localImagesRef.current)) items.forEach(item => item.draft?.release()); localImagesRef.current = {}; };
   }, [client, sessionId]);
-  const clearSent = (text: string, ids: string[]) => {
+  const clearSent = (text: string, selected: readonly AttachmentDraft[], admission: SendAdmission) => {
     if (draftRef.current === text) setText('');
-    const removed = new Set(ids);
+    const removed = new Set(selected.map(item => item.id));
     const keep = attachmentsRef.current.filter(item => !removed.has(item.id));
-    attachmentsRef.current.filter(item => removed.has(item.id)).forEach(item => item.release());
+    const transferred = attachmentsRef.current.filter(item => removed.has(item.id));
+    const selectedImages = selected.filter(item => item.kind === 'image');
+    const images = (admission.images ?? []).flatMap((image, index) => {
+      const draft = selectedImages[index];
+      return draft && transferred.some(item => item.id === draft.id) ? [{ attachmentId: image.attachmentId, draft }] : [];
+    });
+    if (images.length) { localImagesRef.current = { ...localImagesRef.current, [admission.operationId]: images }; setLocalImages(localImagesRef.current); }
+    if (admission.files?.length) setLocalFiles(previous => ({ ...previous, [admission.operationId]: admission.files! }));
+    transferred.filter(item => item.kind !== 'image').forEach(item => item.release());
     setDrafts(keep);
   };
-  useEffect(() => {
-    if (!client || !uncertain || snapshot?.view?.sessionId !== uncertain.outcome.sessionId) return;
-    let valid = true;
-    void client.controller.operationStatus(uncertain.outcome).then(status => {
-      if (!valid || active.current !== client) return;
-      if (status === 'submitted' || status === 'observed') { clearSent(uncertain.text, uncertain.ids); setUncertain(null); }
-      else if (status === 'failed') { setUncertain(null); setError('发送失败，内容仍在输入框中。'); }
-    });
-    return () => { valid = false; };
-  }, [client, snapshot, uncertain]);
+  const releaseLocalImage = useCallback((operationId: string, id: string) => {
+    const existing = localImagesRef.current[operationId];
+    if (!existing) return;
+    const item = existing.find(value => value.attachmentId === id);
+    if (!item?.draft) return;
+    item.draft.release();
+    const next = existing.map(value => value.attachmentId === id ? { attachmentId: id } : value);
+    const updated = { ...localImagesRef.current };
+    if (next.some(value => value.draft)) updated[operationId] = next; else delete updated[operationId];
+    localImagesRef.current = updated; setLocalImages(updated);
+  }, []);
   const selectAttachments = async (kind: 'image' | 'file' | 'camera') => {
-    if (!client || !snapshot?.view || busy || uncertain || sending.current || preparingCamera.current) return;
+    if (!client || !snapshot?.view || busy || sending.current || preparingCamera.current) return;
     const scope = client.controller.scope(), generation = composerGeneration.current;
     const token = kind === 'camera' ? {} : null;
     if (token) { preparingCamera.current = token; setBusy(true); setError(''); }
@@ -642,30 +617,28 @@ function AppContent() {
   };
   const send = async () => {
     const text = draftRef.current, selected = [...attachmentsRef.current];
-    if (!client || (!text.trim() && !selected.length) || sending.current || preparingCamera.current || uncertain || snapshot?.connection !== 'online') return;
+    if (!client || (!text.trim() && !selected.length) || sending.current || preparingCamera.current || snapshot?.connection !== 'online') return;
     const current = client.controller.scope();
+    const placement = sendPlacement(client.controller.snapshot());
     const sendToken = {}; sending.current = sendToken; setBusy(true); setError('');
     try {
-      const outcome = await sendDrafts(client.controller, client.media, text, selected);
+      const admission = await beginSendDrafts(client.controller, client.media, text, selected, placement);
       if (active.current !== client || !current()) return;
       requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: true }));
-      if (outcome.state === 'submitted' || outcome.state === 'observed') clearSent(text, selected.map(item => item.id));
-      else if (outcome.state === 'failed') setError('发送失败，内容仍在输入框中。');
-      else setUncertain({ outcome, text, ids: selected.map(item => item.id) });
-    } catch {
-      if (active.current === client && current()) setError('没有发送成功，内容仍在输入框中。');
+      clearSent(text, selected, admission);
+    } catch (error) {
+      if (active.current === client && current()) setError(journalNeedsCheck(error) ? '发送前保存未确认，请重新打开应用后检查。' : '没有发送成功，内容仍在输入框中。');
     } finally { if (sending.current === sendToken) { sending.current = null; setBusy(false); } }
   };
   const chooseSticker = async (sticker: StickerIdentity) => {
-    if (!client || busy || sending.current || preparingCamera.current || uncertain || snapshot?.connection !== 'online') return;
+    if (!client || busy || sending.current || preparingCamera.current || snapshot?.connection !== 'online') return;
     const current = client.controller.scope(), sendToken = {}; sending.current = sendToken; setBusy(true); setError('');
+    const placement = sendPlacement(client.controller.snapshot());
     try {
-      const outcome = await sendSticker(client.controller, client.media, sticker);
+      await beginSendSticker(client.controller, client.media, sticker, placement);
       if (active.current !== client || !current()) return;
       requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: true }));
-      if (outcome.state === 'failed') setError('表情发送失败，请重试。');
-      else if (outcome.state === 'unknown') setUncertain({ outcome, text: '', ids: [] });
-    } catch { if (active.current === client && current()) setError('表情发送失败，请重试。'); }
+    } catch (error) { if (active.current === client && current()) setError(journalNeedsCheck(error) ? '发送前保存未确认，请重新打开应用后检查。' : '表情发送失败，请重试。'); }
     finally { if (sending.current === sendToken) { sending.current = null; setBusy(false); } }
   };
   const connect = async () => {
@@ -715,7 +688,15 @@ function AppContent() {
   };
   const workspaceImages = snapshot?.view?.capabilities.workspaceImages === true;
   const messages = useMemo(() => snapshot ? rowsFor(snapshot) : [], [snapshot]);
-  const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => client && sessionId ? <MessageBubble key={item._id} row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} /> : null, [client, sessionId, workspaceImages, messages.length]);
+  const timeHeadings = useMemo(() => chatTimeHeadings(messages, chatDayNow), [messages, chatDayNow]);
+  const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => {
+    if (!client || !sessionId) return null;
+    const current = client.controller.scope(), operationId = item.operationId;
+    return <View>
+      {timeHeadings[item._id] && <View style={styles.timeHeading}><Text testID="chat-time-heading" style={[styles.timeHeadingText, { color: dark ? '#e1e4e8' : '#59616c', backgroundColor: dark ? 'rgba(35,39,45,0.85)' : 'rgba(245,247,250,0.9)' }]}>{timeHeadings[item._id]}</Text></View>}
+      <MessageBubble row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} localImages={operationId ? localImages[operationId] : undefined} localFiles={operationId ? localFiles[operationId] : undefined} onRemoteReady={operationId ? id => { if (active.current === client && current()) releaseLocalImage(operationId, id); } : undefined} />
+    </View>;
+  }, [client, sessionId, workspaceImages, messages.length, timeHeadings, dark, localImages, localFiles, releaseLocalImage]);
   const currentAppearance = appearance?.client === client && appearance.sessionId === sessionId ? appearance : null;
   const title = currentAppearance?.name || snapshot?.view?.name || '聊天';
   const background = width > height ? currentAppearance?.landscape : currentAppearance?.portrait;
@@ -766,23 +747,22 @@ function AppContent() {
     const remove = () => { item.release(); setDrafts(attachmentsRef.current.filter(entry => entry.id !== item.id)); };
     return item.kind === 'image' ? <View key={item.id} style={styles.draftImageFrame}>
       <Image testID="draft-image" source={{ uri: item.uri }} style={styles.draftImage} accessibilityLabel={item.name} />
-      <View style={styles.draftImageRemove}><Button accessibilityLabel={`移除附件 ${item.name}`} size="overlay" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy || !!uncertain} onPress={remove} /></View>
+      <View style={styles.draftImageRemove}><Button accessibilityLabel={`移除附件 ${item.name}`} size="overlay" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy} onPress={remove} /></View>
     </View> : <View key={item.id} style={[styles.draftItem, { backgroundColor: dark ? '#343a43' : '#e8ebef' }]}>
       <SymbolView name={{ ios: 'doc', android: 'description', web: 'description' }} size={20} tintColor={ink} /><View><Text numberOfLines={1} ellipsizeMode="middle" style={[styles.draftName, { color: ink }]}>{item.name}</Text>
         <Text style={[styles.draftFileSize, { color: muted }]}>{item.size < 1_000_000 ? `${(item.size / 1000).toFixed(1)} KB` : `${(item.size / 1_000_000).toFixed(1)} MB`}</Text></View>
-      <Button accessibilityLabel={`移除附件 ${item.name}`} variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy || !!uncertain} onPress={remove} />
+      <Button accessibilityLabel={`移除附件 ${item.name}`} variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy} onPress={remove} />
     </View>;
   })}</ScrollView>;
   return <View style={[styles.screen, { backgroundColor: page }]}>
     <View style={[styles.screen, { display: spaceOpen ? 'none' : 'flex' }]}>
       {background && <><Image testID="chat-background" source={{ uri: background }} accessibilityIgnoresInvertColors accessible={false} resizeMode="cover" style={StyleSheet.absoluteFill} /><View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: dark ? 'rgba(15,19,24,0.38)' : 'rgba(245,247,250,0.20)' }]} /></>}
       <View style={[styles.shell, { maxWidth: width > 760 ? 760 : undefined }]}>
-        <View testID="chat-topbar" pointerEvents="box-none" style={[styles.chatTopbar, { top: insets.top }]}><Surface style={styles.identity}>
+        <View testID="chat-topbar" pointerEvents="box-none" style={[styles.chatTopbar, { top: insets.top }]}><Surface interactive style={styles.identity}>
           <View testID="chat-avatar" style={styles.avatar}>{currentAppearance?.avatar ? <Image testID="companion-avatar" source={{ uri: currentAppearance.avatar }} accessible={false} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{title.slice(0, 1).toUpperCase()}</Text>}</View>
           <View style={[styles.identityDivider, { backgroundColor: muted }]} />
           <Button accessibilityLabel="打开伴侣空间" variant="ghost" icon={{ ios: 'ellipsis', web: 'more_horiz', android: 'more_horiz' }} onPress={() => navigateFromChat(() => setSpaceOpen(true))} />
-        </Surface><Surface style={styles.headerActions}>
-          <Button accessibilityLabel="上下文" variant="ghost" icon={{ ios: 'chart.bar', web: 'monitoring', android: 'monitoring' }} onPress={() => navigateFromChat(() => setContextOpen(true))} />
+        </Surface><Surface interactive style={styles.headerActions}>
           <Button accessibilityLabel="搜索聊天记录" variant="ghost" icon={{ ios: 'magnifyingglass', web: 'search', android: 'search' }} onPress={() => navigateFromChat(() => setSearchOpen(true))} />
           <Button accessibilityLabel="设置" variant="ghost" icon={{ ios: 'gearshape', web: 'settings', android: 'settings' }} onPress={() => navigateFromChat(() => setSettingsOpen(true))} />
         </Surface></View>
@@ -824,8 +804,8 @@ function AppContent() {
             <ComposerContainer {...(iosChatKeyboard && !nativePanelAvailable ? { enabled: !stickerSearchActive } : {})} style={styles.floatingComposer}>
               <Animated.View style={nativePanelAvailable ? nativeStickyStyle : undefined}>
               <View ref={composerRef} testID="floating-composer" onLayout={event => { const height = event.nativeEvent.layout.height; toolbarHeightRef.current = height; keyboardDiagnostic.record('layout', { height: Math.round(height) }); setToolbarHeight(height); }}>
-              <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || !!uncertain || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
-                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom, backgroundColor: dark ? '#25282d' : '#f7f8fa' }]}>{panelKind === 'stickers' ? <View testID="stickers-panel" style={[styles.screen, { backgroundColor: dark ? '#25282d' : '#f7f8fa' }]}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
+              <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
+                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={StyleSheet.absoluteFill}>{null}</Surface></View>{panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
                 const inputPanel = nativePanelAvailable && inputAreaModule ? <inputAreaModule.KeyboardPanel scopeGeneration={inputAreaSession} style={styles.nativePanelPlaceholder} onLayout={event => { if (panelGeneration.current === inputAreaSession) { panelTagGeneration.current = inputAreaSession; panelTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } }} accessibilityElementsHidden={!emojiOpen} importantForAccessibility={emojiOpen ? 'auto' : 'no-hide-descendants'}><View collapsable={false} style={{ height: emojiPanelHeight }}>{panelContent}</View></inputAreaModule.KeyboardPanel> : <EmojiPanel open={emojiOpen} panelHeight={emojiPanelHeight} visibleHeight={emojiVisibleHeight} progress={emojiProgress} instantOpen={emojiInstantOpen}>{panelContent}</EmojiPanel>;
                 return <>
               <InputArea generation={inputAreaSession} onLayout={event => { if (nativePanelAvailable || (__DEV__ && Platform.OS === 'ios' && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1')) { if (panelGeneration.current === inputAreaSession) { hostTagGeneration.current = inputAreaSession; inputAreaHostTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } } }} composer={<Animated.View style={[styles.composerOuter, composerInset]} onLayout={event => { chatComposerHeight.value = event.nativeEvent.layout.height; }}>
@@ -833,17 +813,17 @@ function AppContent() {
                   {draftItems}
                   {preparingPhoto && <View accessibilityRole="progressbar" accessibilityLabel="正在处理照片" style={[styles.photoPreparing, { backgroundColor: dark ? '#30343a' : '#f4f5f7' }]}><ActivityIndicator size="small" /><Text style={{ color: ink }}>正在处理照片…</Text></View>}
                   <View style={styles.composerContents}>
-                    <Button accessibilityLabel="附件" size="navigation" variant="ghost" icon={{ ios: 'plus', web: 'add', android: 'add' }} disabled={busy || !!uncertain || panelBusy} onPress={() => emojiOpen && panelKind === 'attachments' ? closeEmojiPanel() : openComposerPanel('attachments')} />
-                    <Surface style={styles.composerSurface}>
+                    <Button accessibilityLabel="附件" size="navigation" variant="ghost" icon={{ ios: 'plus', web: 'add', android: 'add' }} disabled={busy || panelBusy} onPress={() => emojiOpen && panelKind === 'attachments' ? closeEmojiPanel() : openComposerPanel('attachments')} />
+                    <Surface interactive style={styles.composerSurface}>
                       <View style={styles.composerField}>
                         <View style={styles.composerInputWrap}>
-                        <Text pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                        {Platform.OS !== 'ios' && <Text pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
                           onLayout={event => setInputHeight(Math.max(44, Math.min(132, Math.ceil(event.nativeEvent.layout.height))))}
-                          style={[styles.composerInputMeasure, styles.composerInput]}>{draft ? `${draft}${draft.endsWith('\n') ? '\u200b' : ''}` : ' '}</Text>
+                          style={[styles.composerInputMeasure, styles.composerInput]}>{draft ? `${draft}${draft.endsWith('\n') ? '\u200b' : ''}` : ' '}</Text>}
                         <TextInput ref={inputRef} accessibilityLabel="输入消息…" placeholder="输入消息…" placeholderTextColor={muted} value={draft} onChangeText={setText}
                           onPressIn={() => { if (nativePanelAvailable && nativePanelMode.current === 'panel') openSystemKeyboard(); }}
-                          onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy && !uncertain} multiline maxLength={16000}
-                          style={[styles.composerInput, { height: inputHeight, color: ink }]} />
+                          onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy} multiline maxLength={16000}
+                          style={[styles.composerInput, Platform.OS === 'ios' ? { minHeight: 44, maxHeight: 132, color: ink } : { height: inputHeight, color: ink }]} />
                         </View>
                         <View style={styles.composerEmoji}>
                           <Button disabled={panelBusy} accessibilityLabel={emojiOpen && panelKind === 'stickers' ? '键盘' : '表情'} size="circle" variant="ghost"
@@ -852,7 +832,7 @@ function AppContent() {
                         </View>
                       </View>
                     </Surface>
-                    <Button accessibilityLabel="发送消息" size="navigation" variant="ghost" icon={{ ios: 'arrow.up', web: 'arrow_upward', android: 'arrow_upward' }} disabled={busy || !!uncertain || snapshot?.connection !== 'online' || (!draft.trim() && attachments.length === 0)} onPress={() => void send()} />
+                    <Button accessibilityLabel="发送消息" size="navigation" variant="ghost" icon={{ ios: 'arrow.up', web: 'arrow_upward', android: 'arrow_upward' }} disabled={busy || snapshot?.connection !== 'online' || (!draft.trim() && attachments.length === 0)} onPress={() => void send()} />
                   </View>
                 </View>
               </Animated.View>} panel={inputPanel} />
@@ -863,12 +843,8 @@ function AppContent() {
             </ComposerContainer>
           </KeyboardAvoidingView>
         </View>
-        {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} dark={dark} onClose={() => setSearchOpen(false)} />}
+        {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} media={client.media} workspaceImages={snapshot?.view?.capabilities.workspaceImages === true} companionName={snapshot?.view?.name || '伙伴'} dark={dark} onClose={() => setSearchOpen(false)} />}
         {settingsOpen && sessionId && <ChatSettings key={sessionId} controller={client.controller} media={client.media} dark={dark} onClose={() => setSettingsOpen(false)} onBackgroundSaved={() => setAppearanceRevision(value => value + 1)} />}
-        <BottomSheet isPresented={contextOpen} onDismiss={() => setContextOpen(false)} snapPoints={['half']} containerColor={dark ? '#25282d' : '#f7f8fa'} testID="context-sheet"><RNHostView><View style={styles.contextSheet}>
-          <View style={styles.contextHeading}><Text style={[styles.contextTitle, { color: ink }]}>上下文</Text><Button accessibilityLabel="关闭上下文" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setContextOpen(false)} /></View>
-          <Text style={{ color: ink }}>{snapshot?.view?.contextUsage.tokens == null ? '暂无上下文用量数据' : `已使用 ${snapshot.view.contextUsage.tokens.toLocaleString()}${snapshot.view.contextUsage.capacity == null ? '' : ` / ${snapshot.view.contextUsage.capacity.toLocaleString()}`} tokens`}</Text>
-        </View></RNHostView></BottomSheet>
       </View>
     </View>
     {spaceOpen && <View style={styles.screen}><NativeTabsFrame header={spaceHeader} ink={ink} page={page} dark={dark} bottomInset={insets.bottom} /></View>}
@@ -885,7 +861,6 @@ const styles = StyleSheet.create({
   spaceTopbar: { paddingHorizontal: 20 },
   chatTopbar: { position: 'absolute', left: 0, right: 0, zIndex: 2, paddingHorizontal: 18, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerActions: { borderRadius: 999, flexDirection: 'row', alignItems: 'center', padding: 5 },
-  contextSheet: { flex: 1, paddingHorizontal: 16, gap: 12 }, contextHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, contextTitle: { fontSize: 19, fontWeight: '600' },
   chatAlerts: { position: 'absolute', left: 0, right: 0, zIndex: 2 },
   chatError: { marginHorizontal: 18, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, backgroundColor: '#fff' },
   chatErrorText: { color: '#9c302b', fontSize: 14, lineHeight: 20 },
@@ -894,12 +869,13 @@ const styles = StyleSheet.create({
   avatarText: { color: '#fff', fontSize: 17, fontWeight: '700' }, identityDivider: { width: StyleSheet.hairlineWidth, height: 23, opacity: 0.45 },
   chatBody: { flex: 1, minHeight: 0 }, floatingComposer: { position: 'absolute', bottom: 0, left: 0, right: 0 },
   messageRow: { marginVertical: 4, marginHorizontal: 18, gap: 6 }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '78%' }, theirs: { flex: 1, alignItems: 'flex-start' },
-  bubble: { borderRadius: 22, paddingHorizontal: 15, paddingVertical: 11 }, myBubble: { borderBottomRightRadius: 7 }, messageText: { fontSize: 16, lineHeight: 23 }, errorSmall: { color: '#ffe2df', fontSize: 11, marginTop: 4 },
+  timeHeading: { alignItems: 'center', marginTop: 20, marginBottom: 12 }, timeHeadingText: { overflow: 'hidden', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4, fontSize: 12, lineHeight: 16 },
+  messageText: { fontSize: 16, lineHeight: 23 }, errorSmall: { color: '#ffe2df', fontSize: 11, marginTop: 4 },
   image: { width: 200, height: 150, borderRadius: 16 }, stickerImage: { width: 120, height: 120 }, imageLoading: { width: 140, height: 90, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#e1e4e8', borderRadius: 16 }, mediaNotice: { fontSize: 12, color: '#727782' }, contentPlaceholder: { color: '#777f8b', backgroundColor: 'rgba(130,140,150,0.14)', borderRadius: 13, padding: 12, overflow: 'hidden', maxWidth: 240 },
   composerOuter: { paddingTop: 4, paddingHorizontal: 7 }, composerSurface: { flex: 1, borderRadius: 22 },
   composerContents: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, gap: 6 },
   composerField: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, paddingLeft: 8 },
-  composerEmoji: { alignSelf: 'center' },
+  composerEmoji: { alignSelf: 'flex-end' },
   composerInputWrap: { flex: 1, minWidth: 0 },
   composerInputMeasure: { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 },
   composerInput: { fontSize: 16, lineHeight: 22, paddingHorizontal: 4, paddingVertical: 10, textAlignVertical: 'center' },

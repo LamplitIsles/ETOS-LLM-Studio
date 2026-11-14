@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { BottomSheet, Host, RNHostView, Switch } from '@expo/ui';
+import { Host, RNHostView, Switch } from '@expo/ui';
 import { MODEL_CHOICES, ModelSettingsClient, type ModelSelection, type ModelSettings } from '../cfl/model-settings';
 import type { ChatController } from '../cfl/chat';
 import type { ApiTransport } from '../cfl/transport';
@@ -9,10 +9,12 @@ import { pickImages, type AttachmentDraft } from '../cfl/drafts';
 import { Button } from './Button';
 import { VoiceSettings } from './VoiceSettings';
 import { useAppearance } from './appearance';
+import { FullSheet } from './FullSheet';
 
 export function ChatSettings({ controller, media, dark, onClose, onBackgroundSaved }: { controller: ChatController; media: ApiTransport; dark: boolean; onClose: () => void; onBackgroundSaved: () => void }) {
   const service = useMemo(() => new ModelSettingsClient(controller, media), [controller, media]);
   const [snapshot, setSnapshot] = useState<ModelSettings | null>(null);
+  const [presented, setPresented] = useState(true);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const active = useRef(false), writing = useRef(false), generation = useRef(0);
@@ -95,9 +97,9 @@ export function ChatSettings({ controller, media, dark, onClose, onBackgroundSav
     finally { writing.current = false; if (active.current && generation.current === id) setLoading(false); }
   };
   const selectedModel = MODEL_CHOICES.find(item => item.id === snapshot?.currentModel);
-  return <BottomSheet isPresented onDismiss={onClose} snapPoints={['full']} containerColor={dark ? '#25282d' : '#f7f8fa'} testID="chat-settings-sheet">
+  return <FullSheet open={presented} onRequestClose={() => setPresented(false)} onDismiss={onClose} color={dark ? '#25282d' : '#f7f8fa'} testID="chat-settings-sheet">
     <RNHostView><View style={styles.page}>
-      <View style={styles.heading}><Text style={[styles.title, { color: ink }]}>设置</Text><Button accessibilityLabel="关闭设置" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={onClose} /></View>
+      <View style={styles.heading}><Text style={[styles.title, { color: ink }]}>设置</Text><Button accessibilityLabel="关闭设置" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setPresented(false)} /></View>
       <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.content}>
       <Text style={[styles.section, { color: ink }]}>外观</Text>
       <View style={styles.choices}>{([{ id: 'system', label: '跟随系统' }, { id: 'light', label: '浅色' }, { id: 'dark', label: '深色' }] as const).map(item =>
@@ -124,6 +126,6 @@ export function ChatSettings({ controller, media, dark, onClose, onBackgroundSav
       <VoiceSettings controller={controller} media={media} dark={dark} />
       </ScrollView>
     </View></RNHostView>
-  </BottomSheet>;
+  </FullSheet>;
 }
 const styles = StyleSheet.create({ page: { flex: 1, paddingHorizontal: 16, paddingBottom: 16, gap: 14 }, content: { gap: 14 }, heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, title: { fontSize: 19, fontWeight: '600' }, section: { fontSize: 16, fontWeight: '600' }, choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 } });

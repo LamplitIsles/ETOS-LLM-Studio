@@ -204,8 +204,9 @@ export function StickerPanel({ media, controller, sessionId, recent, onSelect, d
     return () => { requestId.current++; };
   }, [catalog, load, retry, selection, snapshots]);
   useEffect(() => {
+    if (!searchOpen) return;
     setSearchResults([]); setSearchCursor(null); setSearchFailed(false); setSearchLoading(false);
-    if (searchOpen && search && search === query.trim() && catalog) void loadSearch(null);
+    if (search && search === query.trim() && catalog) void loadSearch(null);
     return () => { searchRequestId.current++; };
   }, [catalog, loadSearch, query, search, searchOpen, searchRetry]);
   const toggleFavorite = useCallback(async (sticker: Sticker) => {
@@ -233,8 +234,14 @@ export function StickerPanel({ media, controller, sessionId, recent, onSelect, d
     setLoading(false); setFailed(false); setPreview(null); setSelection(id);
   };
   const changeQuery = (value: string) => { searchRequestId.current++; setQuery(value); setSearchResults([]); setSearchCursor(null); setSearchLoading(false); setSearchFailed(false); };
-  const searchDismissed = () => { if (searchPresented.current) { searchPresented.current = false; onSearchVisibilityChange?.(false); } };
-  const closeSearch = () => { searchRequestId.current++; setPreview(null); setSearchOpen(false); if (Platform.OS !== 'ios') searchDismissed(); setQuery(''); setSearch(''); };
+  const searchDismissed = () => {
+    if (!searchPresented.current) return;
+    searchPresented.current = false;
+    setQuery(''); setSearch(''); setSearchResults([]); setSearchCursor(null);
+    setSearchLoading(false); setSearchFailed(false); setPreview(null);
+    onSearchVisibilityChange?.(false);
+  };
+  const closeSearch = () => { searchRequestId.current++; setSearchOpen(false); if (Platform.OS !== 'ios') searchDismissed(); };
   const panel = <View style={styles.panel}>
     <View style={styles.heading}><Text style={[styles.title, { color: ink }]}>表情</Text><Button accessibilityLabel="关闭表情" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={onClose} /></View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={styles.tabs} contentContainerStyle={styles.tabItems}>

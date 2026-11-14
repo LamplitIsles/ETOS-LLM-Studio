@@ -5,8 +5,11 @@ import { WebSocketServer } from 'ws';
 import { createChatHost, type ChatBackend, type ChatChange } from '../../vendor/contracts/src/server';
 import { createFixture } from './fixture';
 
-export async function startFixtureSeedHost(extraMessages = 0, replyScenario = false) {
+export async function startFixtureSeedHost(extraMessages = 0, replyScenario = false, holdSubmissions = false, partialImages: false | 'first' | 'last' = false, omitFiles = false) {
   const fixture = createFixture();
+  let releaseSubmissions: (() => void) | undefined;
+  let submissionsReleased = !holdSubmissions;
+  const submissionGate = holdSubmissions ? new Promise<void>(resolve => { releaseSubmissions = resolve; }) : Promise.resolve();
   const firstTime = fixture.read().messages[0]?.createdAt ?? 0;
   const syntheticHistory = Array.from({ length: extraMessages }, (_, index) => {
     const text = `合成消息 ${String(index).padStart(3, '0')}：${'一段可变长度的历史内容。'.repeat(1 + index % 4)}`;
@@ -20,7 +23,7 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
     async read() { return fixture.read(); },
     subscribe(changed: (change: ChatChange) => void) {
       publishReply = changed;
-      const close = fixture.subscribe(view => changed({ type: 'update', scope, window: { messages: view.messages, before: view.before } }));
+      const close = fixture.subscribe(view => changed({ type: 'update', scope, window: { messages: view.messages, before: view.before }, state: { activeTurnId: view.activeTurnId } }));
       const closeReceipts = fixture.subscribeReceipts(receipt => changed({ type: 'deliveryResult', scope, receipt }));
       return { scope, close() { publishReply = undefined; close(); closeReceipts(); } };
     },
@@ -31,8 +34,14 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
       const start = Math.max(0, end - 30);
       return { messages: syntheticHistory.slice(start, end), before: start ? `timeline-page-${start}` : 'timeline-original' };
     },
-    submit: fixture.port.submit,
+    async submit(input: Parameters<typeof fixture.port.submit>[0]) {
+      await submissionGate;
+      const images = partialImages && input.images?.length ? (partialImages === 'first' ? input.images.slice(0, 1) : input.images.slice(1)) : input.images;
+      return fixture.port.submit({ ...input, ...(images ? { images } : {}), ...(omitFiles && input.files?.length ? { files: [] } : {}) });
+    },
     lookup: fixture.port.lookup,
+    // The upstream host contract still requires this wire method; this fixture cannot stop turns.
+    async stop() { throw new Error('fixture_stop_unavailable'); },
     search: fixture.port.search,
     searchRead: fixture.port.searchRead,
   } as unknown as ChatBackend;
@@ -41,6 +50,10 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
   let syntheticSequence = 0;
   const server = http.createServer((req, res) => {
     void (async () => {
+      if (holdSubmissions && req.method === 'POST' && !req.headers.origin && req.url === '/__test/send/release') {
+        submissionsReleased = true; releaseSubmissions?.(); res.writeHead(204).end(); return;
+      }
+      if (!submissionsReleased && req.method === 'GET' && /^\/api\/chat\/media\//.test(req.url ?? '')) { res.writeHead(404).end(); return; }
       if (replyScenario && req.method === 'POST' && !req.headers.origin && /^\/__test\/reply\/[123]$/.test(req.url ?? '')) {
         const stage = Number(req.url!.at(-1));
         if (!publishReply) { res.writeHead(409).end(); return; }

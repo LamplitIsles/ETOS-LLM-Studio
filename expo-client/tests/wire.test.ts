@@ -26,6 +26,7 @@ test('upstream Chord wire: subscribe, history, send, receipt lookup and streamed
   let deliver!: (receipt: import('../vendor/contracts/src/index').Receipt) => void;
   const delivered = new Promise<import('../vendor/contracts/src/index').Receipt>(resolve => { deliver = resolve; });
   const client = await openChat(socket as unknown as WebSocket, next => { view = next; }, () => {}, deliver);
+  assert.equal('stop' in client, false);
   assert.equal(view?.sessionId, 'synthetic'); assert.equal((await client.history('cursor')).messages[0]?.id, 'old');
   const op = '00000000-0000-4000-8000-000000000001'; assert.equal((await client.submit({ operationId: op, text: 'hello' })).state, 'submitted'); assert.equal((await client.lookup(op))?.messageId, 'm'); assert.equal(sent, 1);
   changed({ type: 'deliveryResult', scope, receipt: { operationId: op, attempt: 2, state: 'failed', messageId: null, turnId: null, error: 'rejected' } });

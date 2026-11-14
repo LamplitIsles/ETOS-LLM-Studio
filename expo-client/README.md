@@ -8,6 +8,20 @@ their process-local fixtures under `tests/fixtures`.
 The chat UI composes FlashList and native/Web controls around the CFL data
 controller; it does not depend on a bundled chat UI framework.
 
+## 聊天交互状态（2026-11-12）
+
+- 聊天搜索使用当前 CFL 搜索协议；CFL 当前通过 FlickLog 查询和读取历史。
+  搜索结果按发送者、可用时间和摘要显示，点击进入消息上下文。Enter 搜索、
+  结果列表高亮和 Markdown 气泡已实现；详情中匹配词高亮仍在开发。
+- 搜索正文中可识别的成对 `<image ...></image>` 标签，会在展示时转换为
+  原位置的图片，使用 CFL 工作区图片接口及现有认证和路径检查。档案内容不变；
+  选择和复制针对呈现后的 Markdown。用户已在 iPhone 验证一个真实示例；代码块等
+  特殊 Markdown 上下文和未被标签引用的附件不能据此视为完整支持。
+- 用户在 iPhone 确认过搜索定位、自动聚焦、列表样式、搜索关闭、多行输入高度、
+  中文输入和长文本滚动。验证针对当时的开发版与交互，不代表所有机型和输入法。
+- 用户决定移除聊天顶部的上下文圆圈和停止按钮。键盘、表情与附件面板互切的
+  平滑动画仍待处理；静态不透明表情圆角的 iOS 原生判定仍需新构建和设备验证。
+
 ## iOS 开发（Mac）
 
 项目已为 npm 12 授权固定版本 `react-native-enriched-markdown@1.2.0-nightly-20261109-ca015bcac` 所需的安装脚本。使用环境代理下载该库的原生资源时，Node 需启用环境代理，可运行 `NODE_USE_ENV_PROXY=1 npm ci`。
@@ -24,7 +38,7 @@ Cloud 通过 Homebrew 查找 `ruby@3.3`，缺失时安装，再在 CI 工具目�
 
 需要脱离 Metro 的本地版本时，运行 `npm run ios:build:release` 构建未签名 Release；用户可在 Mac 本机运行 `npm run ios:install:release` 签名已有 Release 产物并安装，不重新编译（多台设备同样可加 `-- --device <identifier>`）。Release 内嵌生产 JS 和资源，安装后无需 Metro，真实聊天仍需连接网络。它与 Debug 使用相同的 `io.guion.etos.cfl4960` bundle ID，会替换同一 App 的现有安装。此本地签名安装受开发签名有效期限制，不等同于 App Store 分发；OTA 更新尚未上线，不是此流程的前提。安装结果不明时 Debug 和 Release 共用上述确认流程。
 
-构建产物名由 app config 的 `name` 派生为 `ETOSChat.app`，工程目录与 target 仍是 `ETOSExpo`；`ios:build`、`ios:install` 与 `ios:archive` 都按这个产物名取用。构建复用既有 `~/Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe`；如需指定另一个**已有**目录，设置 `ETOS_DERIVED_DATA`。默认签名 Team 为 `RL5WAW5828`，可用 `ETOS_DEVELOPMENT_TEAM` 覆盖。Mac 曾在本次依赖锁更新前完成 Expo iOS 原生未签名构建；当前依赖配置的构建、真实登录和设备交互仍待验证。
+构建产物名由 app config 的 `name` 派生为 `ETOSChat.app`，工程目录与 target 仍是 `ETOSExpo`；`ios:build`、`ios:install` 与 `ios:archive` 都按这个产物名取用。构建复用既有 `~/Library/Developer/Xcode/DerivedData/ETOS_LLM_Studio-gbdwtrcvmcilytfthkwwgrxdjqbe`；如需指定另一个**已有**目录，设置 `ETOS_DERIVED_DATA`。默认签名 Team 为 `RL5WAW5828`，可用 `ETOS_DEVELOPMENT_TEAM` 覆盖。Mac 曾在本次依赖锁更新前完成 Expo iOS 原生未签名构建；当前依赖配置的构建仍待验证；真实登录与部分设备交互已有阶段性验证，完整设备验收仍未完成。
 
 ## Development
 
@@ -83,11 +97,19 @@ Run `node tests/composer-ui.cjs` and `node tests/motion-ui.cjs` with the same
 environment variables for the other browser checks. Start a fresh test host
 for each test so its in-memory conversation is clean. These tests send messages;
 never point them at shared development data or a real session.
+For the optimistic-send checks, start a fresh host with
+`ETOS_UI_HOLD_SUBMISSIONS=1 npm run test:ui:host -- 18092`, then set
+`ETOS_UI_PROXY_PORT` and `ETOS_UI_SYNTHETIC_HOST_PORT` to its printed ports and
+run `node tests/optimistic-send-ui.cjs` or `node tests/optimistic-image-ui.cjs`.
+For `tests/optimistic-partial-images-ui.cjs`, additionally start the host with
+`ETOS_UI_PARTIAL_IMAGES=1 ETOS_UI_OMIT_FILES=1`; repeat with
+`ETOS_UI_PARTIAL_IMAGES=first` on both the host and test to check the other image.
 `tests/ui-test-context.cjs` routes browser HTTP and WebSocket traffic for the
 virtual `http://127.0.0.1:8091` origin to `ETOS_UI_PROXY_PORT`, retaining the
 required Host and Origin. It rejects the common shared service ports 3090,
 5173, 8081, 8082, 8091 and 8092. The host can also be started programmatically with `startFixtureSeedHost()` from
 `tests/fixtures/seed-host.ts`; it returns `request`, `setStatus` and `close`.
+Use a fresh test-owned host for each test.
 The pinned Playwright dependency can use Chromium installed with
 `npx playwright install chromium`; omit `CHROME_PATH` to use that browser.
 
@@ -176,6 +198,34 @@ peer dependencies, licensing, and platform validation limits.
   item once its server `operationId` appears. A pending `submitted` item is
   retained until it is visible in the server view. `unknown` is not a user
   failure; the controller looks it up and never automatically resends it.
+- For a received sticker, pass the `ImageData` already obtained with
+  `controller.readImage(media, attachmentId, current, 'original', signal)` to
+  `classifyStickerOpacity(image, current, signal)` from
+  `src/cfl/sticker-opacity`. It returns `opaque`, `transparent`, or `unknown`;
+  only `opaque` is evidence for clipping to rounded corners. Keep displaying
+  the original unchanged while classification runs, and use no clipping for
+  `transparent` or `unknown`. Check the same component/session scope again
+  before applying its result. Classification makes no media request and does
+  not own or alter the supplied bytes.
+  Static JPEG, PNG and WebP are decoded at original dimensions and inspected
+  pixel by pixel. GIF, APNG/animated WebP, 16-bit PNG (whose alpha might be
+  rounded by RGBA8 conversion), unsupported decoders, invalid data, cancellation
+  and over-budget work return `unknown`. Limits are 8,000,000 encoded bytes,
+  4,096 pixels per dimension and 4,000,000 total pixels. One decode runs at a
+  time, with up to eight waiting jobs and 16,000,000 queued bytes; overflow
+  returns `unknown`. Waiting cancellation is immediate; a running platform
+  decode is allowed to finish and its stale result is discarded. No temporary
+  file or persistent classification cache is created.
+  Web uses a local Blob and canvas; iOS uses a background ImageIO method added
+  to the existing ETOS input-area module. An old binary, unsupported platform,
+  or unavailable native method returns `unknown`; a new iOS binary must be
+  built and installed before this classification can run there. No new Pod
+  source file or dependency was added. The native build and iPhone behavior
+  have not been verified. A complete solution for opaque animations requires
+  a bounded, fully composited all-frame decoder and device validation.
+  Run the data-layer checks with `npx tsx --test tests/sticker-opacity.test.ts`
+  and the local Chromium decoder check with
+  `CHROME_PATH=/path/to/chrome node tests/sticker-opacity-browser.cjs`.
 - After the controller has started and its chat view is established, call
   `loadAppearance(media, controller.scope())` from `src/cfl/appearance.ts`.
   It returns `{companionName, userName, companionAvatar, backgrounds}` (the
@@ -244,29 +294,57 @@ peer dependencies, licensing, and platform validation limits.
   prepares images and streams files with one operation ID, then journals the
   complete references before one chat dispatch. It resolves to
   `{origin, sessionId, operationId, state}` where state is `submitted`, `observed`, `failed`, or
-  `unknown`. Before dispatch, rejection means keep text and drafts; on
-  `failed`, keep them for explicit user action. On `submitted`/`observed`,
-  clear the composer but retain preview resources until no timeline item needs
-  them, then release. On `unknown`, keep the operation identity separate from
-  any new draft and never re-dispatch it. The current UI locks its composer;
-  a later UI change must preserve the unknown operation independently and must
-  not mistake a new user action for a retry of it. On snapshot updates, call
+  `unknown`. Before local admission, keep text and drafts on rejection. The
+  current UI uses `beginSendDrafts` to clear the admitted draft without waiting
+  for a receipt; unknown operations remain separate from the next draft and
+  are never re-dispatched automatically. Local image previews stay with their
+  operation until the matching remote image loads or the chat scope ends.
+  Explicitly failed operations are shown on their message. When needed, call
   `await controller.operationStatus({origin, sessionId, operationId})`.
   This method uses
   a persisted receipt or an actual matching message in the current view or
   loaded history. A missing pending entry is never proof of observation.
   It returns `unknown` when the origin/session is not active, after stop,
   when storage cannot be read, or when evidence is absent. Recheck component
-  lifetime and session after awaiting it. Switching back to the session and
-  restarting the controller allows journaled receipts to be checked again.
+  lifetime and session after awaiting it. Restarting the controller allows
+  journaled receipts for the active chat identity to be checked again.
   Reconnect reconciles by ID only; it never reuploads or resubmits. Picker data
-  and previews are in memory/cache and do not survive an app restart as drafts:
-  tell the user the selected files need to be chosen again if an operation is
-  explicitly known to have failed. If the result remains unknown, explain that
-  it is being checked; do not silently create a new operation or upload again.
-  A returned `unknown` does not guarantee an entry is still in the journal:
+  and previews are in memory/cache and do not survive an app restart as drafts.
+  If the result remains unknown, check it in the background; do not silently
+  create a new operation or upload again.
+  An `unknown` result does not guarantee an entry is still in the journal:
   an observed message may already have retired it, or storage may be unavailable.
   Staged references do not guarantee that the server still retains their bytes.
+- For optimistic UI integration, synchronously obtain `snapshot = controller.snapshot()`
+  at the send gesture and derive the last visible authoritative row's stable key
+  from that same snapshot. Call `beginSendDrafts(controller, media, text, drafts,
+  {snapshot, after, predecessor?})` or `beginSendSticker(controller, media,
+  sticker, {snapshot, after, predecessor?})`. `after` is that key or `null`;
+  `predecessor`, if supplied, must be an operation observed in that snapshot.
+  The UI owns row-key selection; the controller bounds the key but does not
+  prove its visual position. A stale snapshot is rejected before preparation.
+  Consecutive admissions with the same anchor chain their operation IDs. The
+  optional anchor is persisted with the pending entry; older or invalid anchors
+  have no placement and require conservative UI fallback.
+  The Promise returns `{origin, sessionId, operationId, images?, files?}` after
+  durable save and publication, without waiting for the receipt. The media refs
+  are copies in the same order as the selected drafts of each kind. Follow snapshot updates
+  or `operationStatus` for evidence; an unknown result must not be resent.
+  Capture the component lifetime and `controller.scope()` at the gesture and
+  recheck them before changing any UI after awaiting. The caller owns draft
+  objects throughout: retain local preview resources while displayed, transfer
+  them by operation identity on admission, and release on replacement or
+  cleanup. Journaled metadata cannot recreate local preview bytes after restart.
+  Preparation/stage rejection precedes journal and dispatch. `AdmissionError`
+  carries `identity`, `dispatched: false`, and `journal: 'stored' | 'unknown'`:
+  a failed save may still have written, while an invalidated scope can follow
+  a completed save. Keep the draft and inspect the identified operation; do
+  not infer that a journal record is absent. Further journal writes are blocked
+  after an uncertain save until the controller is restarted and its journal
+  successfully reloaded. A reload describes what the store returned at that
+  moment; the store interface cannot prove that a failed underlying write will
+  never complete later. It does not establish absence or resend an operation.
+  Existing `sendDrafts` and `sendSticker` retain their receipt-waiting API.
 - Create `new StickerClient(media, sessionId, current)` from
   `src/cfl/stickers.ts`, where `current` combines component lifetime with a
   fresh `controller.scope()`. `page('packs' | 'pack' | 'favorites' | 'search',
@@ -326,6 +404,29 @@ peer dependencies, licensing, and platform validation limits.
   On iOS, check `markdownImageResolverAvailable()` before enabling the nightly
   GitHub-flavor resolver; a missing parser otherwise falls back to untrusted URLs.
   Always return a controlled URI or `{uri: ''}`, never `undefined` for failure.
+- `findArchiveWorkspaceImages(source, {workspaceImages, isCurrent, signal})`
+  in `src/cfl/archive-workspace-images.ts` identifies a conservative subset of
+  the Codex local-image marker in search record text. `images` contains UTF-16
+  `start`/`end`, the untrusted literal `path`, and a canonical `requestPath`.
+  Search displays recognized tags as Markdown images at their original position;
+  the underlying archive content is unchanged. Selection and copy operate on the
+  rendered Markdown rather than preserving the original tag. Image loading uses
+  the existing `MessageText` resolver and its scoped `createMarkdownImageUri`
+  cleanup as above. Scope, capability, cancellation and server
+  authorization still apply; parsing neither fetches nor confirms a file exists.
+  The marker path is a literal filesystem path, including any `%` characters;
+  the parser encodes it before using the shared Markdown destination contract.
+  The server remains responsible for workspace containment and symlink checks.
+  `unavailable` means the capability is absent; `limit` means the 131,072 UTF-16
+  source-unit or 16-opening limit was exceeded. In either case `images` is empty.
+  `ok` means the bounded scan ran, **not** that every image was found: it accepts
+  paired tags with `path="…"` and an optional Codex `name=[Image #N]`, anywhere
+  in the record, including code. The content between the tags may be nonempty.
+  Ambiguous quotes, angle brackets, unsupported attributes and outer nested tags
+  are skipped. The actual renderer still uses Enriched Markdown. A workspace file
+  can change or disappear and `.model.jpg` is not evidence of the original image
+  or sticker. A user confirmed one search image on iPhone; full search attachment
+  coverage remains unverified.
 - Real iOS: `createNativeAuth()`; call `select(httpsOrigin)` then `signIn()`
   only on explicit user action. Pass that same auth and origin to
   `createNativeChat(origin, auth)` from `factory.native.ts`. Stop the old

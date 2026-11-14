@@ -142,11 +142,10 @@ the UIKit input view eliminates the separate panel-padding path.
 To validate the candidate in the existing app, use the established Mac
 `npm run ios:prepare`, `npm run ios:build`, then, with a matching device and
 signing, `npm run ios:install`. Reuse the DerivedData path documented by the
-project; do not create another Swift cache. The diagnostic cleanup removes a
-Swift source file; if the existing CocoaPods project still references that
-file, refresh it with `npm run ios:prepare` or the project's existing `pod install`
-flow before rebuilding. The native change requires a rebuilt
-dev binary. Existing 18093 Metro can be reused if reachable and configured for
+project; do not create another Swift cache. This cleanup changes existing Swift
+files without adding or removing a source file; refresh the generated project or
+Pods using the existing workflow if they are stale. The native change requires a
+rebuilt dev binary. Existing 18093 Metro can be reused if reachable and configured for
 the binary; this module starts no service. JS/type tests and autolinking do not
 compile Swift or establish device behavior.
 

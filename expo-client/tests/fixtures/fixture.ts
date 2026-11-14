@@ -28,7 +28,10 @@ export function createFixture(options: { newOperationId?: () => string } = {}) {
     async history() { return { messages: old, before: null }; },
     async search({ query }) {
       const matched = [...old, ...view.messages].filter(item => item.text.includes(query));
-      const hits = matched.slice(0, 20).map(item => ({ id: item.id, kind: 'message' as const, sessionId: view.sessionId, role: item.role === 'user' ? 'user' as const : 'assistant' as const, snippet: { segments: [{ text: item.text, highlighted: false }] } }));
+      const hits = matched.slice(0, 20).map(item => {
+        const index = item.text.indexOf(query);
+        return { id: item.id, kind: 'message' as const, sessionId: view.sessionId, role: item.role === 'user' ? 'user' as const : 'assistant' as const, snippet: { segments: [{ text: item.text.slice(0, index), highlighted: false }, { text: item.text.slice(index, index + query.length), highlighted: true }, { text: item.text.slice(index + query.length), highlighted: false }] } };
+      });
       return { hits, estimatedTotalHits: matched.length, limited: matched.length > 20 };
     },
     async searchRead({ id }) {
@@ -54,7 +57,8 @@ export function createFixture(options: { newOperationId?: () => string } = {}) {
       notifyReceipt(receipt); for (const listener of receiptListeners) listener(receipt);
       return receipt;
     },
-    async lookup(id) { return receipts.get(id)?.receipt ?? null; }, close() {},
+    async lookup(id) { return receipts.get(id)?.receipt ?? null; },
+    close() {},
   };
   let sequence = 0;
   const controller = new ChatController('fixture://local', async () => ({ close() {} }) as WebSocket, store,

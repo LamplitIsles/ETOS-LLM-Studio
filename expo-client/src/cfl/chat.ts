@@ -3,9 +3,21 @@ import { validateReceipt, validateSubmission, validate, validateSearchInput, val
 import { type MediaTransport, type ImageData } from './transport';
 import { ImageSessionCache } from './image-session-cache';
 
-export type Pending = { origin: string; sessionId: string; operationId: string; text: string; createdAt: number; state: 'unknown' | 'submitted' | 'failed'; images?: ImageRef[]; files?: FileRef[]; error?: string; messageId?: string; attempt?: number; deliveryVersion?: 2 };
+/** Opaque timeline row key captured by the caller at the explicit send gesture. */
+export type SendAnchor = { after: string | null; predecessor?: string };
+export type Pending = { origin: string; sessionId: string; operationId: string; text: string; createdAt: number; state: 'unknown' | 'submitted' | 'failed'; images?: ImageRef[]; files?: FileRef[]; error?: string; messageId?: string; attempt?: number; deliveryVersion?: 2; anchor?: SendAnchor };
+function validAnchor(anchor: unknown): anchor is SendAnchor {
+  if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor)) return false;
+  const x = anchor as Record<string, unknown>;
+  return Object.keys(x).every(k => k === 'after' || k === 'predecessor') && (x.after === null || typeof x.after === 'string' && x.after.length > 0 && x.after.length <= 2048) && (x.predecessor === undefined || typeof x.predecessor === 'string' && x.predecessor.length > 0 && x.predecessor.length <= 256);
+}
+export class AdmissionError extends Error {
+  constructor(readonly identity: OperationIdentity, readonly journal: 'unknown' | 'stored', message: string) { super(message); this.name = 'AdmissionError'; }
+  readonly dispatched = false;
+}
 /** Legacy receipts may represent admission rather than final delivery. */
 function normalizePending(entry: Pending): Pending {
+  if (entry.anchor !== undefined && !validAnchor(entry.anchor)) { const { anchor: _anchor, ...rest } = entry; entry = rest; }
   if (entry.deliveryVersion === 2 && ((entry.state === 'unknown' && entry.attempt === undefined) || (Number.isSafeInteger(entry.attempt) && (entry.attempt ?? 0) > 0))) return entry;
   const { error: _error, messageId: _messageId, attempt: _attempt, ...rest } = entry;
   return { ...rest, state: 'unknown', deliveryVersion: 2 };
@@ -13,7 +25,12 @@ function normalizePending(entry: Pending): Pending {
 export interface PendingStore { load(origin: string): Promise<Pending[]>; save(origin: string, entries: Pending[]): Promise<void> }
 export type ChatPort = Pick<Awaited<ReturnType<typeof openChat>>, 'history' | 'submit' | 'lookup' | 'close'> & Partial<Pick<Awaited<ReturnType<typeof openChat>>, 'search' | 'searchRead'>>;
 export type ChatSnapshot = { connection: 'offline' | 'connecting' | 'online'; failure: 'access_denied' | 'unavailable' | null; view: ChatView | null; history: ChatMessage[]; before: string | null; pending: Pending[] };
+/** Obtain snapshot and its visible row key together, synchronously in the send gesture. */
+export type SendPlacement = SendAnchor & { snapshot: ChatSnapshot };
 export type OperationIdentity = { origin: string; sessionId: string; operationId: string };
+/** References are independent copies of the validated, journaled submission. */
+export type SendAdmission = OperationIdentity & { images?: ImageRef[]; files?: FileRef[] };
+export type PreparedAdmission = { identity: OperationIdentity; images?: ImageRef[]; files?: FileRef[]; completion: Promise<void> };
 export type OperationState = 'unknown' | 'submitted' | 'failed' | 'observed';
 export type SocketFactory = () => Promise<WebSocket>;
 export type OpenPort = (socket: WebSocket, changed: (view: ChatView) => void, offline: (error: Error) => void, deliveryResult: (receipt: Receipt) => void) => Promise<ChatPort>;
@@ -41,6 +58,12 @@ export class ChatController {
   private stopped = true;
   private listeners = new Set<(state: ChatSnapshot) => void>();
   private entries: Pending[] = [];
+  private journalUncertain = false;
+  private async saveEntries(entries: Pending[]) {
+    if (this.journalUncertain) throw new Error('journal_uncertain');
+    try { await this.store.save(this.origin, entries); }
+    catch (error) { this.journalUncertain = true; throw error; }
+  }
   private state: ChatSnapshot = { connection: 'offline', failure: null, view: null, history: [], before: null, pending: [] };
   constructor(readonly origin: string, private socket: SocketFactory, private store: PendingStore, private uuid: () => string, private open: OpenPort = openChat, private checkAuthorization?: () => Promise<boolean>) {}
   snapshot() { return this.state; }
@@ -110,7 +133,7 @@ export class ChatController {
         const current = this.state.view;
         if (!current || current.sessionId !== view.sessionId) return;
         const next = this.entries.filter(e => e.sessionId !== current.sessionId || !current.messages.some(m => m.operationId === e.operationId));
-        await this.store.save(this.origin, next);
+        await this.saveEntries(next);
         if (this.state.view?.sessionId !== current.sessionId) return;
         this.entries = next; this.publish({ pending: next.filter(e => e.sessionId === current.sessionId) });
       }).catch(() => {});
@@ -118,9 +141,13 @@ export class ChatController {
   }
   async start() {
     this.stop(); this.stopped = false; const epoch = ++this.epoch;
-    const entries = await this.store.load(this.origin);
+    await this.serial(async () => {
+      const entries = await this.store.load(this.origin);
+      if (epoch !== this.epoch) return;
+      this.entries = entries.filter(e => e.origin === this.origin).map(normalizePending);
+      this.journalUncertain = false;
+    });
     if (epoch !== this.epoch) return;
-    this.entries = entries.filter(e => e.origin === this.origin).map(normalizePending);
     await this.connect(epoch);
   }
   private async connect(epoch: number) {
@@ -195,14 +222,24 @@ export class ChatController {
   send(text: string): Promise<string> { return this.sendPrepared(text, async () => ({})); }
   /** Preparation runs once before durable admission; rejection leaves the caller's draft intact. */
   sendPrepared(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>): Promise<string> {
-    if (!this.state.view || !this.port || this.state.connection !== 'online') return Promise.reject(new Error('offline'));
-    const current = this.scope();
-    return this.serial(() => { if (!current()) throw new Error('session_changed'); return this.sendOnce(text, prepare); })
-      .then(async result => { await result.completion; return result.operationId; });
+    return this.beginPrepared(text, prepare).then(async result => { await result.completion; return result.identity.operationId; });
   }
-  private async sendOnce(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>): Promise<{ operationId: string; completion: Promise<void> }> {
+  /** Captures the visible anchor and scope synchronously, before preparation or queuing. */
+  beginPrepared(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>, placement?: SendPlacement): Promise<PreparedAdmission> {
+    if (!this.state.view || !this.port || this.state.connection !== 'online') return Promise.reject(new Error('offline'));
+    if (this.journalUncertain) return Promise.reject(new Error('journal_uncertain'));
+    if (placement && placement.snapshot !== this.state) return Promise.reject(new Error('session_changed'));
+    const anchor = placement ? { after: placement.after, ...(placement.predecessor === undefined ? {} : { predecessor: placement.predecessor }) } : undefined;
+    if (anchor && !validAnchor(anchor)) return Promise.reject(new Error('invalid_anchor'));
+    if (anchor?.predecessor && !this.state.pending.some(e => e.operationId === anchor.predecessor) && ![...this.state.history, ...this.state.view.messages].some(m => m.operationId === anchor.predecessor)) return Promise.reject(new Error('invalid_anchor'));
+    const captured = anchor ? { after: anchor.after, ...(anchor.predecessor ? { predecessor: anchor.predecessor } : {}) } : undefined;
+    const current = this.scope();
+    return this.serial(() => { if (!current()) throw new Error('session_changed'); return this.sendOnce(text, prepare, captured); });
+  }
+  private async sendOnce(text: string, prepare: (context: { operationId: string; sessionId: string; isCurrent: () => boolean; view: ChatView; signal: AbortSignal }) => Promise<{ images?: ImageRef[]; files?: FileRef[] }>, anchor?: SendAnchor): Promise<PreparedAdmission> {
     const view = this.state.view, port = this.port;
     if (!view || !port || this.state.connection !== 'online') throw new Error('offline');
+    if (this.journalUncertain) throw new Error('journal_uncertain');
     if (text.length > 16000) throw new Error('invalid_text');
     const epoch = this.epoch, revision = this.revision, operationId = this.uuid();
     const abort = new AbortController(); this.preparations.add(abort);
@@ -214,10 +251,23 @@ export class ChatController {
     if (!isCurrent()) throw new Error('session_changed');
     if (!text.trim() && !prepared.images?.length && !prepared.files?.length) throw new Error('invalid_text');
     const submission = validateSubmission({ operationId, text, ...(prepared.images ? { images: prepared.images } : {}), ...(prepared.files ? { files: prepared.files } : {}) });
-    const entry: Pending = { origin: this.origin, sessionId: view.sessionId, ...submission, createdAt: Date.now(), state: 'unknown', deliveryVersion: 2 };
+    const last = anchor && !anchor.predecessor ? [...this.entries].reverse().find(e => e.sessionId === view.sessionId) : undefined;
+    const preceding = last?.anchor?.after === anchor?.after ? last : undefined;
+    const recordedAnchor = anchor ? { ...anchor, ...(preceding ? { predecessor: preceding.operationId } : {}) } : undefined;
+    const identity = { origin: this.origin, sessionId: view.sessionId, operationId };
+    const entry: Pending = { ...identity, ...submission, createdAt: Date.now(), state: 'unknown', deliveryVersion: 2, ...(recordedAnchor ? { anchor: recordedAnchor } : {}) };
     // Persist before dispatch; a crash must never cause an automatic replay.
-    await this.store.save(this.origin, [...this.entries, entry]); this.guard(epoch, revision, view.sessionId);
-    this.entries = [...this.entries, entry]; this.publish({ pending: this.entries.filter(e => e.sessionId === view.sessionId) });
+    const saved = [...this.entries, entry];
+    try { await this.saveEntries(saved); }
+    catch { throw new AdmissionError(identity, 'unknown', 'journal_write_unknown'); }
+    // Preserve the saved entry even if the visible session changed while saving.
+    this.entries = saved;
+    if (!isCurrent()) throw new AdmissionError(identity, 'stored', 'session_changed');
+    // Snapshot before listeners or the port can mutate shared submission objects.
+    const images = entry.images?.map(image => ({ ...image, ...(image.sticker ? { sticker: { ...image.sticker } } : {}) }));
+    const files = entry.files?.map(file => ({ ...file }));
+    this.publish({ pending: this.entries.filter(e => e.sessionId === view.sessionId) });
+    if (!isCurrent()) throw new AdmissionError(identity, 'stored', 'session_changed');
     // Do not hold the journal serial queue while waiting for a network reply:
     // a deliveryResult can settle this operation before the RPC returns.
     const completion = (async () => {
@@ -227,7 +277,7 @@ export class ChatController {
       } catch { /* dispatched or result lost: reconcile by lookup only */ }
       if (this.entries.some(e => e.operationId === entry.operationId && e.state === 'unknown')) queueMicrotask(() => void this.reconcile());
     })();
-    return { operationId, completion };
+    return { identity, ...(images ? { images } : {}), ...(files ? { files } : {}), completion };
   }
   private acceptDelivery(value: Receipt, epoch: number, connectionId: number) {
     let receipt: Receipt;
@@ -250,7 +300,7 @@ export class ChatController {
     if (current.attempt === receipt.attempt && current.state !== 'unknown' && current.state !== receipt.state) return;
     const visible = this.state.view?.messages.some(m => m.operationId === entry.operationId) === true;
     const next: Pending[] = receipt.state === 'submitted' && visible ? this.entries.filter(e => e.sessionId !== entry.sessionId || e.operationId !== entry.operationId) : this.entries.map(e => e.sessionId !== entry.sessionId || e.operationId !== entry.operationId ? e : receipt.state === 'submitted' ? { ...e, state: 'submitted', attempt: receipt.attempt, deliveryVersion: 2, messageId: receipt.messageId ?? undefined, error: undefined } : { ...e, state: 'failed', attempt: receipt.attempt, deliveryVersion: 2, error: receipt.error ?? undefined, messageId: undefined });
-    await this.store.save(this.origin, next); this.guard(epoch, revision, entry.sessionId);
+    await this.saveEntries(next); this.guard(epoch, revision, entry.sessionId);
     this.entries = next; this.publish({ pending: next.filter(e => e.sessionId === entry.sessionId) });
   }
   reconcile(): Promise<void> { return this.serial(() => this.reconcileOnce()); }
