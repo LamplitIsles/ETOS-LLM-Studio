@@ -23,7 +23,7 @@ function normalizePending(entry: Pending): Pending {
   return { ...rest, state: 'unknown', deliveryVersion: 2 };
 }
 export interface PendingStore { load(origin: string): Promise<Pending[]>; save(origin: string, entries: Pending[]): Promise<void> }
-export type ChatPort = Pick<Awaited<ReturnType<typeof openChat>>, 'history' | 'submit' | 'lookup' | 'close'> & Partial<Pick<Awaited<ReturnType<typeof openChat>>, 'search' | 'searchRead' | 'stop'>>;
+export type ChatPort = Pick<Awaited<ReturnType<typeof openChat>>, 'history' | 'submit' | 'lookup' | 'close'> & Partial<Pick<Awaited<ReturnType<typeof openChat>>, 'search' | 'searchRead'>>;
 export type ChatSnapshot = { connection: 'offline' | 'connecting' | 'online'; failure: 'access_denied' | 'unavailable' | null; view: ChatView | null; history: ChatMessage[]; before: string | null; pending: Pending[] };
 /** Obtain snapshot and its visible row key together, synchronously in the send gesture. */
 export type SendPlacement = SendAnchor & { snapshot: ChatSnapshot };

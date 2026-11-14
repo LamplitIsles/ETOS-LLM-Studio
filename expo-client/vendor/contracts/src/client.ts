@@ -341,12 +341,6 @@ export async function openChat(
           throw new Error("Wrong operation receipt");
         return receipt;
       },
-      async stop(id: string) {
-        const v = await service.stop(id, BACKGROUND_CONTEXT);
-        if (!v || typeof v.stopped !== "boolean")
-          throw new Error("Invalid stop result");
-        return v;
-      },
     };
     return {
       ...api,

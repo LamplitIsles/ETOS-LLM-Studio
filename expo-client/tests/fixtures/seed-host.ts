@@ -40,7 +40,8 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
       return fixture.port.submit({ ...input, ...(images ? { images } : {}), ...(omitFiles && input.files?.length ? { files: [] } : {}) });
     },
     lookup: fixture.port.lookup,
-    stop: fixture.port.stop,
+    // The upstream host contract still requires this wire method; this fixture cannot stop turns.
+    async stop() { throw new Error('fixture_stop_unavailable'); },
     search: fixture.port.search,
     searchRead: fixture.port.searchRead,
   } as unknown as ChatBackend;
@@ -53,10 +54,6 @@ export async function startFixtureSeedHost(extraMessages = 0, replyScenario = fa
         submissionsReleased = true; releaseSubmissions?.(); res.writeHead(204).end(); return;
       }
       if (!submissionsReleased && req.method === 'GET' && /^\/api\/chat\/media\//.test(req.url ?? '')) { res.writeHead(404).end(); return; }
-      if (req.method === 'POST' && !req.headers.origin && (req.url === '/__test/turn/start' || req.url === '/__test/turn/clear')) {
-        fixture.setActiveTurn(req.url.endsWith('/start') ? 'fixture-active-turn' : null);
-        res.writeHead(204).end(); return;
-      }
       if (replyScenario && req.method === 'POST' && !req.headers.origin && /^\/__test\/reply\/[123]$/.test(req.url ?? '')) {
         const stage = Number(req.url!.at(-1));
         if (!publishReply) { res.writeHead(409).end(); return; }

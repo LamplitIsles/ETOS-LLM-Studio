@@ -109,10 +109,7 @@ virtual `http://127.0.0.1:8091` origin to `ETOS_UI_PROXY_PORT`, retaining the
 required Host and Origin. It rejects the common shared service ports 3090,
 5173, 8081, 8082, 8091 and 8092. The host can also be started programmatically with `startFixtureSeedHost()` from
 `tests/fixtures/seed-host.ts`; it returns `request`, `setStatus` and `close`.
-For stop-interaction tests, a Node test may POST `/__test/turn/start` or
-`/__test/turn/clear` to that test host's printed control port without an Origin
-header. These create or clear a synthetic active turn; they are not seed proxy
-routes or real CFL endpoints. Use a fresh test-owned host for each test.
+Use a fresh test-owned host for each test.
 The pinned Playwright dependency can use Chromium installed with
 `npx playwright install chromium`; omit `CHROME_PATH` to use that browser.
 
