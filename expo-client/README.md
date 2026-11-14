@@ -97,6 +97,13 @@ Run `node tests/composer-ui.cjs` and `node tests/motion-ui.cjs` with the same
 environment variables for the other browser checks. Start a fresh test host
 for each test so its in-memory conversation is clean. These tests send messages;
 never point them at shared development data or a real session.
+For the optimistic-send checks, start a fresh host with
+`ETOS_UI_HOLD_SUBMISSIONS=1 npm run test:ui:host -- 18092`, then set
+`ETOS_UI_PROXY_PORT` and `ETOS_UI_SYNTHETIC_HOST_PORT` to its printed ports and
+run `node tests/optimistic-send-ui.cjs` or `node tests/optimistic-image-ui.cjs`.
+For `tests/optimistic-partial-images-ui.cjs`, additionally start the host with
+`ETOS_UI_PARTIAL_IMAGES=1 ETOS_UI_OMIT_FILES=1`; repeat with
+`ETOS_UI_PARTIAL_IMAGES=first` on both the host and test to check the other image.
 `tests/ui-test-context.cjs` routes browser HTTP and WebSocket traffic for the
 virtual `http://127.0.0.1:8091` origin to `ETOS_UI_PROXY_PORT`, retaining the
 required Host and Origin. It rejects the common shared service ports 3090,
@@ -306,13 +313,12 @@ peer dependencies, licensing, and platform validation limits.
   prepares images and streams files with one operation ID, then journals the
   complete references before one chat dispatch. It resolves to
   `{origin, sessionId, operationId, state}` where state is `submitted`, `observed`, `failed`, or
-  `unknown`. Before dispatch, rejection means keep text and drafts; on
-  `failed`, keep them for explicit user action. On `submitted`/`observed`,
-  clear the composer but retain preview resources until no timeline item needs
-  them, then release. On `unknown`, keep the operation identity separate from
-  any new draft and never re-dispatch it. The current UI locks its composer;
-  a later UI change must preserve the unknown operation independently and must
-  not mistake a new user action for a retry of it. On snapshot updates, call
+  `unknown`. Before local admission, keep text and drafts on rejection. The
+  current UI uses `beginSendDrafts` to clear the admitted draft without waiting
+  for a receipt; unknown operations remain separate from the next draft and
+  are never re-dispatched automatically. Local image previews stay with their
+  operation until the matching remote image loads or the chat scope ends.
+  Explicitly failed operations are shown on their message. When needed, call
   `await controller.operationStatus({origin, sessionId, operationId})`.
   This method uses
   a persisted receipt or an actual matching message in the current view or
@@ -322,11 +328,10 @@ peer dependencies, licensing, and platform validation limits.
   lifetime and session after awaiting it. Restarting the controller allows
   journaled receipts for the active chat identity to be checked again.
   Reconnect reconciles by ID only; it never reuploads or resubmits. Picker data
-  and previews are in memory/cache and do not survive an app restart as drafts:
-  tell the user the selected files need to be chosen again if an operation is
-  explicitly known to have failed. If the result remains unknown, explain that
-  it is being checked; do not silently create a new operation or upload again.
-  A returned `unknown` does not guarantee an entry is still in the journal:
+  and previews are in memory/cache and do not survive an app restart as drafts.
+  If the result remains unknown, check it in the background; do not silently
+  create a new operation or upload again.
+  An `unknown` result does not guarantee an entry is still in the journal:
   an observed message may already have retired it, or storage may be unavailable.
   Staged references do not guarantee that the server still retains their bytes.
 - For optimistic UI integration, synchronously obtain `snapshot = controller.snapshot()`
@@ -340,8 +345,9 @@ peer dependencies, licensing, and platform validation limits.
   Consecutive admissions with the same anchor chain their operation IDs. The
   optional anchor is persisted with the pending entry; older or invalid anchors
   have no placement and require conservative UI fallback.
-  The Promise returns `{origin, sessionId, operationId}` after durable save
-  and publication, without waiting for the receipt. Follow snapshot updates
+  The Promise returns `{origin, sessionId, operationId, images?, files?}` after
+  durable save and publication, without waiting for the receipt. The media refs
+  are copies in the same order as the selected drafts of each kind. Follow snapshot updates
   or `operationStatus` for evidence; an unknown result must not be resent.
   Capture the component lifetime and `controller.scope()` at the gesture and
   recheck them before changing any UI after awaiting. The caller owns draft

@@ -8,10 +8,10 @@ import Animated, { ReduceMotion, useAnimatedReaction, useAnimatedStyle, useDeriv
 import { SymbolView } from 'expo-symbols';
 import { requireOptionalNativeModule } from 'expo';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import type { ChatMessage } from '../vendor/contracts/src/index';
+import type { ChatMessage, FileRef } from '../vendor/contracts/src/index';
 import type { StickerIdentity } from '../vendor/contracts/src/index';
 import { createDevelopmentSeedChat, developmentSeedAvailable, developmentSeedStatus } from './cfl/seed.web';
-import { type ChatController, type ChatSnapshot } from './cfl/chat';
+import { AdmissionError, type ChatController, type ChatSnapshot, type SendAdmission } from './cfl/chat';
 import { createNativeAuth } from './cfl/native-runtime';
 import { createNativeChat } from './cfl/factory.native';
 import { createWebChat } from './cfl/factory.web';
@@ -23,7 +23,7 @@ import { classifyStickerOpacity } from './cfl/sticker-opacity';
 import { CameraPermissionError, capturePhoto, pickFiles, pickImages, type AttachmentDraft } from './cfl/drafts';
 import { CameraPhotoError, prepareCameraPhoto } from './cfl/camera-photo';
 import { validateDrafts } from './cfl/intake';
-import { sendDrafts, sendSticker, type SendOutcome } from './cfl/composer';
+import { beginSendDrafts, beginSendSticker } from './cfl/composer';
 import { StickerPanel } from './StickerPanel';
 import { NativeTabsFrame } from './NativeTabsFrame';
 import { AppearanceProvider, useAppearance } from './ui/appearance';
@@ -32,7 +32,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { TimelineViewport } from './ui/TimelineScrollView';
 import { captureHistoryAnchor } from './ui/historyAnchor';
-import { rowsFor, type TimelineRow as Row } from './ui/timelineRows';
+import { rowsFor, sendPlacement, type TimelineRow as Row } from './ui/timelineRows';
 import { chatTimeHeadings, nextChatDayBoundary } from './ui/chatTime';
 import { attachmentValidationMessage, cameraPhotoMessage } from './ui/attachmentValidationMessage';
 import { ReminderButton } from './ui/ReminderButton';
@@ -59,15 +59,18 @@ const InputArea: React.ComponentType<InputAreaProps> = inputAreaModule?.InputAre
 type Client = { controller: ChatController; media: ApiTransport };
 type Mode = 'seed' | 'native' | 'web';
 type AppearanceView = { client: Client; sessionId: string; name: string; avatar?: string; portrait?: string; landscape?: string };
+type LocalImagePreview = { attachmentId: string; draft?: AttachmentDraft };
+const journalNeedsCheck = (error: unknown) => error instanceof AdmissionError && error.journal === 'unknown' || error instanceof Error && error.message === 'journal_uncertain';
 
-function AuthImage({ id, media, controller, mediaType, sticker = false }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean }) {
+function AuthImage({ id, media, controller, mediaType, sticker = false, local, onRemoteReady, phase }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean; local?: LocalImagePreview; onRemoteReady?: (id: string) => void; phase?: 'pending' | 'confirmed' }) {
   const [value, setValue] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [opaqueSize, setOpaqueSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     let active = true;
     const abort = new AbortController();
-    setValue(null); setFailed(false); setOpaqueSize(null);
+    setValue(null); setFailed(false); setLoaded(false); setOpaqueSize(null);
     const current = controller.scope();
     // JPEG previews are opaque; formats that can carry transparency or animation
     // need the original attachment rather than a converted preview.
@@ -87,10 +90,15 @@ function AuthImage({ id, media, controller, mediaType, sticker = false }: { id: 
       }).catch(() => {});
     }).catch(() => { if (active && current()) setFailed(true); });
     return () => { active = false; abort.abort(); };
-  }, [id, media, controller, mediaType, sticker]);
+  }, [id, media, controller, mediaType, sticker, phase]);
+  useEffect(() => { if (loaded && local?.draft) onRemoteReady?.(local.attachmentId); }, [loaded, local, onRemoteReady]);
+  if (local?.draft) return <View style={styles.image}>
+    <Image source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.image} />
+    {value && <Image source={{ uri: value }} accessible={false} accessibilityElementsHidden resizeMode="contain" onLoad={() => setLoaded(true)} style={[StyleSheet.absoluteFill, { opacity: 0 }]} />}
+  </View>;
   if (failed) return <Text style={styles.mediaNotice}>图片暂时无法显示</Text>;
   if (!value) return <View style={styles.imageLoading}><ActivityIndicator /><Text style={styles.mediaNotice}>图片加载中</Text></View>;
-  return <Image source={{ uri: value }} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? [styles.stickerImage, opaqueSize && { ...opaqueSize, borderRadius: 12 }] : styles.image} />;
+  return <Image source={{ uri: value }} onLoad={() => setLoaded(true)} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? [styles.stickerImage, opaqueSize && { ...opaqueSize, borderRadius: 12 }] : styles.image} />;
 }
 
 function imageUri(image: ImageData, createdUrls: string[]): string {
@@ -105,23 +113,31 @@ function imageUri(image: ImageData, createdUrls: string[]): string {
 }
 
 
-function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null> }) {
+function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef, localImages, localFiles, onRemoteReady }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null>; localImages?: readonly LocalImagePreview[]; localFiles?: readonly FileRef[]; onRemoteReady?: (id: string) => void }) {
   const { dark } = useAppearance();
   const mine = row.user._id === 'me';
   const item = row.original;
   const foreground = mine ? '#ffffff' : dark ? '#f4f4f6' : '#252631';
   const placeholderStyle = [styles.contentPlaceholder, { color: dark ? '#e3e7ec' : '#4d5561', backgroundColor: dark ? 'rgba(38,43,51,0.94)' : 'rgba(247,248,250,0.94)' }];
-  const hasImage = item?.images?.some(image => !image.sticker);
+  const images = (item?.images ?? row.pendingImages ?? []).filter(image => !image.sticker);
+  const localIds = new Set(localImages?.map(image => image.attachmentId));
+  const remoteFiles = item?.files ?? row.pendingFiles ?? [];
+  const localFileIds = new Set(localFiles?.map(file => file.attachmentId));
+  const files = [...(localFiles ?? []).map(file => remoteFiles.find(remote => remote.attachmentId === file.attachmentId) ?? file), ...remoteFiles.filter(file => !localFileIds.has(file.attachmentId))];
   return <View ref={latestRef} nativeID={`timeline-${row._id}`} testID={mine ? 'message-user' : 'message-agent'} style={[styles.messageRow, mine ? styles.mine : styles.theirs]}>
     {item?.source?.kind === 'reminder' && row.text ? <ReminderButton text={row.text} /> : (row.text || row.pendingState === 'failed') ? <MessageSurface mine={mine}>
       {!!row.text && <MessageText key={`${media.origin}:${sessionId}:${workspaceImages}`} text={row.text} foreground={foreground} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />}
       {row.pendingState === 'failed' && <Text style={styles.errorSmall}>发送失败，请检查连接</Text>}
     </MessageSurface> : null}
-    {hasImage && item?.images?.filter(image => !image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} />)}
+    {localImages?.map(local => {
+      const image = images.find(value => value.attachmentId === local.attachmentId);
+      return image ? <AuthImage key={local.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} local={local} onRemoteReady={onRemoteReady} phase={item ? 'confirmed' : 'pending'} />
+        : local.draft ? <Image key={local.attachmentId} source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.image} /> : null;
+    })}
+    {images.filter(image => !localIds.has(image.attachmentId)).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} />)}
     {item?.images?.filter(image => image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
-    {item?.files?.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
-    {row.pendingImages?.map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker={!!image.sticker} />)}
-    {row.pendingFiles?.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
+    {files.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
+    {row.pendingImages?.filter(image => !!image.sticker).map(image => <AuthImage key={image.attachmentId} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
     {item?.ui != null && <Text style={placeholderStyle}>互动卡片 · 暂不支持显示</Text>}
     {item?.voice && <Text style={placeholderStyle}>语音消息 · 暂不支持播放</Text>}
     {item?.imageState && !item.images?.length && <Text style={placeholderStyle}>图片暂时不可用</Text>}
@@ -403,7 +419,9 @@ function AppContent() {
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const attachmentsRef = useRef<AttachmentDraft[]>([]);
   const composerGeneration = useRef(0);
-  const [uncertain, setUncertain] = useState<{ outcome: SendOutcome; text: string; ids: string[] } | null>(null);
+  const [localImages, setLocalImages] = useState<Record<string, LocalImagePreview[]>>({});
+  const localImagesRef = useRef<Record<string, LocalImagePreview[]>>({});
+  const [localFiles, setLocalFiles] = useState<Record<string, FileRef[]>>({});
   const sending = useRef<object | null>(null);
   const preparingCamera = useRef<object | null>(null);
   const [preparingPhoto, setPreparingPhoto] = useState(false);
@@ -594,28 +612,37 @@ function AppContent() {
   const setDrafts = (items: AttachmentDraft[]) => { attachmentsRef.current = items; setAttachments(items); };
   useEffect(() => {
     composerGeneration.current++;
-    sending.current = null; preparingCamera.current = null; setPreparingPhoto(false); setBusy(false); setAttachments([]); setUncertain(null); setShowScrollToBottom(false);
-    return () => { historyAnchor.current?.cancel(); historyAnchor.current = null; preparingCamera.current = null; composerGeneration.current++; for (const item of attachmentsRef.current) item.release(); attachmentsRef.current = []; };
+    sending.current = null; preparingCamera.current = null; setPreparingPhoto(false); setBusy(false); setAttachments([]); setLocalImages({}); setLocalFiles({}); setShowScrollToBottom(false);
+    return () => { historyAnchor.current?.cancel(); historyAnchor.current = null; preparingCamera.current = null; composerGeneration.current++; for (const item of attachmentsRef.current) item.release(); attachmentsRef.current = []; for (const items of Object.values(localImagesRef.current)) items.forEach(item => item.draft?.release()); localImagesRef.current = {}; };
   }, [client, sessionId]);
-  const clearSent = (text: string, ids: string[]) => {
+  const clearSent = (text: string, selected: readonly AttachmentDraft[], admission: SendAdmission) => {
     if (draftRef.current === text) setText('');
-    const removed = new Set(ids);
+    const removed = new Set(selected.map(item => item.id));
     const keep = attachmentsRef.current.filter(item => !removed.has(item.id));
-    attachmentsRef.current.filter(item => removed.has(item.id)).forEach(item => item.release());
+    const transferred = attachmentsRef.current.filter(item => removed.has(item.id));
+    const selectedImages = selected.filter(item => item.kind === 'image');
+    const images = (admission.images ?? []).flatMap((image, index) => {
+      const draft = selectedImages[index];
+      return draft && transferred.some(item => item.id === draft.id) ? [{ attachmentId: image.attachmentId, draft }] : [];
+    });
+    if (images.length) { localImagesRef.current = { ...localImagesRef.current, [admission.operationId]: images }; setLocalImages(localImagesRef.current); }
+    if (admission.files?.length) setLocalFiles(previous => ({ ...previous, [admission.operationId]: admission.files! }));
+    transferred.filter(item => item.kind !== 'image').forEach(item => item.release());
     setDrafts(keep);
   };
-  useEffect(() => {
-    if (!client || !uncertain || snapshot?.view?.sessionId !== uncertain.outcome.sessionId) return;
-    let valid = true;
-    void client.controller.operationStatus(uncertain.outcome).then(status => {
-      if (!valid || active.current !== client) return;
-      if (status === 'submitted' || status === 'observed') { clearSent(uncertain.text, uncertain.ids); setUncertain(null); }
-      else if (status === 'failed') { setUncertain(null); setError('发送失败，内容仍在输入框中。'); }
-    });
-    return () => { valid = false; };
-  }, [client, snapshot, uncertain]);
+  const releaseLocalImage = useCallback((operationId: string, id: string) => {
+    const existing = localImagesRef.current[operationId];
+    if (!existing) return;
+    const item = existing.find(value => value.attachmentId === id);
+    if (!item?.draft) return;
+    item.draft.release();
+    const next = existing.map(value => value.attachmentId === id ? { attachmentId: id } : value);
+    const updated = { ...localImagesRef.current };
+    if (next.some(value => value.draft)) updated[operationId] = next; else delete updated[operationId];
+    localImagesRef.current = updated; setLocalImages(updated);
+  }, []);
   const selectAttachments = async (kind: 'image' | 'file' | 'camera') => {
-    if (!client || !snapshot?.view || busy || uncertain || sending.current || preparingCamera.current) return;
+    if (!client || !snapshot?.view || busy || sending.current || preparingCamera.current) return;
     const scope = client.controller.scope(), generation = composerGeneration.current;
     const token = kind === 'camera' ? {} : null;
     if (token) { preparingCamera.current = token; setBusy(true); setError(''); }
@@ -657,30 +684,28 @@ function AppContent() {
   };
   const send = async () => {
     const text = draftRef.current, selected = [...attachmentsRef.current];
-    if (!client || (!text.trim() && !selected.length) || sending.current || preparingCamera.current || uncertain || snapshot?.connection !== 'online') return;
+    if (!client || (!text.trim() && !selected.length) || sending.current || preparingCamera.current || snapshot?.connection !== 'online') return;
     const current = client.controller.scope();
+    const placement = sendPlacement(client.controller.snapshot());
     const sendToken = {}; sending.current = sendToken; setBusy(true); setError('');
     try {
-      const outcome = await sendDrafts(client.controller, client.media, text, selected);
+      const admission = await beginSendDrafts(client.controller, client.media, text, selected, placement);
       if (active.current !== client || !current()) return;
       requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: true }));
-      if (outcome.state === 'submitted' || outcome.state === 'observed') clearSent(text, selected.map(item => item.id));
-      else if (outcome.state === 'failed') setError('发送失败，内容仍在输入框中。');
-      else setUncertain({ outcome, text, ids: selected.map(item => item.id) });
-    } catch {
-      if (active.current === client && current()) setError('没有发送成功，内容仍在输入框中。');
+      clearSent(text, selected, admission);
+    } catch (error) {
+      if (active.current === client && current()) setError(journalNeedsCheck(error) ? '发送前保存未确认，请重新打开应用后检查。' : '没有发送成功，内容仍在输入框中。');
     } finally { if (sending.current === sendToken) { sending.current = null; setBusy(false); } }
   };
   const chooseSticker = async (sticker: StickerIdentity) => {
-    if (!client || busy || sending.current || preparingCamera.current || uncertain || snapshot?.connection !== 'online') return;
+    if (!client || busy || sending.current || preparingCamera.current || snapshot?.connection !== 'online') return;
     const current = client.controller.scope(), sendToken = {}; sending.current = sendToken; setBusy(true); setError('');
+    const placement = sendPlacement(client.controller.snapshot());
     try {
-      const outcome = await sendSticker(client.controller, client.media, sticker);
+      await beginSendSticker(client.controller, client.media, sticker, placement);
       if (active.current !== client || !current()) return;
       requestAnimationFrame(() => messagesRef.current?.scrollToEnd({ animated: true }));
-      if (outcome.state === 'failed') setError('表情发送失败，请重试。');
-      else if (outcome.state === 'unknown') setUncertain({ outcome, text: '', ids: [] });
-    } catch { if (active.current === client && current()) setError('表情发送失败，请重试。'); }
+    } catch (error) { if (active.current === client && current()) setError(journalNeedsCheck(error) ? '发送前保存未确认，请重新打开应用后检查。' : '表情发送失败，请重试。'); }
     finally { if (sending.current === sendToken) { sending.current = null; setBusy(false); } }
   };
   const connect = async () => {
@@ -731,10 +756,14 @@ function AppContent() {
   const workspaceImages = snapshot?.view?.capabilities.workspaceImages === true;
   const messages = useMemo(() => snapshot ? rowsFor(snapshot) : [], [snapshot]);
   const timeHeadings = useMemo(() => chatTimeHeadings(messages, chatDayNow), [messages, chatDayNow]);
-  const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => client && sessionId ? <View>
-    {timeHeadings[item._id] && <View style={styles.timeHeading}><Text testID="chat-time-heading" style={[styles.timeHeadingText, { color: dark ? '#e1e4e8' : '#59616c', backgroundColor: dark ? 'rgba(35,39,45,0.85)' : 'rgba(245,247,250,0.9)' }]}>{timeHeadings[item._id]}</Text></View>}
-    <MessageBubble row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} />
-  </View> : null, [client, sessionId, workspaceImages, messages.length, timeHeadings, dark]);
+  const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => {
+    if (!client || !sessionId) return null;
+    const current = client.controller.scope(), operationId = item.operationId;
+    return <View>
+      {timeHeadings[item._id] && <View style={styles.timeHeading}><Text testID="chat-time-heading" style={[styles.timeHeadingText, { color: dark ? '#e1e4e8' : '#59616c', backgroundColor: dark ? 'rgba(35,39,45,0.85)' : 'rgba(245,247,250,0.9)' }]}>{timeHeadings[item._id]}</Text></View>}
+      <MessageBubble row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} localImages={operationId ? localImages[operationId] : undefined} localFiles={operationId ? localFiles[operationId] : undefined} onRemoteReady={operationId ? id => { if (active.current === client && current()) releaseLocalImage(operationId, id); } : undefined} />
+    </View>;
+  }, [client, sessionId, workspaceImages, messages.length, timeHeadings, dark, localImages, localFiles, releaseLocalImage]);
   const currentAppearance = appearance?.client === client && appearance.sessionId === sessionId ? appearance : null;
   const title = currentAppearance?.name || snapshot?.view?.name || '聊天';
   const background = width > height ? currentAppearance?.landscape : currentAppearance?.portrait;
@@ -790,11 +819,11 @@ function AppContent() {
     const remove = () => { item.release(); setDrafts(attachmentsRef.current.filter(entry => entry.id !== item.id)); };
     return item.kind === 'image' ? <View key={item.id} style={styles.draftImageFrame}>
       <Image testID="draft-image" source={{ uri: item.uri }} style={styles.draftImage} accessibilityLabel={item.name} />
-      <View style={styles.draftImageRemove}><Button accessibilityLabel={`移除附件 ${item.name}`} size="overlay" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy || !!uncertain} onPress={remove} /></View>
+      <View style={styles.draftImageRemove}><Button accessibilityLabel={`移除附件 ${item.name}`} size="overlay" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy} onPress={remove} /></View>
     </View> : <View key={item.id} style={[styles.draftItem, { backgroundColor: dark ? '#343a43' : '#e8ebef' }]}>
       <SymbolView name={{ ios: 'doc', android: 'description', web: 'description' }} size={20} tintColor={ink} /><View><Text numberOfLines={1} ellipsizeMode="middle" style={[styles.draftName, { color: ink }]}>{item.name}</Text>
         <Text style={[styles.draftFileSize, { color: muted }]}>{item.size < 1_000_000 ? `${(item.size / 1000).toFixed(1)} KB` : `${(item.size / 1_000_000).toFixed(1)} MB`}</Text></View>
-      <Button accessibilityLabel={`移除附件 ${item.name}`} variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy || !!uncertain} onPress={remove} />
+      <Button accessibilityLabel={`移除附件 ${item.name}`} variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} disabled={busy} onPress={remove} />
     </View>;
   })}</ScrollView>;
   return <View style={[styles.screen, { backgroundColor: page }]}>
@@ -847,7 +876,7 @@ function AppContent() {
             <ComposerContainer {...(iosChatKeyboard && !nativePanelAvailable ? { enabled: !stickerSearchActive } : {})} style={styles.floatingComposer}>
               <Animated.View style={nativePanelAvailable ? nativeStickyStyle : undefined}>
               <View ref={composerRef} testID="floating-composer" onLayout={event => { const height = event.nativeEvent.layout.height; toolbarHeightRef.current = height; keyboardDiagnostic.record('layout', { height: Math.round(height) }); setToolbarHeight(height); }}>
-              <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || !!uncertain || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
+              <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
                 const panelReady = () => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } };
                 const attachmentPanel = <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />;
                 const panelContent = <View key={nativePanelAvailable ? 'native-panel' : `${panelKind}:${panelVersion}`} onLayout={nativePanelAvailable ? undefined : panelReady} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={StyleSheet.absoluteFill}>{null}</Surface></View>{nativePanelAvailable ? <View style={styles.screen}>
@@ -862,7 +891,7 @@ function AppContent() {
                   {draftItems}
                   {preparingPhoto && <View accessibilityRole="progressbar" accessibilityLabel="正在处理照片" style={[styles.photoPreparing, { backgroundColor: dark ? '#30343a' : '#f4f5f7' }]}><ActivityIndicator size="small" /><Text style={{ color: ink }}>正在处理照片…</Text></View>}
                   <View style={styles.composerContents}>
-                    <Button accessibilityLabel="附件" size="navigation" variant="ghost" icon={{ ios: 'plus', web: 'add', android: 'add' }} disabled={busy || !!uncertain || panelBusy} onPress={() => emojiOpen && panelKind === 'attachments' ? closeEmojiPanel() : openComposerPanel('attachments')} />
+                    <Button accessibilityLabel="附件" size="navigation" variant="ghost" icon={{ ios: 'plus', web: 'add', android: 'add' }} disabled={busy || panelBusy} onPress={() => emojiOpen && panelKind === 'attachments' ? closeEmojiPanel() : openComposerPanel('attachments')} />
                     <Surface interactive style={styles.composerSurface}>
                       <View style={styles.composerField}>
                         <View style={styles.composerInputWrap}>
@@ -871,7 +900,7 @@ function AppContent() {
                           style={[styles.composerInputMeasure, styles.composerInput]}>{draft ? `${draft}${draft.endsWith('\n') ? '\u200b' : ''}` : ' '}</Text>}
                         <TextInput ref={inputRef} pointerEvents={sequentialPanelOpen ? 'none' : 'auto'} accessibilityElementsHidden={sequentialPanelOpen} accessibilityLabel="输入消息…" placeholder="输入消息…" placeholderTextColor={muted} value={draft} onChangeText={setText}
                           onPressIn={() => { if (nativePanelAvailable && nativePanelMode.current === 'panel') openSystemKeyboard(); }}
-                          onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !sequentialPanel.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy && !uncertain} multiline maxLength={16000}
+                          onFocus={() => { inspectInputArea('focus'); if (nativePanelAvailable) { if (restoringPanelAfterSearch.current) clearSearchHandoff(); if (!nativePanelBusy.current && nativePanelMode.current !== 'panel') { pendingPanelOpen.current = null; nativePanelMode.current = 'keyboard'; setEmojiOpen(false); } } else if (iosChatKeyboard && emojiOpen) { switchingKeyboard.current = true; chatKeyboardFrozen.value = false; waitingForComposerKeyboard.current = true; } else setEmojiOpen(false); }} onBlur={() => { inspectInputArea('blur'); const pending = searchBlur.current; if (pending) { pending.observed = true; } else if (nativePanelAvailable && nativePanelMode.current === 'panel' && !nativePanelBusy.current && !sequentialPanel.current && !stickerSearchActiveRef.current) setEmojiOpen(false); }} editable={!busy} multiline maxLength={16000}
                           style={[styles.composerInput, Platform.OS === 'ios' ? { minHeight: 44, maxHeight: 132, color: ink } : { height: inputHeight, color: ink }]} />
                         {sequentialPanelOpen && <Pressable accessibilityRole="button" accessibilityLabel="切换到键盘" style={StyleSheet.absoluteFill} onPress={openSystemKeyboard} />}
                         </View>
@@ -882,7 +911,7 @@ function AppContent() {
                         </View>
                       </View>
                     </Surface>
-                    <Button accessibilityLabel="发送消息" size="navigation" variant="ghost" icon={{ ios: 'arrow.up', web: 'arrow_upward', android: 'arrow_upward' }} disabled={busy || !!uncertain || snapshot?.connection !== 'online' || (!draft.trim() && attachments.length === 0)} onPress={() => void send()} />
+                    <Button accessibilityLabel="发送消息" size="navigation" variant="ghost" icon={{ ios: 'arrow.up', web: 'arrow_upward', android: 'arrow_upward' }} disabled={busy || snapshot?.connection !== 'online' || (!draft.trim() && attachments.length === 0)} onPress={() => void send()} />
                   </View>
                 </View>
               </Animated.View>} panel={inputPanel} />

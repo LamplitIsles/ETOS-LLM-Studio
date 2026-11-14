@@ -17,7 +17,9 @@ if (proxyPort && proxyPort === metroPort) throw new Error('Metro and proxy ports
 const extraMessages = Number(process.env.ETOS_UI_SYNTHETIC_EXTRA_MESSAGES ?? 0);
 if (!Number.isInteger(extraMessages) || extraMessages < 0 || extraMessages > 1000) throw new Error('Invalid synthetic message count');
 const replyScenario = process.env.ETOS_UI_REPLY_FIXTURE === '1';
-const host = await startFixtureSeedHost(extraMessages, replyScenario);
+const holdSubmissions = process.env.ETOS_UI_HOLD_SUBMISSIONS === '1';
+const partialImages = process.env.ETOS_UI_PARTIAL_IMAGES === 'first' ? 'first' : process.env.ETOS_UI_PARTIAL_IMAGES === '1' ? 'last' : false;
+const host = await startFixtureSeedHost(extraMessages, replyScenario, holdSubmissions, partialImages, process.env.ETOS_UI_OMIT_FILES === '1');
 const proxy: http.Server = createSeedProxy({
   seedRequest: host.request,
   testOnlyTtsFixture: true,
@@ -35,7 +37,7 @@ try {
   throw error;
 }
 console.log(`Test-only fixture proxy: 127.0.0.1:${(proxy.address() as { port: number }).port} (test-owned Metro: 127.0.0.1:${metroPort}; browser origin remains http://127.0.0.1:8091)`);
-if (extraMessages || replyScenario) console.log(`Test-only fixture control: 127.0.0.1:${host.controlPort}`);
+if (extraMessages || replyScenario || holdSubmissions) console.log(`Test-only fixture control: 127.0.0.1:${host.controlPort}`);
 let stopping = false;
 async function stop() {
   if (stopping) return;
