@@ -1,0 +1,56 @@
+const { chromium } = require('@playwright/test');
+const { isolatedContext } = require('./ui-test-context.cjs');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+
+(async () => {
+  const controlPort = Number(process.env.ETOS_UI_SYNTHETIC_HOST_PORT);
+  if (!Number.isInteger(controlPort) || controlPort < 1024 || controlPort > 65535 || [3090, 5173, 8081, 8082, 8091, 8092, 18093].includes(controlPort)) throw new Error('Expected a test-owned fixture control port');
+  const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}), args: ['--no-sandbox'] });
+  const context = await isolatedContext(browser, { viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  try {
+    await page.goto('http://127.0.0.1:8091/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const input = page.getByRole('textbox', { name: '输入消息…' });
+    await input.waitFor({ timeout: 60000 });
+    await page.getByRole('button', { name: '附件', exact: true }).click();
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: '选择照片', exact: true }).click();
+    const image = fs.readFileSync('tests/fixtures/fixture-art.ts', 'utf8').match(/'([A-Za-z0-9+/=]+)'/)[1];
+    await (await chooser).setFiles(['one', 'two', 'three'].map(name => ({ name: `${name}.png`, mimeType: 'image/png', buffer: Buffer.from(image, 'base64') })));
+    await input.fill('合成图片待确认');
+    await page.getByRole('button', { name: '发送消息', exact: true }).click();
+    const bubble = page.getByTestId('message-user').filter({ hasText: '合成图片待确认' });
+    const thumbnails = bubble.getByRole('button', { name: '查看图片' });
+    await thumbnails.first().waitFor({ timeout: 15000 });
+    assert.equal(await thumbnails.count(), 3);
+    const boxes = await Promise.all((await thumbnails.all()).map(item => item.boundingBox()));
+    assert.ok(boxes.every(box => box && Math.abs(box.height - 120) < 2 && box.width < 90));
+    assert.ok(boxes[0].x < boxes[1].x && boxes[1].x < boxes[2].x, 'three images form a single aligned row');
+    assert.equal(await bubble.getByRole('button', { name: '图片操作' }).count(), 0, 'unconfirmed image cannot be favorited');
+    await thumbnails.first().click();
+    const viewer = page.getByTestId('chat-image-viewer');
+    const original = viewer.locator('img[alt="图片原图"][src^="blob:"]').first();
+    await original.waitFor();
+    const uri = await original.getAttribute('src');
+    assert.ok(uri.startsWith('blob:'), 'viewer uses the local draft while pending');
+    assert.equal((await fetch(`http://127.0.0.1:${controlPort}/__test/send/release`, { method: 'POST' })).status, 204);
+    await bubble.getByRole('button', { name: '图片操作' }).first().waitFor({ timeout: 15000 });
+    await bubble.locator('img[src^="data:"]').first().waitFor({ state: 'attached', timeout: 10000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="message-user"] img[src^="data:"]')].some(image => image.complete && image.naturalWidth > 0));
+    assert.equal(await original.getAttribute('src'), uri, 'confirmation does not replace the open image');
+    assert.equal(await page.evaluate(async source => (await fetch(source)).ok, uri), true, 'local preview remains alive while viewer is open');
+    const thumbs = viewer.getByTestId('chat-image-thumbnails').getByRole('button');
+    const selectedIndex = await thumbs.evaluateAll(nodes => nodes.findIndex(node => node.getAttribute('aria-pressed') === 'true'));
+    assert.ok(selectedIndex >= 0 && selectedIndex + 1 < await thumbs.count());
+    await thumbs.nth(selectedIndex + 1).click();
+    await page.waitForFunction(source => fetch(source).then(() => false, () => true), uri, { timeout: 10000 });
+    await thumbs.nth(selectedIndex).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('img[alt="图片原图"]')].some(image => image.src.startsWith('data:') && image.naturalWidth > 0));
+    await viewer.getByRole('button', { name: '关闭图片' }).click();
+    await viewer.waitFor({ state: 'hidden' });
+    await page.waitForFunction(source => fetch(source).then(() => false, () => true), uri, { timeout: 10000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('img[alt="聊天图片"]')].some(image => image.src.startsWith('data:') && image.naturalWidth > 0));
+    console.log('PASS: pending image remains available until switching and reopens from the confirmed image');
+  } finally { await context.close(); await browser.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });

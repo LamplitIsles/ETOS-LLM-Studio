@@ -4,9 +4,11 @@
 
 优先完成 iOS 客户端及其 CFL 接入。macOS 是否继续维护尚未决定；除非用户明确要求，暂不修改 macOS 专属代码。清理 Core 或其他组件时，不以 macOS 能否编译为阻碍，也不为旧 Mac 调用保留兼容层；如果变更使 macOS 无法编译，记录原因，待决定继续维护时处理。保留已有 macOS 用户数据。
 
-接入新数据源或改造现有功能前，先追踪当前用户入口、界面组件和交互，优先复用已有实现；除非用户要求重新设计，否则保持原有外观和仍受支持的交互。文字、图片等能力都应沿现有体验接入实际后端，而不是另做一套界面。确需替换组件时，说明不能复用的具体原因，并对照原界面验证结果，不以数据接通或构建成功代替界面验收。
+开发新功能或改造现有功能前，先追踪用户入口、数据链路、界面组件和交互，查找并优先复用项目已有实现。除非用户要求重新设计，否则保持原有外观和仍受支持的交互。文字、图片等能力都应沿现有体验接入实际后端，而不是另做一套界面。确需替换组件时，说明不能复用的具体原因，并对照原界面验证结果，不以数据接通或构建成功代替界面验收。
 
-涉及 `expo-client` 的 `@expo/ui` 组件时，先读仓库内的 [expo-ui skill](.agents/skills/expo-ui/SKILL.md) 及相关 `references/`；该副本来自 [Expo 官方仓库](https://github.com/expo/skills/tree/ab6cb2c58b0daa7555590d869dd1aa2ddb5d7632/plugins/expo/skills/expo-ui)，指导随上游更新，使用前须对照项目实际安装版本。可在仓库根执行 `node .agents/skills/expo-ui/scripts/list-components.js expo-client` 查看已安装组件和 modifiers，具体属性再查 `expo-client/node_modules/@expo/ui` 的类型及源码。skill 的通用建议服从用户要求与本仓库现有体验，不据此擅自更换组件或发送反馈。
+开发或调整 `expo-client` 界面时，先读仓库内的 [expo-ui skill](.agents/skills/expo-ui/SKILL.md) 及相关 `references/`，查找已安装的 Expo 原生组件及其官方用法。该副本来自 [Expo 官方仓库](https://github.com/expo/skills/tree/ab6cb2c58b0daa7555590d869dd1aa2ddb5d7632/plugins/expo/skills/expo-ui)，指导随上游更新，使用前须对照项目实际安装版本。可在仓库根执行 `node .agents/skills/expo-ui/scripts/list-components.js expo-client` 查看已安装组件和 modifiers，具体属性再查 `expo-client/node_modules/@expo/ui` 的类型及源码。skill 的通用建议服从用户要求与本仓库现有体验，不据此擅自更换组件或发送反馈。
+
+选择界面实现时，比较候选组件是否满足目标的外观、手势和生命周期，并结合实际宿主、平台及安装版本验证。用户要求参考原版 ETOS、Lamplit 或 Telegram 时，先查对应实现，提炼需要保留的体验；也可在现有组件不足时参考它们的设计，但不要假设底层架构可以照搬。优先组合项目已有组件和适用的 Expo 原生组件；都不能满足需求时，再考虑自行组合界面或实现自定义 Expo 原生模块，并说明缺口和取舍。涉及键盘、浮层或原生手势的效果须在目标设备验证，文档、源码与构建通过不能代替设备表现。
 
 Expo 官方文档按项目实际 SDK 版本阅读：先从 [文档索引](https://docs.expo.dev/llms.txt) 找页面，再读取对应版本的 Markdown；当前项目是 SDK 58，例如 [Expo UI](https://docs.expo.dev/versions/v58.0.0/sdk/ui.md) 和 [SwiftUI Host](https://docs.expo.dev/versions/v58.0.0/sdk/ui/swift-ui/host.md)。网页地址末尾可加 `.md` 获取 Markdown；不要将 latest 文档中的接口当作已安装版本的保证。可用时也可通过 [Expo 官方 MCP](https://docs.expo.dev/mcp.md) 读取文档，未连接时直接读上述官方页面；MCP 的当前接口和登录要求以官方说明为准。
 

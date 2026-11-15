@@ -1,11 +1,15 @@
 import React from 'react';
-import { BottomSheet, Group, Host } from '@expo/ui/swift-ui';
-import { frame, padding, presentationBackground, presentationDetents, presentationDragIndicator } from '@expo/ui/swift-ui/modifiers';
+import { BottomSheet, Group, Host, Rectangle } from '@expo/ui/swift-ui';
+import { foregroundStyle, frame, glassEffect, padding, presentationBackground, presentationDetents, presentationDragIndicator } from '@expo/ui/swift-ui/modifiers';
+import { isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
+import { useAppearance } from './appearance';
 
-export function FullSheet({ open, color, onRequestClose, onDismiss, children, testID }: { open: boolean; color: string; onRequestClose: () => void; onDismiss: () => void; children: React.ReactNode; testID: string }) {
+export function FullSheet({ open, color, nativeGlass = false, onRequestClose, onDismiss, children, testID }: { open: boolean; color: string; nativeGlass?: boolean; onRequestClose: () => void; onDismiss: () => void; children: React.ReactNode; testID: string }) {
+  const { reduceTransparency } = useAppearance();
+  const glass = nativeGlass && !reduceTransparency && isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
   return <Host style={{ position: 'absolute' }} pointerEvents="none">
-    <BottomSheet isPresented={open} onIsPresentedChange={value => { if (!value) onRequestClose(); }} onDismiss={onDismiss} testID={testID}>
-      <Group modifiers={[frame({ maxWidth: Infinity, alignment: 'topLeading' }), padding({ top: 16, bottom: 0, leading: 16, trailing: 16 }), presentationDragIndicator('visible'), presentationDetents(['large']), presentationBackground(color)]}>{children}</Group>
+    <BottomSheet isPresented={open} onIsPresentedChange={value => { if (!value) onRequestClose(); }} onDismiss={onDismiss} testID={testID} presentationBackground={glass ? <Rectangle modifiers={[foregroundStyle('#00000000'), glassEffect({ shape: 'rectangle' })]} /> : undefined}>
+      <Group modifiers={[frame({ maxWidth: Infinity, alignment: 'topLeading' }), padding({ top: 16, bottom: 0, leading: 16, trailing: 16 }), presentationDragIndicator('visible'), presentationDetents(['large']), ...(!glass ? [presentationBackground(color)] : [])]}>{children}</Group>
     </BottomSheet>
   </Host>;
 }

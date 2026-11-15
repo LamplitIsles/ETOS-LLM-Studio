@@ -8,7 +8,7 @@ import Animated, { ReduceMotion, useAnimatedReaction, useAnimatedStyle, useDeriv
 import { SymbolView } from 'expo-symbols';
 import { requireOptionalNativeModule } from 'expo';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import type { ChatMessage, FileRef } from '../vendor/contracts/src/index';
+import type { ChatMessage, FileRef, ImageRef } from '../vendor/contracts/src/index';
 import type { StickerIdentity } from '../vendor/contracts/src/index';
 import { createDevelopmentSeedChat, developmentSeedAvailable, developmentSeedStatus } from './cfl/seed.web';
 import { AdmissionError, type ChatController, type ChatControllerSnapshot, type SendAdmission } from './cfl/chat';
@@ -19,6 +19,7 @@ import { WebAuth } from './cfl/web-auth';
 import { loadAppearance, loadAppearanceImage } from './cfl/appearance';
 import { type ImageData, type ApiTransport } from './cfl/transport';
 import { recentStickers } from './cfl/recent-stickers';
+import { StickerClient } from './cfl/stickers';
 import { classifyStickerOpacity } from './cfl/sticker-opacity';
 import { CameraPermissionError, capturePhoto, pickFiles, pickImages, type AttachmentDraft } from './cfl/drafts';
 import { CameraPhotoError, prepareCameraPhoto } from './cfl/camera-photo';
@@ -39,6 +40,9 @@ import { ReminderMessage } from './ui/ReminderMessage';
 import { ChatSearch } from './ui/ChatSearch';
 import { MessageText } from './ui/MessageText';
 import { MessageSurface } from './ui/MessageSurface';
+import { ChatImageActions } from './ui/ChatImageActions';
+import { ChatImageViewer } from './ui/ChatImageViewer';
+import { imageGallery, imageItemsFor, imageTarget, type ImageViewerTarget, type LocalImagePreview } from './ui/chatImageGallery';
 import { ChatSettings } from './ui/ChatSettings';
 import { useKeyboardDiagnostic } from './ui/keyboardDiagnostic';
 import type { InputAreaProps } from '../modules/etos-input-area/src';
@@ -57,10 +61,9 @@ const InputArea: React.ComponentType<InputAreaProps> = inputAreaModule?.InputAre
 type Client = { controller: ChatController; media: ApiTransport };
 type Mode = 'seed' | 'native' | 'web';
 type AppearanceView = { client: Client; sessionId: string; name: string; avatar?: string; portrait?: string; landscape?: string };
-type LocalImagePreview = { attachmentId: string; draft?: AttachmentDraft };
 const journalNeedsCheck = (error: unknown) => error instanceof AdmissionError && error.journal === 'unknown' || error instanceof Error && error.message === 'journal_uncertain';
 
-function AuthImage({ id, media, controller, mediaType, sticker = false, local, onRemoteReady, phase }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean; local?: LocalImagePreview; onRemoteReady?: (id: string) => void; phase?: 'pending' | 'confirmed' }) {
+function AuthImage({ id, media, controller, mediaType, sticker = false, local, onRemoteReady, phase, width = 200, height = 150 }: { id: string; media: ApiTransport; controller: ChatController; mediaType: string; sticker?: boolean; local?: LocalImagePreview; onRemoteReady?: (id: string) => void; phase?: 'pending' | 'confirmed'; width?: number; height?: number }) {
   const [value, setValue] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -90,13 +93,14 @@ function AuthImage({ id, media, controller, mediaType, sticker = false, local, o
     return () => { active = false; abort.abort(); };
   }, [id, media, controller, mediaType, sticker, phase]);
   useEffect(() => { if (loaded && local?.draft) onRemoteReady?.(local.attachmentId); }, [loaded, local, onRemoteReady]);
-  if (local?.draft) return <View style={styles.image}>
-    <Image source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.image} />
+  const imageStyle = [styles.image, { width, height }];
+  if (local?.draft) return <View style={imageStyle}>
+    <Image source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="cover" style={imageStyle} />
     {value && <Image source={{ uri: value }} accessible={false} accessibilityElementsHidden resizeMode="contain" onLoad={() => setLoaded(true)} style={[StyleSheet.absoluteFill, { opacity: 0 }]} />}
   </View>;
   if (failed) return <Text style={styles.mediaNotice}>图片暂时无法显示</Text>;
-  if (!value) return <View style={styles.imageLoading}><ActivityIndicator /><Text style={styles.mediaNotice}>图片加载中</Text></View>;
-  return <Image source={{ uri: value }} onLoad={() => setLoaded(true)} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode="contain" style={sticker ? [styles.stickerImage, opaqueSize && { ...opaqueSize, borderRadius: 12 }] : styles.image} />;
+  if (!value) return <View style={[styles.imageLoading, sticker ? styles.stickerImage : { width, height }]}><ActivityIndicator /><Text style={styles.mediaNotice}>图片加载中</Text></View>;
+  return <Image source={{ uri: value }} onLoad={() => setLoaded(true)} accessibilityLabel={sticker ? '表情图片' : '聊天图片'} resizeMode={sticker ? 'contain' : 'cover'} style={sticker ? [styles.stickerImage, opaqueSize && { ...opaqueSize, borderRadius: 12 }] : imageStyle} />;
 }
 
 function imageUri(image: ImageData, createdUrls: string[]): string {
@@ -111,14 +115,17 @@ function imageUri(image: ImageData, createdUrls: string[]): string {
 }
 
 
-function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef, localImages, localFiles, onRemoteReady }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null>; localImages?: readonly LocalImagePreview[]; localFiles?: readonly FileRef[]; onRemoteReady?: (id: string) => void }) {
+function MessageBubble({ row, media, controller, sessionId, workspaceImages, latestRef, localImages, localFiles, onRemoteReady, onOpenImage, onFavoriteImage, favoriteBusy }: { row: Row; media: ApiTransport; controller: ChatController; sessionId: string; workspaceImages: boolean; latestRef?: React.RefObject<React.ComponentRef<typeof View> | null>; localImages?: readonly LocalImagePreview[]; localFiles?: readonly FileRef[]; onRemoteReady?: (id: string) => void; onOpenImage: (target: ImageViewerTarget) => void; onFavoriteImage: (image: ImageRef) => void; favoriteBusy: boolean }) {
   const { dark } = useAppearance();
   const item = row.original;
   const mine = row.user._id === 'me' && item?.source?.kind !== 'reminder';
   const foreground = mine ? '#ffffff' : dark ? '#f4f4f6' : '#252631';
   const placeholderStyle = [styles.contentPlaceholder, { color: dark ? '#e3e7ec' : '#4d5561', backgroundColor: dark ? 'rgba(38,43,51,0.94)' : 'rgba(247,248,250,0.94)' }];
-  const images = (item?.images ?? row.pendingImages ?? []).filter(image => !image.sticker);
-  const localIds = new Set(localImages?.map(image => image.attachmentId));
+  const imageItems = imageItemsFor(row, localImages);
+  const { width: screenWidth } = useWindowDimensions();
+  const columns = Math.min(3, imageItems.length || 1);
+  const gridWidth = Math.min(imageItems.length === 1 ? 180 : 260, Math.max(1, (screenWidth - 36) * (mine ? 0.78 : 1)));
+  const cellWidth = (gridWidth - (columns - 1) * 4) / columns;
   const remoteFiles = item?.files ?? row.pendingFiles ?? [];
   const localFileIds = new Set(localFiles?.map(file => file.attachmentId));
   const files = [...(localFiles ?? []).map(file => remoteFiles.find(remote => remote.attachmentId === file.attachmentId) ?? file), ...remoteFiles.filter(file => !localFileIds.has(file.attachmentId))];
@@ -127,13 +134,14 @@ function MessageBubble({ row, media, controller, sessionId, workspaceImages, lat
       {!!row.text && <MessageText key={`${media.origin}:${sessionId}:${workspaceImages}`} messageId={row._id} text={row.text} foreground={foreground} dark={mine || dark} media={media} controller={controller} workspaceImages={workspaceImages} />}
       {row.pendingState === 'failed' && <Text style={styles.errorSmall}>发送失败，请检查连接</Text>}
     </MessageSurface> : null}
-    {localImages?.map(local => {
-      const image = images.find(value => value.attachmentId === local.attachmentId);
-      return image ? <AuthImage key={JSON.stringify([row._id, local.attachmentId])} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} local={local} onRemoteReady={onRemoteReady} phase={item ? 'confirmed' : 'pending'} />
-        : local.draft ? <Image key={JSON.stringify([row._id, local.attachmentId])} source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="contain" style={styles.image} /> : null;
-    })}
-    {images.filter(image => !localIds.has(image.attachmentId)).map(image => <AuthImage key={JSON.stringify([row._id, image.attachmentId])} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} />)}
-    {item?.images?.filter(image => image.sticker).map(image => <AuthImage key={JSON.stringify([row._id, image.attachmentId])} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
+    {!!imageItems.length && <View style={{ width: gridWidth, flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>{imageItems.map(({ image, local }) => {
+      const id = image?.attachmentId ?? local!.attachmentId;
+      const canFavorite = !!item && image?.availability === 'available';
+      return <ChatImageActions key={JSON.stringify([row._id, id])} width={cellWidth} height={120} canFavorite={canFavorite} favoriteBusy={favoriteBusy} onOpen={() => onOpenImage(imageTarget(row, { image, local }))} onFavorite={() => { if (image && canFavorite) onFavoriteImage(image); }}>
+        {image ? <AuthImage id={id} media={media} controller={controller} mediaType={image.mediaType} local={local} onRemoteReady={onRemoteReady} phase={item ? 'confirmed' : 'pending'} width={cellWidth} height={120} /> : local?.draft ? <Image source={{ uri: local.draft.uri }} accessibilityLabel="聊天图片" resizeMode="cover" style={[styles.image, { width: cellWidth, height: 120 }]} /> : null}
+      </ChatImageActions>;
+    })}</View>}
+    {item?.images?.filter(image => image.sticker).map(image => <ChatImageActions key={JSON.stringify([row._id, image.attachmentId])} width={120} height={120} canFavorite={image.availability === 'available'} favoriteBusy={favoriteBusy} onOpen={() => onOpenImage(imageTarget(row, { image }))} onFavorite={() => onFavoriteImage(image)}><AuthImage id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker /></ChatImageActions>)}
     {files.map(file => <Text key={file.attachmentId} numberOfLines={1} style={placeholderStyle}>文件 · {file.name}</Text>)}
     {row.pendingImages?.filter(image => !!image.sticker).map(image => <AuthImage key={JSON.stringify([row._id, image.attachmentId])} id={image.attachmentId} media={media} controller={controller} mediaType={image.mediaType} sticker />)}
     {item?.ui != null && <Text style={placeholderStyle}>互动卡片 · 暂不支持显示</Text>}
@@ -399,6 +407,14 @@ function AppContent() {
   const [localImages, setLocalImages] = useState<Record<string, LocalImagePreview[]>>({});
   const localImagesRef = useRef<Record<string, LocalImagePreview[]>>({});
   const [localFiles, setLocalFiles] = useState<Record<string, FileRef[]>>({});
+  const [imageViewer, setImageViewer] = useState<ImageViewerTarget | null>(null);
+  const imageViewerRef = useRef<ImageViewerTarget | null>(null);
+  const deferredImageRelease = useRef<{ operationId: string; id: string } | null>(null);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const favoriteFlight = useRef<object | null>(null);
+  const [favoritesRevision, setFavoritesRevision] = useState(0);
+  const [favoriteNotice, setFavoriteNotice] = useState('');
+  const favoriteNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sending = useRef<object | null>(null);
   const preparingCamera = useRef<object | null>(null);
   const [preparingPhoto, setPreparingPhoto] = useState(false);
@@ -545,8 +561,8 @@ function AppContent() {
   const setDrafts = (items: AttachmentDraft[]) => { attachmentsRef.current = items; setAttachments(items); };
   useEffect(() => {
     composerGeneration.current++;
-    sending.current = null; preparingCamera.current = null; setPreparingPhoto(false); setBusy(false); setAttachments([]); setLocalImages({}); setLocalFiles({}); setShowScrollToBottom(false);
-    return () => { historyAnchor.current?.cancel(); historyAnchor.current = null; preparingCamera.current = null; composerGeneration.current++; for (const item of attachmentsRef.current) item.release(); attachmentsRef.current = []; for (const items of Object.values(localImagesRef.current)) items.forEach(item => item.draft?.release()); localImagesRef.current = {}; };
+    sending.current = null; preparingCamera.current = null; favoriteFlight.current = null; imageViewerRef.current = null; deferredImageRelease.current = null; setImageViewer(null); setFavoriteBusy(false); setFavoriteNotice(''); setPreparingPhoto(false); setBusy(false); setAttachments([]); setLocalImages({}); setLocalFiles({}); setShowScrollToBottom(false);
+    return () => { historyAnchor.current?.cancel(); historyAnchor.current = null; preparingCamera.current = null; favoriteFlight.current = null; imageViewerRef.current = null; deferredImageRelease.current = null; if (favoriteNoticeTimer.current) clearTimeout(favoriteNoticeTimer.current); favoriteNoticeTimer.current = null; composerGeneration.current++; for (const item of attachmentsRef.current) item.release(); attachmentsRef.current = []; for (const items of Object.values(localImagesRef.current)) items.forEach(item => item.draft?.release()); localImagesRef.current = {}; };
   }, [client, sessionId]);
   const clearSent = (text: string, selected: readonly AttachmentDraft[], admission: SendAdmission) => {
     if (draftRef.current === text) setText('');
@@ -574,6 +590,52 @@ function AppContent() {
     if (next.some(value => value.draft)) updated[operationId] = next; else delete updated[operationId];
     localImagesRef.current = updated; setLocalImages(updated);
   }, []);
+  const openImage = useCallback((target: ImageViewerTarget) => {
+    const localUri = target.operationId ? localImagesRef.current[target.operationId]?.find(item => item.attachmentId === target.id)?.draft?.uri : undefined;
+    target = { ...target, localUri };
+    const deferred = deferredImageRelease.current;
+    if (deferred && !(target.localUri && deferred.id === target.id && deferred.operationId === target.operationId)) { deferredImageRelease.current = null; releaseLocalImage(deferred.operationId, deferred.id); }
+    imageViewerRef.current = target; setImageViewer(target);
+  }, [releaseLocalImage]);
+  const closeImage = useCallback((target: ImageViewerTarget) => {
+    if (imageViewerRef.current !== target) return;
+    imageViewerRef.current = null; setImageViewer(null);
+    const deferred = deferredImageRelease.current; deferredImageRelease.current = null;
+    if (deferred) releaseLocalImage(deferred.operationId, deferred.id);
+  }, [releaseLocalImage]);
+  const claimFavorite = useCallback((): object | null => {
+    if (favoriteFlight.current) return null;
+    const token = {}; favoriteFlight.current = token; setFavoriteBusy(true); return token;
+  }, []);
+  const releaseFavorite = useCallback((token: object) => {
+    if (favoriteFlight.current !== token) return;
+    favoriteFlight.current = null; setFavoriteBusy(false);
+  }, []);
+  const favoriteImage = useCallback(async (image: ImageRef) => {
+    if (!client || !sessionId || favoriteFlight.current) return;
+    const current = client.controller.scope(), latest = client.controller.snapshot();
+    const confirmed = [...latest.history, ...(latest.view?.messages ?? []), ...latest.detached.flatMap(range => range.messages)].some(message => message.images?.some(ref =>
+      ref.attachmentId === image.attachmentId && ref.availability === 'available' && ref.sticker?.id === image.sticker?.id && ref.sticker?.version === image.sticker?.version));
+    if (active.current !== client || !current() || latest.view?.sessionId !== sessionId || !confirmed) return;
+    const token = claimFavorite(); if (!token) return;
+    if (favoriteNoticeTimer.current) clearTimeout(favoriteNoticeTimer.current);
+    favoriteNoticeTimer.current = null; setFavoriteNotice('');
+    try {
+      await new StickerClient(client.media, sessionId, () => active.current === client && current()).favoriteImage(image);
+      if (active.current === client && current()) {
+        if (favoriteNoticeTimer.current) clearTimeout(favoriteNoticeTimer.current);
+        setFavoriteNotice('已收藏表情');
+        favoriteNoticeTimer.current = setTimeout(() => { setFavoriteNotice(''); favoriteNoticeTimer.current = null; }, 2400);
+      }
+    }
+    catch { if (active.current === client && current()) setError('收藏结果未确认，请查看表情收藏。'); }
+    finally {
+      if (favoriteFlight.current === token) {
+        releaseFavorite(token);
+        if (active.current === client && current()) setFavoritesRevision(value => value + 1);
+      }
+    }
+  }, [client, sessionId, claimFavorite, releaseFavorite]);
   const selectAttachments = async (kind: 'image' | 'file' | 'camera') => {
     if (!client || !snapshot?.view || busy || sending.current || preparingCamera.current) return;
     const scope = client.controller.scope(), generation = composerGeneration.current;
@@ -688,6 +750,9 @@ function AppContent() {
   };
   const workspaceImages = snapshot?.view?.capabilities.workspaceImages === true;
   const messages = useMemo(() => snapshot ? visibleRowsFor(snapshot) : [], [snapshot]);
+  const gallery = useMemo(() => imageGallery(messages, localImages), [messages, localImages]);
+  const imageGroup = imageViewer && gallery.find(group => group.some(image => image.key === imageViewer.key));
+  const imageIndex = imageGroup?.findIndex(image => image.key === imageViewer?.key) ?? -1;
   const timeHeadings = useMemo(() => chatTimeHeadings(messages, chatDayNow), [messages, chatDayNow]);
   const renderMessage = useCallback(({ item, index }: { item: Row; index: number }) => {
     if (!client || !sessionId) return null;
@@ -695,9 +760,9 @@ function AppContent() {
     const current = client.controller.scope(), operationId = item.operationId;
     return <View>
       {timeHeadings[item._id] && <View style={styles.timeHeading}><Text testID="chat-time-heading" style={[styles.timeHeadingText, { color: dark ? '#e1e4e8' : '#59616c', backgroundColor: dark ? 'rgba(35,39,45,0.85)' : 'rgba(245,247,250,0.9)' }]}>{timeHeadings[item._id]}</Text></View>}
-      <MessageBubble row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} localImages={operationId ? localImages[operationId] : undefined} localFiles={operationId ? localFiles[operationId] : undefined} onRemoteReady={operationId ? id => { if (active.current === client && current()) releaseLocalImage(operationId, id); } : undefined} />
+      <MessageBubble row={item} media={client.media} controller={client.controller} sessionId={sessionId} workspaceImages={workspaceImages} latestRef={index === messages.length - 1 ? latestRef : undefined} localImages={operationId ? localImages[operationId] : undefined} localFiles={operationId ? localFiles[operationId] : undefined} onOpenImage={openImage} onFavoriteImage={image => void favoriteImage(image)} favoriteBusy={favoriteBusy} onRemoteReady={operationId ? id => { if (active.current === client && current()) { if (imageViewerRef.current?.id === id && imageViewerRef.current.operationId === operationId && imageViewerRef.current.localUri) deferredImageRelease.current = { operationId, id }; else releaseLocalImage(operationId, id); } } : undefined} />
     </View>;
-  }, [client, sessionId, workspaceImages, messages.length, timeHeadings, dark, localImages, localFiles, releaseLocalImage]);
+  }, [client, sessionId, workspaceImages, messages.length, timeHeadings, dark, localImages, localFiles, releaseLocalImage, openImage, favoriteImage, favoriteBusy]);
   const currentAppearance = appearance?.client === client && appearance.sessionId === sessionId ? appearance : null;
   const title = currentAppearance?.name || snapshot?.view?.name || '聊天';
   const background = width > height ? currentAppearance?.landscape : currentAppearance?.portrait;
@@ -805,8 +870,8 @@ function AppContent() {
             <ComposerContainer {...(iosChatKeyboard && !nativePanelAvailable ? { enabled: !stickerSearchActive } : {})} style={styles.floatingComposer}>
               <Animated.View style={nativePanelAvailable ? nativeStickyStyle : undefined}>
               <View ref={composerRef} testID="floating-composer" onLayout={event => { const height = event.nativeEvent.layout.height; toolbarHeightRef.current = height; keyboardDiagnostic.record('layout', { height: Math.round(height) }); setToolbarHeight(height); }}>
-              <StickerPanel key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} disabled={busy || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
-                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={StyleSheet.absoluteFill}>{null}</Surface></View>{panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
+              <StickerPanel onLogin={openLogin} authDenied={snapshot?.failure === 'access_denied'} key={inputAreaSession} media={client.media} controller={client.controller} sessionId={sessionId ?? ''} recent={recent} favoritesRevision={favoritesRevision} externalFavoriteBusy={favoriteBusy} claimFavorite={claimFavorite} releaseFavorite={releaseFavorite} disabled={busy || panelBusy} onSelect={item => void chooseSticker(item)} onClose={() => closeEmojiPanel()} onSearchVisibilityChange={onStickerSearchVisibilityChange} prepareSearch={nativePanelAvailable ? prepareNativeStickerSearch : undefined} dark={dark} enabled={emojiOpen && panelKind === 'stickers'}>{(stickerPanel, stickerSearchSheet) => {
+                const panelContent = <View key={`${panelKind}:${panelVersion}`} onLayout={() => { if (panelGeneration.current === inputAreaSession && panelRevision.current === panelVersion) { laidOutPanel.current = { kind: panelKind, generation: inputAreaSession, revision: panelVersion }; presentPendingPanel.current(); } }} style={[styles.bottomPanel, { height: iosChatKeyboard ? emojiPanelHeight : 300, paddingBottom: insets.bottom }]}><View testID="panel-background" pointerEvents="none" style={StyleSheet.absoluteFill}><Surface style={[StyleSheet.absoluteFill, styles.panelBackdrop]}>{null}</Surface></View>{panelKind === 'stickers' ? <View testID="stickers-panel" style={styles.screen}>{stickerPanel}</View> : <AttachmentPanel dark={dark} onClose={() => closeEmojiPanel()} onSelect={kind => closeEmojiPanel(() => void selectAttachments(kind))} />}</View>;
                 const inputPanel = nativePanelAvailable && inputAreaModule ? <inputAreaModule.KeyboardPanel scopeGeneration={inputAreaSession} style={styles.nativePanelPlaceholder} onLayout={event => { if (panelGeneration.current === inputAreaSession) { panelTagGeneration.current = inputAreaSession; panelTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } }} accessibilityElementsHidden={!emojiOpen} importantForAccessibility={emojiOpen ? 'auto' : 'no-hide-descendants'}><View collapsable={false} style={{ height: emojiPanelHeight }}>{panelContent}</View></inputAreaModule.KeyboardPanel> : <EmojiPanel open={emojiOpen} panelHeight={emojiPanelHeight} visibleHeight={emojiVisibleHeight} progress={emojiProgress} instantOpen={emojiInstantOpen}>{panelContent}</EmojiPanel>;
                 return <>
               <InputArea generation={inputAreaSession} onLayout={event => { if (nativePanelAvailable || (__DEV__ && Platform.OS === 'ios' && process.env.EXPO_PUBLIC_ETOS_KEYBOARD_DIAG === '1')) { if (panelGeneration.current === inputAreaSession) { hostTagGeneration.current = inputAreaSession; inputAreaHostTag.current = findNodeHandle(event.currentTarget) ?? null; presentPendingPanel.current(); } } }} composer={<Animated.View style={[styles.composerOuter, composerInset]} onLayout={event => { chatComposerHeight.value = event.nativeEvent.layout.height; }}>
@@ -846,6 +911,8 @@ function AppContent() {
         </View>
         {searchOpen && sessionId && <ChatSearch key={sessionId} controller={client.controller} media={client.media} workspaceImages={snapshot?.view?.capabilities.workspaceImages === true} companionName={snapshot?.view?.name || '伙伴'} dark={dark} onClose={() => setSearchOpen(false)} />}
         {settingsOpen && sessionId && <ChatSettings key={sessionId} controller={client.controller} media={client.media} dark={dark} onClose={() => setSettingsOpen(false)} onBackgroundSaved={() => setAppearanceRevision(value => value + 1)} />}
+        {imageViewer && <ChatImageViewer key={sessionId} target={imageViewer} items={imageIndex >= 0 && imageGroup ? imageGroup : [imageViewer]} controller={client.controller} media={client.media} onClose={() => closeImage(imageViewer)} onNavigate={openImage} />}
+        {!!favoriteNotice && <View pointerEvents="none" style={{ position: 'absolute', top: insets.top + 80, left: 0, right: 0, alignItems: 'center' }}><Text accessibilityRole="alert" style={{ color: '#fff', backgroundColor: '#30343a', borderRadius: 14, overflow: 'hidden', paddingHorizontal: 14, paddingVertical: 8 }}>{favoriteNotice}</Text></View>}
       </View>
     </View>
     {spaceOpen && <View style={styles.screen}><NativeTabsFrame header={spaceHeader} ink={ink} page={page} dark={dark} bottomInset={insets.bottom} /></View>}
@@ -872,7 +939,7 @@ const styles = StyleSheet.create({
   messageRow: { marginVertical: 4, marginHorizontal: 18, gap: 6 }, mine: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '78%' }, theirs: { flex: 1, alignItems: 'flex-start' }, reminderRow: { alignSelf: 'stretch' },
   timeHeading: { alignItems: 'center', marginTop: 20, marginBottom: 12 }, timeHeadingText: { overflow: 'hidden', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4, fontSize: 12, lineHeight: 16 },
   messageText: { fontSize: 16, lineHeight: 23 }, errorSmall: { color: '#ffe2df', fontSize: 11, marginTop: 4 },
-  image: { width: 200, height: 150, borderRadius: 16 }, stickerImage: { width: 120, height: 120 }, imageLoading: { width: 140, height: 90, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#e1e4e8', borderRadius: 16 }, mediaNotice: { fontSize: 12, color: '#727782' }, contentPlaceholder: { color: '#777f8b', backgroundColor: 'rgba(130,140,150,0.14)', borderRadius: 13, padding: 12, overflow: 'hidden', maxWidth: 240 },
+  image: { width: 200, height: 150, borderRadius: 12, overflow: 'hidden' }, stickerImage: { width: 120, height: 120 }, imageLoading: { width: 140, height: 90, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#e1e4e8', borderRadius: 12 }, mediaNotice: { fontSize: 12, color: '#727782' }, contentPlaceholder: { color: '#777f8b', backgroundColor: 'rgba(130,140,150,0.14)', borderRadius: 13, padding: 12, overflow: 'hidden', maxWidth: 240 },
   composerOuter: { paddingTop: 4, paddingHorizontal: 7 }, composerSurface: { flex: 1, borderRadius: 22 },
   composerContents: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, gap: 6 },
   composerField: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 44, paddingLeft: 8 },
@@ -880,7 +947,8 @@ const styles = StyleSheet.create({
   composerInputWrap: { flex: 1, minWidth: 0 },
   composerInputMeasure: { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 },
   composerInput: { fontSize: 16, lineHeight: 22, paddingHorizontal: 4, paddingVertical: 10, textAlignVertical: 'center' },
-  bottomPanel: { borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' },
+  bottomPanel: { borderTopLeftRadius: 18, borderTopRightRadius: 18 },
+  panelBackdrop: { borderTopLeftRadius: 18, borderTopRightRadius: 18 },
   nativePanelPlaceholder: { height: 0, width: '100%' },
   attachmentPanel: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
   attachmentHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

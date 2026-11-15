@@ -19,7 +19,7 @@ async function isolatedContext(browser, options, statusOverride) {
     const target = `http://127.0.0.1:${port}${original.pathname}${original.search}`;
     const headers = { ...route.request().headers(), host: '127.0.0.1:8091' };
     try { await route.fulfill({ response: await route.fetch({ url: target, headers, timeout: 120000 }) }); }
-    catch { await route.abort(); }
+    catch { await route.abort().catch(() => {}); }
   });
   await context.routeWebSocket('**/*', socket => {
     const original = new URL(socket.url());

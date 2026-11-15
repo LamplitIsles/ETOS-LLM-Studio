@@ -57,6 +57,38 @@ test('favorite validates response shape, identity and status and does not replay
   assert.equal(calls, 7);
 });
 
+test('a lost chat-image favorite response is ambiguous and is never replayed', async () => {
+  for (const committed of [false, true]) {
+    const fixture = createFixtureMedia(); let mutations = 0;
+    const transport: ApiTransport = { ...fixture, async request(path, init) {
+      if (path === '/api/stickers/favorites/image') {
+        mutations++;
+        if (committed) await fixture.request(path, init);
+        throw new Error('synthetic connection loss');
+      }
+      return fixture.request(path, init);
+    } };
+    const client = new StickerClient(transport, 'fixture-session', () => true);
+    await assert.rejects(client.favoriteImage(image), /connection loss/);
+    assert.equal(mutations, 1);
+    const favorites = await page(client);
+    assert.equal(favorites.some(item => item.name === image.name), committed);
+    assert.equal(mutations, 1, 'refresh must not repeat the mutation');
+  }
+});
+
+test('a chat-image favorite response is discarded when its scope changes', async () => {
+  let current = true, mutations = 0, finish!: (response: Response) => void;
+  const transport: ApiTransport = { origin: 'fixture://local', async read() { throw Error('unused'); }, async request() {
+    mutations++; return new Promise<Response>(resolve => { finish = resolve; });
+  } };
+  const pending = new StickerClient(transport, 'fixture-session', () => current).favoriteImage(image);
+  current = false;
+  finish(Response.json({ sticker: sample, favorite: true }));
+  await assert.rejects(pending, /session_changed/);
+  assert.equal(mutations, 1);
+});
+
 test('late favorite completion is discarded on session A to B to A or abort and never automatically retried', async () => {
   let generation = 1, calls = 0, resolve!: (response: Response) => void;
   const media: ApiTransport = { origin: 'synthetic', async read() { throw Error('unused'); }, async request() { calls++; return new Promise<Response>(r => { resolve = r; }); } };

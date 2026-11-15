@@ -22,6 +22,31 @@ controller; it does not depend on a bundled chat UI framework.
 - 用户决定移除聊天顶部的上下文圆圈和停止按钮。键盘、表情与附件面板互切的
   平滑动画仍待处理；静态不透明表情圆角的 iOS 原生判定仍需新构建和设备验证。
 
+### 聊天图片与收藏
+
+时间线的普通图片按消息左右对齐，单图宽度最多 180 pt，多图网格最多 260 pt、
+三列，图片以圆角裁切填充；表情保留独立的透明和动图展示方式。点击图片打开可
+关闭的原图 sheet：已有本地预览时先使用本地资源，否则通过现有认证读取原图，
+读取时显示加载或失败状态。同一连续已加载范围内有多张普通照片时，查看器底部
+显示缩略图，可左右滑动照片或点击缩略图选择；遇到连续性尚未确认的缺口不会
+跨越，也不会为切换自动拉取历史。表情单独查看。
+发送图片的本地预览在远端图片加载成功后释放；若预览仍在 sheet 中使用，则
+延迟到切换图片或关闭 sheet 后释放，会话结束时也会清理。
+
+已确认消息中可用的图片和表情可以收藏：iOS 长按打开原生 ContextMenu；Web
+可长按图片或使用图片上的操作按钮。待确认的本地预览不提供收藏。普通图片按
+聊天图片身份收藏，已有表情沿用其表情身份；请求进行中禁止重复操作，结果不明
+时提示查看表情收藏，并刷新收藏信息，不自动重发。刷新仅反映当前状态，不能
+证明此前结果不明的请求已经结束。
+
+原图 sheet 的 iOS 原生背景使用系统玻璃效果作为候选；降低透明度或效果不可用时
+使用随浅色、深色主题变化的底色，其他平台使用主题底色。没有新增原生依赖。
+iOS 使用 React Native ScrollView 的缩放属性；Web 尚未实现双指或双击缩放。
+
+用户此前在 iPhone 上确认过图片对齐、打开和关闭、捏合以及长按菜单；新版的
+背景、底部缩略图、滑动、点击缩略图和双指缩放也已获用户确认。尚未实际执行
+真实收藏；这些反馈不代表完整真机验收。
+
 ## iOS 开发（Mac）
 
 项目已为 npm 12 授权固定版本 `react-native-enriched-markdown@1.2.0-nightly-20261109-ca015bcac` 所需的安装脚本。使用环境代理下载该库的原生资源时，Node 需启用环境代理，可运行 `NODE_USE_ENV_PROXY=1 npm ci`。
@@ -308,7 +333,8 @@ peer dependencies, licensing, and platform validation limits.
   current UI uses `beginSendDrafts` to clear the admitted draft without waiting
   for a receipt; unknown operations remain separate from the next draft and
   are never re-dispatched automatically. Local image previews stay with their
-  operation until the matching remote image loads or the chat scope ends.
+  operation until the matching remote image loads or the chat scope ends; an
+  open viewer retains its local resource until navigating away or dismissal.
   Explicitly failed operations are shown on their message. When needed, call
   `await controller.operationStatus({origin, sessionId, operationId})`.
   This method uses
@@ -366,8 +392,9 @@ peer dependencies, licensing, and platform validation limits.
   sticker ID when present. Both return a validated `{sticker, favorite}` and
   use the same scoped authentication; pass an `AbortSignal` as the optional
   fourth constructor argument. A cancelled, failed or stale request may have
-  committed: refresh the favorites page to determine the state and never
-  automatically repeat the mutation. Serialize favorite changes and discard
+  committed: refresh the favorites page to inspect the current state and never
+  automatically repeat the mutation. A refresh cannot prove an uncertain
+  request has finished. Serialize favorite changes and discard
   older in-flight favorites pages when a change starts, so a late page cannot
   overwrite the refreshed state. Call `sendSticker(controller, media, {id, version})` on the
   user's selection for the existing immediate-send behavior; its outcome uses
@@ -533,7 +560,7 @@ co-installed app was tested here.
 
 ### 会话图片与近期表情的数据接口
 
-聊天图片可用 `controller.readImage(media, attachmentId, active, variant, signal)`；`variant` 为 `preview`（默认）或 `original`。调用方在每个组件生命周期创建 AbortController，卸载时设 `active = false` 并 `abort()`；会话切换或 controller.stop 时缓存和在途读取被清除。原图片仍经现有认证 transport、禁止重定向、MIME 和大小检查；仅成功结果在本 controller 内按 transport/origin/附件/变体保存内存副本，最多 48 项、16 MB，30 天到期，最多 16 个不同在途读取，其余按 FIFO 等待；卸载取消等待项。调用方取得的是独立字节副本。应用内副本的 30 天内命中不会向 CFL 重新核验，已明确接受这一新鲜度/撤权边界；已收到 401/403 或认证失效时清理，不将错误降级为旧内容。它不改变 HTTP 缓存语义、不写磁盘，也不提供离线聊天。UI 须接线调用此接口；旧的 `loadImage` 本身不使用该缓存。
+聊天图片可用 `controller.readImage(media, attachmentId, active, variant, signal)`；`variant` 为 `preview`（默认）或 `original`。调用方在每个组件生命周期创建 AbortController，卸载时设 `active = false` 并 `abort()`；会话切换或 controller.stop 时缓存和在途读取被清除。原图片仍经现有认证 transport、禁止重定向、MIME 和大小检查；仅成功结果在本 controller 内按 transport/origin/附件/变体保存内存副本，最多 48 项、16 MB，30 天到期，最多 16 个不同在途读取，其余按 FIFO 等待；卸载取消等待项。调用方取得的是独立字节副本。应用内副本的 30 天内命中不会向 CFL 重新核验，已明确接受这一新鲜度/撤权边界；已收到 401/403 或认证失效时清理，不将错误降级为旧内容。它不改变 HTTP 缓存语义、不写磁盘，也不提供离线聊天。时间线和原图 sheet 已调用此接口；旧的 `loadImage` 本身不使用该缓存。
 
 `recentStickers(controller)` 从当前 snapshot 已加载的历史及消息提取用户和 agent 最近最多 30 个按 ID 去重的表情，保留最新消息的版本和附件引用；它不是全历史或跨重启记录。显示历史快照可用条目的 `image.attachmentId` 和 `original` 读取。点击时同步调用 `recentStickerIdentity(controller, recent, item)`；返回 null 说明身份不属于该 controller/会话代际或未观察，应忽略。取得身份后立即交给现有 `sendSticker(controller, media, identity)`，由 stage 在服务端核验实际版本与可用性，不要求目录页先加载。`resolveRecentSticker` 只是可选的当前目录页信息，`unresolved` 不代表删除；stage 的访问拒绝、不可用及其他异常沿原发送错误路径处理，未知聊天提交只核对、不自动重发。stage 响应丢失本身也可能留下服务端暂存。
 
@@ -547,6 +574,16 @@ co-installed app was tested here.
 `new ModelSettingsClient(controller, media).load()` 只读返回 `{ sessionId, currentModel, fast, busy }`；`MODEL_CHOICES` 列出 CFL 当前支持的三个可写选项，当前模型即使不在列表中也可展示。用户明确选择后，调用 `select(snapshot, { model, fast })`；必须传该 controller、transport 与在线连接最近读取返回的原快照，不能复制或复用已消费的快照。提交使用 `sessionId/expectedModel/expectedFast`，同一 controller 并发提交及提交时读取会被拒绝。
 
 返回 `saved` 时使用其 `snapshot`；`stale_model` / `model_busy` 为明确冲突，接口会只读刷新一次并在可用时返回 `snapshot`，刷新失败则为 null，提示用户刷新或等待；`access_denied`、`invalid_request`、`invalid_model` 表示相应拒绝。`unknown` 表示请求可能已生效：提示结果未确认，由用户读取当前设置并检查，不自动重发。读取只反映当时状态，没有操作回执，不能证明先前迟到的写入不会随后生效；任何进一步修改都必须由用户重新明确选择。断连/会话变化后的迟到提交结果也为 `unknown`；读取错误使用 `offline`、`session_changed`、`model_superseded`、`model_settings_unsupported`、`model_settings_unavailable`、`invalid_model_settings` 或 `access_denied`，前端应自行处理失效和关闭。此接口不修改背景或语音设置。开发 seed 只额外开放该路径的 GET/POST；正在运行的代理须由管理者重启后才会加载新的服务端白名单。
+
+### 表情素材本地副本接口
+
+仅在控制器已确认当前来源和会话后，可将 `createStickerCache()` 作为第五个参数传给 `StickerClient`。`cachedPage(kind, options)` 和 `cachedMedia(version)` 读取历史副本，未命中或存储损坏时返回 `null`；它们不发网络请求，也不证明当前授权或服务端状态。`page()` 和 `media()` 仍执行原有认证请求与验证，仅成功的包、收藏、包成员页及 WebP 缩略图会异步保存；搜索与原图不保存。缓存保留每页游标，局部收藏页不能证明全集。网络返回缩略图 404 时删除对应副本。调用方可先显示已读副本并同时核对网络；收到 401/403 时须停止显示旧数据并走现有登录流程，不能把它当离线回退。该客户端在收到拒绝后不再提供缓存读取；重新确认会话后创建新客户端。同来源重新登录不会删除文件。
+
+原生缓存使用应用缓存目录，跨来源和会话共用最多 256 MiB 和 4096 个文件（含写入时的临时文件），按最早写入时间淘汰；系统可以提前清理。写入失败、损坏或被清理均不阻断网络。文件名为摘要，但不代表加密或同来源多账号隔离；缓存键不含 token，实际隔离范围是来源、会话、页面参数和素材版本。Web 安全回退为不提供文件存储。这不是 Swift 客户端的 Kingfisher 预算，也不支持完全离线冷启动；必须先从服务端确认 session。
+
+表情面板已接入该接口；用户在 iPhone 上确认已看内容的面板重开和组间切换正常。App 从切换器关闭再打开后，用户仍看到部分表情加载；原生磁盘读写和命中情况尚未验证。面板在读取本地副本时并行核对网络，网络请求本身不能证明磁盘未命中。
+
+iOS 长按表情使用 Expo 原生 Popover，先显示已加载的缩略图，再加载原图；松手关闭。用户已在 iPhone 确认浮窗、尖角和关闭效果。Web 保留贴近表情的预览；设备上的搜索页、无障碍和异常打断场景尚未完整验收。
 
 ### 背景设置数据接口
 

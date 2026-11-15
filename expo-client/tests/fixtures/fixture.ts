@@ -16,7 +16,8 @@ export function createFixture(options: { newOperationId?: () => string } = {}) {
       { ...message('fixture-4', 'user', '', base + 180000), files: [{ attachmentId: 'fixture-file', name: 'sample.txt', mediaType: 'text/plain', size: 12, availability: 'available' }] },
       { ...message('fixture-5', 'user', '', base + 240000), images: [{ attachmentId: 'fixture-sticker', mediaType: 'image/png', name: 'sticker.png', availability: 'missing', sticker: { id: 'fixture-sticker', version: '0'.repeat(64) } }] },
       { ...message('fixture-6', 'agent', '', base + 300000), ui: { fixture: true } },
-      { ...message('fixture-agent-sticker-message', 'agent', '', base + 360000), imageState: 'ready', images: [{ attachmentId: 'fixture-agent-sticker', mediaType: 'image/png', name: '透明表情.png', availability: 'available', sticker: { id: 'fixture-sticker', version: '0'.repeat(64) } }] }],
+      { ...message('fixture-agent-sticker-message', 'agent', '', base + 360000), imageState: 'ready', images: [{ attachmentId: 'fixture-agent-sticker', mediaType: 'image/png', name: '透明表情.png', availability: 'available', sticker: { id: 'fixture-sticker', version: '0'.repeat(64) } }] },
+      { ...message('fixture-agent-photo', 'agent', '合成图片', base + 420000), imageState: 'ready', images: [{ attachmentId: 'fixture-image', mediaType: 'image/png', name: '合成图片.png', availability: 'available' }] }],
     before: 'fixture-older', capabilities: { text: true, steer: true, stop: true, workspaceImages: true, images: { mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], maxImagesPerMessage: 6, maxImageBytes: 8_000_000, maxMessageImageBytes: 24_000_000 }, files: { maxFilesPerMessage: 6, maxFileBytes: 100_000_000, maxMessageFileBytes: 200_000_000 } } };
   let notify = (_: ChatView) => {};
   const listeners = new Set<(view: ChatView) => void>();
