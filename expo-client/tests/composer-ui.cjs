@@ -274,12 +274,12 @@ const fs = require('node:fs');
     await page.getByRole('button', { name: '发送消息' }).click();
     await page.getByText('第一行', { exact: false }).first().waitFor({ timeout: 15000 });
     await page.getByRole('button', { name: '加载更早消息' }).click();
-    const reminder = page.getByRole('button', { name: /记得喝水/ });
+    const reminder = page.getByTestId('reminder-message').filter({ hasText: '记得喝水' });
     await reminder.waitFor({ timeout: 15000 });
     assert.match(await reminder.innerText(), /记得喝水。 出门前带上雨伞。/);
+    const height = (await reminder.boundingBox()).height;
     await reminder.click();
-    assert.match(await reminder.innerText(), /记得喝水。\s+出门前带上雨伞。/);
-    await reminder.click();
+    assert.equal((await reminder.boundingBox()).height, height, 'reminders do not expand on tap');
     assert.deepEqual(errors, []);
     console.log('PASS: sticker, file and photo sends, multiline composer');
   } catch (error) { console.error('fixture screen:', await page.locator('body').innerText()); throw error; } finally { await browser.close(); }

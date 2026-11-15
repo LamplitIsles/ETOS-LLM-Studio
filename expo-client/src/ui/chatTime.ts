@@ -21,6 +21,7 @@ export function chatTimeHeadings(rows: readonly TimelineRow[], now: number): Rec
   const today = chatDay(now);
   let previous: number | undefined;
   for (const row of rows) {
+    if (row.kind === 'gap') { previous = undefined; continue; }
     if (row.original?.role === 'notice') continue;
     const day = chatDay(row.createdAt);
     if (!day) { previous = undefined; continue; }

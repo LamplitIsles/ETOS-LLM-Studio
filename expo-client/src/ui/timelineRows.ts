@@ -1,8 +1,8 @@
 import type { ChatMessage, FileRef, ImageRef } from '../../vendor/contracts/src/index';
 import { isReplySource } from '../../vendor/contracts/src/reply-ranges';
-import type { ChatSnapshot, SendPlacement } from '../cfl/chat';
+import type { ChatControllerSnapshot, ChatSnapshot, SendPlacement } from '../cfl/chat';
 
-export type TimelineRow = { _id: string; text: string; createdAt: number; user: { _id: string }; operationId?: string; original?: ChatMessage; pendingState?: 'unknown' | 'submitted' | 'failed'; pendingImages?: ImageRef[]; pendingFiles?: FileRef[] };
+export type TimelineRow = { _id: string; text: string; createdAt: number; user: { _id: string }; kind?: 'gap'; operationId?: string; original?: ChatMessage; pendingState?: 'unknown' | 'submitted' | 'failed'; pendingImages?: ImageRef[]; pendingFiles?: FileRef[] };
 
 /** Show only the source ranges published by the host, using the same keys for preview and history. */
 export function rowsFor(snapshot: ChatSnapshot): TimelineRow[] {
@@ -61,6 +61,31 @@ export function rowsFor(snapshot: ChatSnapshot): TimelineRow[] {
     if (anchor) tails.set(anchor.after, row._id);
   }
   return rows;
+}
+
+/** Display previously observed ranges without implying the gaps are continuous. */
+export function visibleRowsFor(snapshot: ChatControllerSnapshot): TimelineRow[] {
+  const current = rowsFor(snapshot);
+  if (!snapshot.view || !snapshot.detached.length) return current;
+  const ids = new Set([...snapshot.history, ...snapshot.view.messages].map(message => message.id));
+  if (snapshot.connection === 'online' && snapshot.view.streamingReply) ids.add(snapshot.view.streamingReply.id);
+  const operations = new Set([...snapshot.history, ...snapshot.view.messages].map(message => message.operationId).filter(Boolean));
+  for (const item of snapshot.pending) operations.add(item.operationId);
+  const groups: TimelineRow[][] = [];
+  for (const range of [...snapshot.detached].reverse()) {
+    // rowsFor and the message components only read these immutable snapshots.
+    const selected = range.messages.filter(message => {
+      if (ids.has(message.id) || (message.operationId && operations.has(message.operationId))) return false;
+      ids.add(message.id);
+      if (message.operationId) operations.add(message.operationId);
+      return true;
+    }) as ChatMessage[];
+    if (!selected.length) continue;
+    const rows = rowsFor({ ...snapshot, connection: 'offline', history: [], pending: [], view: { ...snapshot.view, messages: selected } });
+    if (!rows.length) continue;
+    groups.unshift([...rows, { _id: JSON.stringify(['gap', snapshot.view.sessionId, range.id]), kind: 'gap', text: '', createdAt: 0, user: { _id: 'partner' } }]);
+  }
+  return [...groups.flat(), ...current];
 }
 
 /** Capture placement from the same snapshot the controller checks for admission. */

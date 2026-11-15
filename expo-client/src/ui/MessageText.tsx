@@ -12,10 +12,11 @@ const fallbackStyle = { fontSize: 16, lineHeight: 23 };
 // An older native build without the parser cannot intercept embedded media.
 const embeddedMedia = /!\[|<\s*\/?\s*(?:img|video|source|audio|iframe)\b/i;
 
-export function MessageText({ text, foreground, dark, media, controller, workspaceImages }: {
-  text: string; foreground: string; dark: boolean; media: ApiTransport; controller: ChatController; workspaceImages: boolean;
+export function MessageText({ text, foreground, dark, media, controller, workspaceImages, messageId }: {
+  text: string; foreground: string; dark: boolean; media: ApiTransport; controller: ChatController; workspaceImages: boolean; messageId?: string;
 }) {
-  const [resolveImage, setResolveImage] = useState<null | ((image: { url: string }) => Promise<{ uri: string }>)>(null);
+  const [resolver, setResolver] = useState<null | { messageId?: string; resolve: (image: { url: string }) => Promise<{ uri: string }> }>(null);
+  const resolveImage = resolver?.messageId === messageId ? resolver?.resolve : null;
   const resolverAvailable = markdownImageResolverAvailable();
   useEffect(() => {
     if (!resolverAvailable) return;
@@ -38,9 +39,9 @@ export function MessageText({ text, foreground, dark, media, controller, workspa
         return { uri: result.uri };
       } catch { return { uri: '' }; }
     };
-    setResolveImage(() => resolve);
+    setResolver({ messageId, resolve });
     return () => { active = false; abort.abort(); for (const release of releases) release(); };
-  }, [controller, media, workspaceImages, resolverAvailable]);
+  }, [controller, media, workspaceImages, resolverAvailable, messageId]);
   const markdownStyle = useMemo<MarkdownStyle>(() => {
     const block = { color: foreground, fontSize: 16, lineHeight: 23 };
     const subtle = dark ? 'rgba(255,255,255,0.12)' : 'rgba(20,30,45,0.08)';

@@ -90,9 +90,10 @@ package itself has no native module. Metro reload and OTA are separate paths.
 Import `FlashList` and `type FlashListRef` from `@shopify/flash-list`; use
 `useRef<FlashListRef<Message>>(null)` and the list ref's `scrollToEnd`,
 `scrollToOffset` or async `scrollToIndex`. Supply a stable message-ID
-`keyExtractor`. The current timeline uses `maxItemsInRecyclePool={0}`; if
-recycling is enabled later, reset item-scoped state on identity change, clean
-up async image resources, and avoid item-specific keys that defeat recycling.
+`keyExtractor`. The timeline uses the default recycle pool. Reminder messages
+have no expandable state; Markdown image requests and URLs are scoped to each
+message. Attachment subtrees retain identity keys to release their resources
+when the reused row changes; this trades some subtree reuse for correct ownership.
 An optional `renderScrollComponent` receives ScrollView props, including a
 forwarded ref at runtime: pass all props and the ref to the actual scroll view,
 not a mask wrapper. FlashList wraps that component in RN Animated; verify any

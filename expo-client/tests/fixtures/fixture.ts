@@ -8,6 +8,7 @@ export function createFixture(options: { newOperationId?: () => string } = {}) {
   const base = Date.UTC(2025, 3, 12, 1, 30);
   const old = [message('fixture-older', 'agent', '上次你说周末想出去走走，后来选好地方了吗？', base - 60000),
     { ...message('fixture-reminder', 'agent', '记得喝水。\n出门前带上雨伞。', base - 30000), source: { kind: 'reminder' as const, reminderId: 'fixture-reminder-id', occurrenceId: 'fixture-occurrence' } }];
+  if (process.env.ETOS_UI_REMINDER_FIXTURE === '1') old.push({ ...message('fixture-long-reminder', 'user', `合成长提醒${'提醒内容'.repeat(35)}`, base - 10000), source: { kind: 'reminder' as const, reminderId: 'fixture-long-reminder-id', occurrenceId: 'fixture-long-occurrence' } });
   const firstReply = '那就找个不赶时间的地方，慢慢走走吧。';
   let view: ChatView = { version: 2, sessionId: 'fixture-session', name: 'Mica', activeTurnId: null, contextUsage: { tokens: null, capacity: null }, compaction: null,
     messages: [message('fixture-1', 'user', '还在想，最近总觉得有点忙。', base), { ...message('fixture-2', 'agent', firstReply, base + 60000), ends: [firstReply.length] },

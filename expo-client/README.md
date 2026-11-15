@@ -192,6 +192,16 @@ peer dependencies, licensing, and platform validation limits.
   Always unsubscribe and stop on disposal. Use `snapshot.view` for the current
   server-ordered window and streaming reply, `snapshot.history` for earlier
   pages, and `snapshot.pending` for accepted local operations.
+  Overlapping live windows retain their displaced prefix in memory until the
+  chat scope ends. `ChatControllerSnapshot.detached` exposes immutable ranges
+  with stable IDs in observation order; this order does not prove where the
+  ranges belong relative to one another. Each range preserves its own order.
+  Present ranges separately with a possible-gap indication and deduplicate IDs
+  already displayed from the live range. `loadOlder()` uses the real cursor,
+  rejoins ranges only on supported ordered overlap, and publishes their removal.
+  A missing cursor never becomes a fabricated one. Snapshots do not distinguish
+  an evicted item from a deleted one, so retention does not prove the server
+  still has the item.
   `snapshot.failure === 'access_denied'` requires a new explicit login;
   unavailable connections retry without treating a network outage as logout. Preserve the
   message and operation IDs when presenting these arrays; deduplicate any local

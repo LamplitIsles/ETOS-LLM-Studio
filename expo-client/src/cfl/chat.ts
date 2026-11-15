@@ -25,6 +25,30 @@ function normalizePending(entry: Pending): Pending {
 export interface PendingStore { load(origin: string): Promise<Pending[]>; save(origin: string, entries: Pending[]): Promise<void> }
 export type ChatPort = Pick<Awaited<ReturnType<typeof openChat>>, 'history' | 'submit' | 'lookup' | 'close'> & Partial<Pick<Awaited<ReturnType<typeof openChat>>, 'search' | 'searchRead'>>;
 export type ChatSnapshot = { connection: 'offline' | 'connecting' | 'online'; failure: 'access_denied' | 'unavailable' | null; view: ChatView | null; history: ChatMessage[]; before: string | null; pending: Pending[] };
+export type DeepReadonly<T> = T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
+/** Separate ranges are ordered by observation, not proof of their relative timeline positions. */
+export type DetachedRange = { readonly id: number; readonly messages: readonly DeepReadonly<ChatMessage>[] };
+export type ChatControllerSnapshot = ChatSnapshot & { readonly detached: readonly DetachedRange[] };
+function freezeJson(value: unknown): void {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
+}
+/** The new window may insert records, but must retain the complete old suffix in order. */
+function orderedOverlapStart(older: readonly ChatMessage[], next: readonly ChatMessage[]): number {
+  const first = older.findIndex(item => item.id === next[0]?.id);
+  if (first < 0) return -1;
+  const live = new Set(next.map(item => item.id));
+  if (older.slice(0, first).some(item => live.has(item.id))) return -1;
+  let index = 0;
+  for (let i = first; i < older.length; i++) {
+    while (index < next.length && next[index].id !== older[i].id) index++;
+    if (index === next.length) return -1;
+    index++;
+  }
+  return first;
+}
 /** Obtain snapshot and its visible row key together, synchronously in the send gesture. */
 export type SendPlacement = SendAnchor & { snapshot: ChatSnapshot };
 export type OperationIdentity = { origin: string; sessionId: string; operationId: string };
@@ -43,6 +67,26 @@ export class ChatController {
   private searchGeneration = 0;
   private searchReadGeneration = 0;
   private historyLoading = false;
+  // Older ranges separated from the live range by an unverified gap. They can
+  // rejoin only when a history page proves an ordered overlap.
+  private detached: Array<{ range: DetachedRange; messages: ChatMessage[]; before: string | null; bridgeable: boolean }> = [];
+  private nextDetachedId = 0;
+  private detach(messages: ChatMessage[], before: string | null, bridgeable = true) {
+    // Validated protocol messages are JSON; isolate nested attachments and UI
+    // payloads so older public snapshots cannot mutate controller state.
+    const copy = JSON.parse(JSON.stringify(messages)) as ChatMessage[];
+    freezeJson(copy);
+    const range: DetachedRange = Object.freeze({ id: ++this.nextDetachedId, messages: copy });
+    this.detached.push({ range, messages: copy, before, bridgeable });
+  }
+  private detachMissing(messages: ChatMessage[], live: Set<string>) {
+    let run: ChatMessage[] = [];
+    const flush = () => { if (run.length) this.detach(run, null, false); run = []; };
+    for (const message of messages) {
+      if (live.has(message.id)) flush(); else run.push(message);
+    }
+    flush();
+  }
   private work: Promise<void> = Promise.resolve();
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const task = this.work.then(action);
@@ -56,7 +100,7 @@ export class ChatController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
-  private listeners = new Set<(state: ChatSnapshot) => void>();
+  private listeners = new Set<(state: ChatControllerSnapshot) => void>();
   private entries: Pending[] = [];
   private journalUncertain = false;
   private async saveEntries(entries: Pending[]) {
@@ -64,7 +108,7 @@ export class ChatController {
     try { await this.store.save(this.origin, entries); }
     catch (error) { this.journalUncertain = true; throw error; }
   }
-  private state: ChatSnapshot = { connection: 'offline', failure: null, view: null, history: [], before: null, pending: [] };
+  private state: ChatControllerSnapshot = { connection: 'offline', failure: null, view: null, history: [], before: null, pending: [], detached: Object.freeze([]) };
   constructor(readonly origin: string, private socket: SocketFactory, private store: PendingStore, private uuid: () => string, private open: OpenPort = openChat, private checkAuthorization?: () => Promise<boolean>) {}
   snapshot() { return this.state; }
   readImage(media: MediaTransport, id: string, active: () => boolean, variant: 'preview' | 'original' = 'preview', signal?: AbortSignal): Promise<ImageData> {
@@ -108,7 +152,7 @@ export class ChatController {
       if ((read ? this.searchReadGeneration : this.searchGeneration) !== generation) throw new Error('search_superseded');
     };
   }
-  subscribe(listener: (state: ChatSnapshot) => void) { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
+  subscribe(listener: (state: ChatControllerSnapshot) => void) { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
   /** Missing journal entries and inactive sessions are not evidence of admission. */
   async operationStatus(identity: OperationIdentity): Promise<OperationState> {
     if (identity.origin !== this.origin || this.stopped || this.state.view?.sessionId !== identity.sessionId) return 'unknown';
@@ -123,11 +167,50 @@ export class ChatController {
       return entry ? normalizePending(entry).state : 'unknown';
     } catch { return 'unknown'; }
   }
-  private publish(patch: Partial<ChatSnapshot>) { this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(this.state); }
+  private publish(patch: Partial<ChatSnapshot>) { this.state = { ...this.state, ...patch, detached: Object.freeze(this.detached.map(item => item.range)) }; for (const listener of this.listeners) listener(this.state); }
   private updateView(view: ChatView) {
     const changed = this.state.view?.sessionId !== view.sessionId;
-    if (changed) { this.revision++; this.cancelPreparations(); this.imageCache.clear(); }
-    this.publish({ view, history: changed ? [] : this.state.history, before: changed ? view.before : this.state.before, pending: this.entries.filter(e => e.sessionId === view.sessionId) });
+    if (changed) { this.revision++; this.cancelPreparations(); this.imageCache.clear(); this.detached = []; }
+    let history = changed ? [] : this.state.history;
+    let before = changed ? view.before : this.state.before;
+    const previous = changed ? undefined : this.state.view;
+    if (previous) {
+      // Keep a displaced prefix when the old suffix remains in order, even if
+      // the host inserts new messages between existing ones.
+      const first = orderedOverlapStart(previous.messages, view.messages);
+      const live = new Set(view.messages.map(item => item.id));
+      if (!view.messages.length) {
+        const existing = new Set(history.map(item => item.id));
+        history = [...history, ...previous.messages.filter(item => !existing.has(item.id))];
+      } else if (!previous.messages.length && history.length) {
+        const firstHistory = orderedOverlapStart(history, view.messages);
+        if (firstHistory >= 0) {
+          history = history.slice(0, firstHistory);
+        } else if (!history.some(item => live.has(item.id))) {
+          this.detach(history, before);
+          history = []; before = view.before;
+        } else {
+          const prefix = Math.max(0, history.findIndex(item => item.id === view.messages[0].id));
+          this.detachMissing(history.slice(prefix), live);
+          history = history.slice(0, prefix);
+        }
+      } else if (first >= 0) {
+        history = [...history, ...previous.messages.slice(0, first)].filter(item => !live.has(item.id));
+      } else if (previous.messages.length && view.messages.length && !previous.messages.some(item => live.has(item.id))) {
+        this.detach([...history, ...previous.messages], before);
+        history = []; before = view.before;
+      } else if (!previous.messages.length && !history.length) {
+        before = view.before;
+      } else {
+        history = history.filter(item => !live.has(item.id));
+        this.detachMissing(previous.messages, live);
+      }
+    }
+    // A newer active range can itself contain every item of an older segment.
+    // Do not keep a second public copy of a fully represented segment.
+    const active = new Set([...history, ...view.messages].map(item => item.id));
+    this.detached = this.detached.filter(item => !item.messages.every(message => active.has(message.id)));
+    this.publish({ view, history, before, pending: this.entries.filter(e => e.sessionId === view.sessionId) });
     if (this.entries.some(e => e.sessionId === view.sessionId && view.messages.some(m => m.operationId === e.operationId))) {
       void this.serial(async () => {
         const current = this.state.view;
@@ -199,7 +282,7 @@ export class ChatController {
     });
   }
   stop() {
-    this.stopped = true; this.epoch++; this.revision++; this.cancelPreparations(); this.imageCache.clear();
+    this.stopped = true; this.epoch++; this.revision++; this.cancelPreparations(); this.imageCache.clear(); this.detached = [];
     if (this.timer) clearTimeout(this.timer); this.timer = null;
     if (this.reconcileTimer) clearTimeout(this.reconcileTimer); this.reconcileTimer = null;
     this.port?.close(); this.port = null;
@@ -211,12 +294,37 @@ export class ChatController {
   async loadOlder(): Promise<void> {
     const { view, before } = this.state; const port = this.port;
     if (!view || !before || !port || this.historyLoading) return;
-    const epoch = this.epoch, revision = this.revision;
+    const epoch = this.epoch, revision = this.revision, connectionId = this.connectionId;
     this.historyLoading = true;
     try {
       const page: HistoryPage = await port.history(before); this.guard(epoch, revision, view.sessionId);
+      if (connectionId !== this.connectionId || port !== this.port || this.state.before !== before) return;
       const existing = new Set([...this.state.history, ...this.state.view!.messages].map(m => m.id));
-      this.publish({ history: [...page.messages.filter(m => !existing.has(m.id)), ...this.state.history], before: page.before });
+      let messages = page.messages.filter(m => !existing.has(m.id));
+      let nextBefore = page.before;
+      while (messages.length && this.detached.length) {
+        const detached = this.detached.at(-1)!;
+        if (!detached.bridgeable) {
+          const present = new Set([...existing, ...messages.map(item => item.id)]);
+          if (!detached.messages.every(item => present.has(item.id))) break;
+          this.detached.pop();
+          continue;
+        }
+        const end = messages.findIndex(item => item.id === detached.messages.at(-1)?.id);
+        if (end < 0) break;
+        let overlap = 0;
+        while (overlap <= end && overlap < detached.messages.length &&
+          messages[end - overlap].id === detached.messages[detached.messages.length - 1 - overlap].id) overlap++;
+        const pageStart = end + 1 - overlap, retainedStart = detached.messages.length - overlap;
+        // Both prefixes exist but their relative order is unknown.
+        if (pageStart && retainedStart) break;
+        if (!pageStart) {
+          messages = [...detached.messages.slice(0, retainedStart), ...messages];
+          nextBefore = detached.before;
+        }
+        this.detached.pop();
+      }
+      this.publish({ history: [...messages, ...this.state.history], before: nextBefore });
     } finally { this.historyLoading = false; }
   }
   send(text: string): Promise<string> { return this.sendPrepared(text, async () => ({})); }

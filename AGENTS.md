@@ -6,6 +6,10 @@
 
 接入新数据源或改造现有功能前，先追踪当前用户入口、界面组件和交互，优先复用已有实现；除非用户要求重新设计，否则保持原有外观和仍受支持的交互。文字、图片等能力都应沿现有体验接入实际后端，而不是另做一套界面。确需替换组件时，说明不能复用的具体原因，并对照原界面验证结果，不以数据接通或构建成功代替界面验收。
 
+涉及 `expo-client` 的 `@expo/ui` 组件时，先读仓库内的 [expo-ui skill](.agents/skills/expo-ui/SKILL.md) 及相关 `references/`；该副本来自 [Expo 官方仓库](https://github.com/expo/skills/tree/ab6cb2c58b0daa7555590d869dd1aa2ddb5d7632/plugins/expo/skills/expo-ui)，指导随上游更新，使用前须对照项目实际安装版本。可在仓库根执行 `node .agents/skills/expo-ui/scripts/list-components.js expo-client` 查看已安装组件和 modifiers，具体属性再查 `expo-client/node_modules/@expo/ui` 的类型及源码。skill 的通用建议服从用户要求与本仓库现有体验，不据此擅自更换组件或发送反馈。
+
+Expo 官方文档按项目实际 SDK 版本阅读：先从 [文档索引](https://docs.expo.dev/llms.txt) 找页面，再读取对应版本的 Markdown；当前项目是 SDK 58，例如 [Expo UI](https://docs.expo.dev/versions/v58.0.0/sdk/ui.md) 和 [SwiftUI Host](https://docs.expo.dev/versions/v58.0.0/sdk/ui/swift-ui/host.md)。网页地址末尾可加 `.md` 获取 Markdown；不要将 latest 文档中的接口当作已安装版本的保证。可用时也可通过 [Expo 官方 MCP](https://docs.expo.dev/mcp.md) 读取文档，未连接时直接读上述官方页面；MCP 的当前接口和登录要求以官方说明为准。
+
 界面尺寸与颜色：iPhone 优先使用系统控件、SF Symbols 和自适应颜色；图标操作的实际触控区域至少 44×44 pt。返回等圆形导航按钮参考原版 ETOS，使用约 40 pt 可见圆面、17–20 pt 图标，并保证至少 44 pt 触控区域；给纯图标按钮提供无障碍名称，留意系统按钮样式自身的内边距。颜色按用途统一：主要文字和图标应清晰，次要内容降低强调，强调色留给主要操作，危险操作使用明确的危险语义；不要让返回按钮默认使用醒目的主操作色。浅色、深色、自定义背景和降低透明度时都要检查可读性，目标为普通文字至少 4.5:1、可交互图标与必要控件边界至少 3:1；玻璃效果不足以保证对比度时增加适当底色。Web 回退保持相同的触控尺寸、语义和可读性，不强求复制 iOS 玻璃外观。
 
 聊天中仅在发送失败、需要用户处理时展示操作提示；发送与服务端确认等中间状态不展示临时状态文案或额外占用消息布局。结果未确认的发送应在后台核对，不自动重复发送。
