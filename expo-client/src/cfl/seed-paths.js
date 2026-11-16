@@ -21,6 +21,11 @@ export function isSeedApiRequest(method, value) {
 export function isSeedMediaGet(path) { return isSeedApiRequest('GET', path) && path !== '/api/auth/status'; }
 
 // ONLY for the isolated fixture proxy; never enable on the fixed 3090 seed.
+export function isTestBarkFixtureRequest(method, value) {
+  return ((method === 'GET' || method === 'POST') && value === '/api/bark/settings') || (method === 'POST' && value === '/api/bark/test');
+}
+
+// ONLY for the isolated fixture proxy; never enable on the fixed 3090 seed.
 export function isTestTtsFixtureRequest(method, value) {
   if (method === 'POST') return value === '/api/tts/settings/key';
   if (method !== 'GET' || typeof value !== 'string') return false;

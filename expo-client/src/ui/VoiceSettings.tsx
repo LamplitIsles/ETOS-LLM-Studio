@@ -1,25 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Host, TextInput, useNativeState } from '@expo/ui';
 import { TtsSettingsClient, type TtsKeyProvider, type TtsProvider, type TtsSnapshot, type TtsVoicePage } from '../cfl/tts-settings';
 import type { ChatController } from '../cfl/chat';
 import type { ApiTransport } from '../cfl/transport';
 import { Button } from './Button';
 import { Input } from './Input';
+import { SecretInput } from './SecretInput';
 
 const providers: { id: TtsProvider; label: string }[] = [
   { id: 'minimax', label: 'MiniMax' }, { id: 'alibaba', label: '阿里云' },
   { id: 'bytedance', label: '火山引擎' }, { id: 'elevenlabs', label: 'ElevenLabs' },
 ];
-
-function SecretInput({ value, onChange, dark, disabled }: { value: string; onChange: (value: string) => void; dark: boolean; disabled: boolean }) {
-  const native = useNativeState(value), previous = useRef(value);
-  useEffect(() => { if (previous.current !== value) { previous.current = value; native.set(value); } }, [native, value]);
-  return <Host ignoreSafeArea="keyboard" style={{ width: '100%' }}><TextInput value={native} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="off"
-    accessibilityLabel="语音服务密钥" placeholder="输入新的 API 密钥" editable={!disabled} maxLength={512}
-    onChangeText={next => { previous.current = next; onChange(next); }} style={{ width: '100%', backgroundColor: dark ? '#30343a' : '#fff', borderRadius: 14 }}
-    textStyle={{ fontSize: 16, color: dark ? '#f5f6f7' : '#252832' }} /></Host>;
-}
 
 export function VoiceSettings({ controller, media, dark }: { controller: ChatController; media: ApiTransport; dark: boolean }) {
   const clientRef = useRef<TtsSettingsClient | null>(null), alive = useRef(false), busyRef = useRef(false), generation = useRef(0);
@@ -93,7 +84,7 @@ export function VoiceSettings({ controller, media, dark }: { controller: ChatCon
       <View style={styles.choices}>{providers.map(item => <Button key={item.id} variant={provider === item.id ? 'prominent' : 'soft'} disabled={loading || provider === item.id} onPress={() => changeProvider(item.id)}>{item.label}</Button>)}</View>
       {provider !== 'minimax' && <>
         <Text style={{ color: muted }}>{snapshot.configured[provider] ? '已配置密钥；保存新密钥会替换现有配置。' : '尚未配置密钥。'}</Text>
-        <SecretInput value={apiKey} onChange={setApiKey} dark={dark} disabled={loading} />
+        <SecretInput value={apiKey} onChange={setApiKey} dark={dark} disabled={loading} label="语音服务密钥" placeholder="输入新的 API 密钥" />
         <Button disabled={loading || !apiKey} onPress={() => void save('key')}>保存密钥</Button>
       </>}
       <Text style={{ color: ink }}>声音 ID</Text>

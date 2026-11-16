@@ -1,18 +1,22 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Host, RNHostView, Switch } from '@expo/ui';
 import { MODEL_CHOICES, ModelSettingsClient, type ModelSelection, type ModelSettings } from '../cfl/model-settings';
 import type { ChatController } from '../cfl/chat';
 import type { ApiTransport } from '../cfl/transport';
 import { BackgroundSettingsClient, type BackgroundKind, type BackgroundSnapshot } from '../cfl/background-settings';
+import { BarkSettingsClient } from '../cfl/bark-settings';
 import { pickImages, type AttachmentDraft } from '../cfl/drafts';
 import { Button } from './Button';
 import { VoiceSettings } from './VoiceSettings';
+import { BarkSettings } from './BarkSettings';
 import { useAppearance } from './appearance';
 import { FullSheet } from './FullSheet';
+import { SettingsTabs } from './SettingsTabs';
 
 export function ChatSettings({ controller, media, dark, onClose, onBackgroundSaved }: { controller: ChatController; media: ApiTransport; dark: boolean; onClose: () => void; onBackgroundSaved: () => void }) {
   const service = useMemo(() => new ModelSettingsClient(controller, media), [controller, media]);
+  const createBarkClient = useCallback(() => new BarkSettingsClient(controller, media), [controller, media]);
   const [snapshot, setSnapshot] = useState<ModelSettings | null>(null);
   const [presented, setPresented] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -97,13 +101,27 @@ export function ChatSettings({ controller, media, dark, onClose, onBackgroundSav
     finally { writing.current = false; if (active.current && generation.current === id) setLoading(false); }
   };
   const selectedModel = MODEL_CHOICES.find(item => item.id === snapshot?.currentModel);
-  return <FullSheet open={presented} onRequestClose={() => setPresented(false)} onDismiss={onClose} color={dark ? '#25282d' : '#f7f8fa'} testID="chat-settings-sheet">
-    <RNHostView><View style={styles.page}>
+  const page = dark ? '#25282d' : '#f7f8fa';
+  const tabPage = (content: React.ReactNode) => <View style={styles.page}>
       <View style={styles.heading}><Text style={[styles.title, { color: ink }]}>设置</Text><Button accessibilityLabel="关闭设置" variant="ghost" icon={{ ios: 'xmark', web: 'close', android: 'close' }} onPress={() => setPresented(false)} /></View>
-      <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={styles.content}>
+      <ScrollView keyboardShouldPersistTaps="always" automaticallyAdjustKeyboardInsets contentInsetAdjustmentBehavior="never" contentContainerStyle={styles.content}>{content}</ScrollView>
+    </View>;
+  return <FullSheet open={presented} onRequestClose={() => setPresented(false)} onDismiss={onClose} color={page} horizontalPadding={0} testID="chat-settings-sheet">
+    <RNHostView><SettingsTabs dark={dark} page={page} tabs={[
+      { key: 'appearance', label: '外观', symbol: { ios: 'paintpalette', web: 'palette', android: 'palette' }, content: tabPage(<>
       <Text style={[styles.section, { color: ink }]}>外观</Text>
       <View style={styles.choices}>{([{ id: 'system', label: '跟随系统' }, { id: 'light', label: '浅色' }, { id: 'dark', label: '深色' }] as const).map(item =>
         <Button key={item.id} variant={colorMode === item.id ? 'prominent' : 'soft'} disabled={colorMode === item.id} onPress={() => setColorMode(item.id)}>{item.label}</Button>)}</View>
+      <Text style={[styles.section, { color: ink }]}>聊天背景</Text>
+      {backgroundLoading && <ActivityIndicator />}
+      {!!backgroundNotice && <Text accessibilityRole="alert" style={{ color: dark ? '#ffb5ac' : '#9c302b' }}>{backgroundNotice}</Text>}
+      {!backgrounds && !backgroundLoading && <Button onPress={refreshBackgrounds}>刷新背景设置</Button>}
+      {backgrounds && <View style={styles.choices}>
+        <Button accessibilityLabel="设置竖屏背景" disabled={backgroundLoading} onPress={() => void chooseBackground('portrait')}>{backgrounds.portrait ? '更换竖屏背景' : '设置竖屏背景'}</Button>
+        <Button accessibilityLabel="设置横屏背景" disabled={backgroundLoading} onPress={() => void chooseBackground('landscape')}>{backgrounds.landscape ? '更换横屏背景' : '设置横屏背景'}</Button>
+      </View>}
+      </>) },
+      { key: 'model', label: '模型', symbol: { ios: 'cpu', web: 'memory', android: 'memory' }, content: tabPage(<>
       <Text style={[styles.section, { color: ink }]}>模型</Text>
       {loading && <ActivityIndicator />}
       {!!notice && <Text accessibilityRole="alert" style={{ color: dark ? '#ffb5ac' : '#9c302b' }}>{notice}</Text>}
@@ -115,17 +133,10 @@ export function ChatSettings({ controller, media, dark, onClose, onBackgroundSav
         {Platform.OS === 'web' ? <Button variant="soft" disabled={loading || snapshot.busy || !selectedModel} onPress={() => { if (selectedModel) void select({ model: selectedModel.id, fast: !snapshot.fast }); }}>{`Fast 模式：${snapshot.fast ? '开' : '关'}`}</Button>
           : <Host matchContents ignoreSafeArea="all"><Switch label="Fast 模式" value={snapshot.fast} disabled={loading || snapshot.busy || !selectedModel} onValueChange={fast => { if (selectedModel) void select({ model: selectedModel.id, fast }); }} /></Host>}
       </>}
-      <Text style={[styles.section, { color: ink }]}>聊天背景</Text>
-      {backgroundLoading && <ActivityIndicator />}
-      {!!backgroundNotice && <Text accessibilityRole="alert" style={{ color: dark ? '#ffb5ac' : '#9c302b' }}>{backgroundNotice}</Text>}
-      {!backgrounds && !backgroundLoading && <Button onPress={refreshBackgrounds}>刷新背景设置</Button>}
-      {backgrounds && <View style={styles.choices}>
-        <Button accessibilityLabel="设置竖屏背景" disabled={backgroundLoading} onPress={() => void chooseBackground('portrait')}>{backgrounds.portrait ? '更换竖屏背景' : '设置竖屏背景'}</Button>
-        <Button accessibilityLabel="设置横屏背景" disabled={backgroundLoading} onPress={() => void chooseBackground('landscape')}>{backgrounds.landscape ? '更换横屏背景' : '设置横屏背景'}</Button>
-      </View>}
-      <VoiceSettings controller={controller} media={media} dark={dark} />
-      </ScrollView>
-    </View></RNHostView>
+      </>) },
+      { key: 'voice', label: '语音', symbol: { ios: 'waveform', web: 'volume_up', android: 'volume_up' }, content: tabPage(<VoiceSettings controller={controller} media={media} dark={dark} />) },
+      { key: 'notifications', label: '通知', symbol: { ios: 'bell', web: 'notifications', android: 'notifications' }, content: tabPage(<BarkSettings createClient={createBarkClient} dark={dark} />) },
+    ]} /></RNHostView>
   </FullSheet>;
 }
-const styles = StyleSheet.create({ page: { flex: 1, paddingHorizontal: 16, paddingBottom: 16, gap: 14 }, content: { gap: 14 }, heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, title: { fontSize: 19, fontWeight: '600' }, section: { fontSize: 16, fontWeight: '600' }, choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 } });
+const styles = StyleSheet.create({ page: { flex: 1, gap: 14 }, content: { gap: 14, paddingHorizontal: 16, paddingBottom: 24 }, heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 }, title: { fontSize: 19, fontWeight: '600' }, section: { fontSize: 16, fontWeight: '600' }, choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 } });

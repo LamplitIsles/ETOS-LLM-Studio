@@ -2,7 +2,7 @@ import { ChatController } from './chat';
 import { pendingStore } from './pending-store';
 import { isDevelopmentSeedAllowed } from './seed-guard';
 import { syntheticOperationId } from './seed-uuid';
-import { isSeedApiRequest, isTestTtsFixtureRequest } from './seed-paths';
+import { isSeedApiRequest, isTestBarkFixtureRequest, isTestTtsFixtureRequest } from './seed-paths';
 
 /** True only for the explicitly enabled synthetic development proxy. */
 export function developmentSeedAvailable(): boolean {
@@ -30,9 +30,9 @@ export function createDevelopmentSeedChat() {
       return await developmentSeedStatus() === 'signed_in';
     },
     async request(path: string, init: RequestInit = {}) {
-      // Sensitive TTS routes are still denied by the fixed 3090 proxy; only the
+      // Sensitive fixture routes are still denied by the fixed 3090 proxy; only the
       // test-owned fixture proxy accepts these exact paths without real providers.
-      if (!isSeedApiRequest(init.method ?? 'GET', path) && !isTestTtsFixtureRequest(init.method ?? 'GET', path)) throw new Error('invalid_media');
+      if (!isSeedApiRequest(init.method ?? 'GET', path) && !isTestTtsFixtureRequest(init.method ?? 'GET', path) && !isTestBarkFixtureRequest(init.method ?? 'GET', path)) throw new Error('invalid_media');
       return fetch(path, { ...init, credentials: 'omit', redirect: 'error' });
     },
     async read(path: string, init?: RequestInit) { return this.request(path, init); },

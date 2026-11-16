@@ -45,6 +45,7 @@ import { ChatImageViewer } from './ui/ChatImageViewer';
 import { imageGallery, imageItemsFor, imageTarget, type ImageViewerTarget, type LocalImagePreview } from './ui/chatImageGallery';
 import { ChatSettings } from './ui/ChatSettings';
 import { useKeyboardDiagnostic } from './ui/keyboardDiagnostic';
+import { listenForChatLink } from './ui/chatLink';
 import type { InputAreaProps } from '../modules/etos-input-area/src';
 import type { InputAreaProbeArgs, InputAreaProbeResult } from '../modules/etos-input-area/src/probe-core';
 import type { KeyboardPanelProps } from '../modules/etos-input-area/src/keyboard-panel';
@@ -197,6 +198,11 @@ function AppContent() {
   const [spaceOpen, setSpaceOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingChatLink, setPendingChatLink] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    return listenForChatLink(Linking, () => setPendingChatLink(true));
+  }, []);
   const [draft, setDraft] = useState('');
   const [inputHeight, setInputHeight] = useState(44);
   const [toolbarHeight, setToolbarHeight] = useState(72);
@@ -603,6 +609,12 @@ function AppContent() {
     const deferred = deferredImageRelease.current; deferredImageRelease.current = null;
     if (deferred) releaseLocalImage(deferred.operationId, deferred.id);
   }, [releaseLocalImage]);
+  useEffect(() => {
+    if (!pendingChatLink || !client || !snapshot?.view || client.controller.snapshot().view?.sessionId !== snapshot.view.sessionId) return;
+    setConfirmSignOut(false); setSpaceOpen(false); setSearchOpen(false); setSettingsOpen(false);
+    if (imageViewerRef.current) closeImage(imageViewerRef.current);
+    setPendingChatLink(false);
+  }, [pendingChatLink, client, snapshot?.view, closeImage]);
   const claimFavorite = useCallback((): object | null => {
     if (favoriteFlight.current) return null;
     const token = {}; favoriteFlight.current = token; setFavoriteBusy(true); return token;

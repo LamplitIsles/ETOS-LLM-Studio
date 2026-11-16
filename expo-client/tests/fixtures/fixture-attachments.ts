@@ -50,6 +50,12 @@ export function createFixtureMedia(): ApiTransport {
   };
   return { origin: 'fixture://local', read, async request(path, init = {}) {
     const method = init.method ?? 'GET';
+    if (path === '/api/bark/test' && method === 'POST') {
+      let input: unknown; try { input = JSON.parse(String(init.body)); } catch { return Response.json({ error: { code: 'invalid_request', message: 'Invalid request.' } }, { status: 400 }); }
+      if (new Headers(init.headers).get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json' || !input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) return Response.json({ error: { code: 'invalid_request', message: 'Invalid request.' } }, { status: 400 });
+      // This isolated fixture has no Bark configuration and never sends a notification.
+      return Response.json({ error: { code: 'bark_not_configured', message: 'Test notification could not be confirmed.' } }, { status: 409 });
+    }
     if (path === '/api/tts/settings' && method === 'GET') return Response.json(tts);
     if (path === '/api/tts/settings' && method === 'POST') {
       let input: any; try { input = JSON.parse(String(init.body)); } catch { return Response.json({ error: { code: 'invalid_tts_settings' } }, { status: 400 }); }

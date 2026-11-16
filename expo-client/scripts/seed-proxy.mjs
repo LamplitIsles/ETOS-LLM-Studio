@@ -5,7 +5,7 @@ import { readFile, readlink } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { isPrivateIPv4 } from '../src/cfl/seed-address.js';
-import { isSeedApiRequest, isTestTtsFixtureRequest } from '../src/cfl/seed-paths.js';
+import { isSeedApiRequest, isTestBarkFixtureRequest, isTestTtsFixtureRequest } from '../src/cfl/seed-paths.js';
 
 const execFileAsync = promisify(execFile);
 const marker = 'CFL synthetic frontend development fixture v1\n';
@@ -46,9 +46,9 @@ function responseHeaders(input, seed) {
 
 // Injected request functions are test seams, not network destination options.
 // Production callers always use the two hard-coded loopback endpoints below.
-/** @param {{seedRequest: Function, metroRequest: Function, lanHost?: string, testOnlyTtsFixture?: boolean}} options */
-export function createSeedProxy({ seedRequest: upstreamSeed, metroRequest, lanHost, testOnlyTtsFixture = false }) {
-  if (testOnlyTtsFixture && upstreamSeed === seedRequest) throw new Error('Test TTS is forbidden for the fixed seed');
+/** @param {{seedRequest: Function, metroRequest: Function, lanHost?: string, testOnlyTtsFixture?: boolean, testOnlyBarkFixture?: boolean}} options */
+export function createSeedProxy({ seedRequest: upstreamSeed, metroRequest, lanHost, testOnlyTtsFixture = false, testOnlyBarkFixture = false }) {
+  if ((testOnlyTtsFixture || testOnlyBarkFixture) && upstreamSeed === seedRequest) throw new Error('Test fixture routes are forbidden for the fixed seed');
   if (lanHost && !isPrivateIPv4(lanHost)) throw new Error('LAN host must be an RFC1918 IPv4 address');
   const server = http.createServer((req, res) => {
     if (!permitted(req, lanHost)) { req.resume(); res.writeHead(403).end(); return; }
@@ -57,7 +57,7 @@ export function createSeedProxy({ seedRequest: upstreamSeed, metroRequest, lanHo
     if (seed && !testOnlyTtsFixture && isTestTtsFixtureRequest(req.method, url)) {
       req.resume(); res.writeHead(404, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ error: { code: 'tts_unsupported' } })); return;
     }
-    if (seed && (!(isSeedApiRequest(req.method, url) || (testOnlyTtsFixture && isTestTtsFixtureRequest(req.method, url))) || (req.method !== 'GET' && !req.headers.origin))) { req.resume(); res.writeHead(404).end(); return; }
+    if (seed && (!(isSeedApiRequest(req.method, url) || (testOnlyTtsFixture && isTestTtsFixtureRequest(req.method, url)) || (testOnlyBarkFixture && isTestBarkFixtureRequest(req.method, url))) || (req.method !== 'GET' && !req.headers.origin))) { req.resume(); res.writeHead(404).end(); return; }
     const conditionalMedia = seed && req.method === 'GET' && (
       /^\/api\/stickers\/media\/[a-f0-9]{64}\/(?:thumbnail|original)$/.test(url) ||
       /^\/api\/chat\/media\/[A-Za-z0-9_-]{1,100}\/(?:preview|original)$/.test(url)

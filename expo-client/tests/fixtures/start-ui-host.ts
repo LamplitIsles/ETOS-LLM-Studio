@@ -23,6 +23,7 @@ const host = await startFixtureSeedHost(extraMessages, replyScenario, holdSubmis
 const proxy: http.Server = createSeedProxy({
   seedRequest: host.request,
   testOnlyTtsFixture: true,
+  testOnlyBarkFixture: true,
   metroRequest: async (options: http.RequestOptions) => http.request({ ...options, hostname: '127.0.0.1', port: metroPort }),
 });
 const sockets = new Set<import('node:net').Socket>();
